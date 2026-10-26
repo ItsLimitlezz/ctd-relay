@@ -349,6 +349,31 @@ export function openApiDocument(version: string): Record<string, unknown> {
           },
         },
       },
+      '/apps/{appId}/obs-websocket': {
+        put: {
+          summary: "Report OBS's WebSocket settings for the OBS socket relay (v1.6)",
+          operationId: 'putObsWebSocket',
+          tags: ['apps'],
+          description:
+            "Needs `obs:write`; only the token that registered `appId` (the CTD OBS plugin). Body `{ enabled, port, authRequired, password?, addresses? }`: OBS's WebSocket server settings and the OBS machine's LAN addresses (best first). Relay stores the password encrypted, never logs it, and uses it to open OBS for phones on GET /obs/socket. `password` omitted = keep the saved one; `authRequired: false` removes it. An address set by hand in Settings → API wins over `addresses`. Send it on start, whenever the settings change, and every few minutes.",
+          parameters: [appIdPath],
+          requestBody: {
+            required: true,
+            content: json({
+              type: 'object',
+              required: ['enabled', 'port', 'authRequired'],
+              properties: { enabled: bool, port: int, authRequired: bool, password: nullable(str), addresses: { type: 'array', items: str, maxItems: 8 } },
+            }),
+          },
+          responses: {
+            '200': { description: 'Stored', content: json({ type: 'object', properties: { host: nullable(str), port: int, hasPassword: bool, manualHost: bool } }) },
+            '400': problemResponse('Bad body (`invalid`)'),
+            '404': problemResponse('No app registered under this id (`not_found`): register it first'),
+            '409': problemResponse('Registered by another token (`app_owned`)'),
+            ...errors,
+          },
+        },
+      },
       '/messages': {
         post: {
           summary: 'Send a message to another app (or every app) through the hub',

@@ -911,9 +911,29 @@ Relay relays the session to OBS:
 phone ──wss://<public address>/api/v1/obs/socket + token──▶ CTD Relay ──ws + OBS's password──▶ OBS :4455 (LAN)
 ```
 
-**Set up once:** Settings → API → **OBS on your computer**: OBS's address (empty = the address OBS
-streams to Relay from, detected automatically), port (4455) and the password from OBS → Tools →
-WebSocket Server Settings. **Test connection** checks them. The password stays on the server.
+**Set up:** the CTD OBS plugin reports OBS's WebSocket settings itself (below), so normally there
+is nothing to type. Without it: Settings → API → **OBS on your computer**: OBS's address (empty =
+detected automatically), port (4455) and the password from OBS → Tools → WebSocket Server
+Settings. **Test connection** checks them. The password stays on the server.
+
+### `PUT /api/v1/apps/{appId}/obs-websocket` — `obs:write`
+
+For the CTD OBS plugin (only the token that registered `appId`):
+```json
+{ "enabled": true, "port": 4455, "authRequired": true, "password": "…", "addresses": ["192.168.1.42"] }
+```
+→ `200 { "host": "192.168.1.42", "port": 4455, "hasPassword": true, "manualHost": false }`.
+
+- `enabled`, `port`, `authRequired` and `password` are OBS's WebSocket server settings (OBS 28+
+  keeps them in `plugin_config/obs-websocket/config.json`).
+- `addresses` are the OBS machine's LAN IPs, best first. The first private one is used; else the
+  request's own address, if private.
+- `password` omitted keeps the saved one; `authRequired: false` removes it.
+- Relay stores the password encrypted and never logs it; the audit log only records that it
+  changed.
+- An address set by hand in Settings wins over `addresses`.
+- Send it on start, whenever the settings change, and every few minutes. Repeating the same values
+  is cheap and doesn't touch the audit log.
 
 ### `GET /api/v1/obs/socket` — `obs:control` (WebSocket)
 
@@ -954,6 +974,8 @@ the revision in `info.version`.
 - **OBS socket relay (§12):** new scope `obs:control`; `GET /obs/socket` relays obs-websocket 5 to
   OBS on the LAN, so CTD Live mobile controls OBS (scenes, multiview previews, outputs) from
   anywhere. QR-connected phones get `obs:control` (`POST /connect/claim`).
+  `PUT /apps/{appId}/obs-websocket` (`obs:write`): the CTD OBS plugin reports OBS's WebSocket port,
+  password and LAN address, so nobody types them.
 - **Re-paired apps keep their id:** `PUT /apps/{id}` takes over an id whose token was revoked, or
   whose app is offline when the new token is newer and the app is of the same `kind` (instead of
   `409 app_owned`).

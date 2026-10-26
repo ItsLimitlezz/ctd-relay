@@ -57,13 +57,32 @@ const RESTARTING_TEXT = 'CTD Relay is restarting.';
 const OP = { hello: 0, identify: 1, identified: 2, request: 6, requestResponse: 7 } as const;
 
 export interface ObsRelaySettings {
-  /** OBS's address set by hand; null = automatic (the address OBS streams to Relay from). */
+  /** OBS's address set by hand; null = automatic (the plugin's address, else where OBS streams from). */
   host: string | null;
   port: number;
   /** Where OBS last streamed from (the automatic address while OBS isn't streaming). */
   lastSeenHost: string | null;
+  /** The LAN address of the machine running OBS, as the CTD OBS plugin reported it. */
+  pluginHost?: string | null;
+  /** The last report from the CTD OBS plugin (it fills in port and password itself). */
+  reportedBy?: { appId: string; name: string; at: string } | null;
+  /** Whether OBS's WebSocket server is enabled, as the plugin last reported (null = unknown). */
+  serverEnabled?: boolean | null;
 }
 const DEFAULT_SETTINGS: ObsRelaySettings = { host: null, port: DEFAULT_OBS_PORT, lastSeenHost: null };
+
+/** What the CTD OBS plugin reports about OBS's WebSocket server (PUT /apps/{appId}/obs-websocket). */
+export interface PluginWebSocketReport {
+  appId: string;
+  appName: string;
+  enabled: boolean;
+  port: number;
+  authRequired: boolean;
+  /** undefined = not sent (keep the saved one); ignored when authRequired is false. */
+  password?: string | null;
+  /** The OBS machine's LAN address, or null when unknown. */
+  host: string | null;
+}
 
 export interface ObsTarget {
   host: string;
@@ -241,7 +260,46 @@ export class ObsRelay {
 
   async status(): Promise<ObsRelayStatus> {
     const s = this.settings();
-    return { host: s.host, port: s.port, hasPassword: (await this.password()) !== null, detectedHost: await this.detectHost(null), sessions: this.sessions.size };
+    return {
+      host: s.host,
+      port: s.port,
+      hasPassword: (await this.password()) !== null,
+      detectedHost: s.pluginHost ?? (await this.detectHost(null)),
+      sessions: this.sessions.size,
+      reportedBy: s.reportedBy ?? null,
+      serverEnabled: s.serverEnabled ?? null,
+    };
+  }
+
+  /**
+   * The CTD OBS plugin reports OBS's WebSocket settings, so nobody types the password. Port and
+   * password follow OBS; an address set by hand in Settings still wins over the plugin's.
+   * Returns what changed (for the audit log; the plugin may report the same thing every few minutes).
+   */
+  async reportFromPlugin(r: PluginWebSocketReport): Promise<{ changed: string[] }> {
+    const s = this.settings();
+    const changed: string[] = [];
+    if (s.port !== r.port) changed.push('port');
+    if ((s.pluginHost ?? null) !== r.host) changed.push('address');
+    if ((s.serverEnabled ?? null) !== r.enabled) changed.push(r.enabled ? 'server enabled' : 'server disabled');
+    const saved = await this.password();
+    if (!r.authRequired) {
+      if (saved !== null) {
+        await this.secrets().delete(PASSWORD_KEY);
+        changed.push('password removed (authentication is off in OBS)');
+      }
+    } else if (typeof r.password === 'string' && r.password && r.password !== saved) {
+      await this.secrets().set(PASSWORD_KEY, r.password);
+      changed.push('password');
+    }
+    this.services.repos.settings.set(OBS_RELAY_SETTINGS_KEY, {
+      ...s,
+      port: r.port,
+      pluginHost: r.host,
+      serverEnabled: r.enabled,
+      reportedBy: { appId: r.appId, name: r.appName, at: new Date(this.now()).toISOString() },
+    });
+    return { changed };
   }
 
   /** Where OBS streams from right now (the given profile first), else where it last did. */
@@ -267,7 +325,7 @@ export class ObsRelay {
 
   async target(profileId: string | null): Promise<ObsTarget | null> {
     const s = this.settings();
-    const host = s.host ?? (await this.detectHost(profileId));
+    const host = s.host ?? s.pluginHost ?? (await this.detectHost(profileId));
     return host ? { host, port: s.port, password: await this.password() } : null;
   }
 

@@ -422,10 +422,14 @@ export interface ObsRelayStatus {
   host: string | null;
   port: number;
   hasPassword: boolean;
-  /** Where OBS streams from right now, else where it last did (null = never seen). */
+  /** The automatic address: the CTD OBS plugin's machine, else where OBS streams from (null = unknown). */
   detectedHost: string | null;
   /** Phones connected through the relay right now. */
   sessions: number;
+  /** The CTD OBS plugin filled these settings in (its app id, name and when), or null. */
+  reportedBy: { appId: string; name: string; at: string } | null;
+  /** OBS's WebSocket server is on, as the plugin last reported (null = no report). */
+  serverEnabled: boolean | null;
 }
 export interface UpdateObsRelayRequest {
   host: string | null;

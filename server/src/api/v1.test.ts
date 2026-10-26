@@ -162,6 +162,7 @@ describe('GET /openapi.json', () => {
       '/apps/{appId}',
       '/apps/{appId}/heartbeat',
       '/apps/{appId}/events',
+      '/apps/{appId}/obs-websocket',
       '/messages',
       '/connect/claim',
       '/pairing',

@@ -212,6 +212,47 @@ describe('/api/v1/obs/socket', () => {
   });
 });
 
+describe('PUT /api/v1/apps/{appId}/obs-websocket (the CTD OBS plugin fills in OBS’s settings)', () => {
+  const put = (token: string, appId: string, body: unknown) =>
+    t.app.inject({ method: 'PUT', url: `/api/v1/apps/${appId}/obs-websocket`, headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' }, payload: JSON.stringify(body) });
+
+  it('stores port, password and the OBS machine’s LAN address, then the relay uses them', async () => {
+    const relay = obsRelayFor(t.services);
+    await relay.configure({ host: null, port: 4455, password: null });
+    const plugin = t.token(['apps:write', 'obs:write'], 'CTD OBS plugin');
+    expect((await t.app.inject({ method: 'PUT', url: '/api/v1/apps/ctd-obs-plugin-studio', headers: { authorization: `Bearer ${plugin}`, 'content-type': 'application/json' }, payload: JSON.stringify({ name: 'CTD OBS plugin', kind: 'ctd-obs-plugin' }) })).statusCode).toBe(200);
+
+    // 127.0.0.1 isn't a LAN address: no host from it; the plugin's own address list is used instead.
+    const res = await put(plugin, 'ctd-obs-plugin-studio', { enabled: true, port: obs.port, authRequired: true, password: 'obs-secret', addresses: ['fe80::1', '192.168.1.42'] });
+    expect(res.statusCode, res.body).toBe(200);
+    expect(res.json()).toEqual({ host: '192.168.1.42', port: obs.port, hasPassword: true, manualHost: false });
+    expect(await relay.status()).toMatchObject({ detectedHost: '192.168.1.42', hasPassword: true, serverEnabled: true, reportedBy: { appId: 'ctd-obs-plugin-studio', name: 'CTD OBS plugin' } });
+    expect(JSON.stringify(t.repos.audit.list({ limit: 5 }))).not.toContain('obs-secret');
+    expect(t.repos.audit.list({ limit: 5 })[0]).toMatchObject({ action: 'obs_relay.plugin_update' });
+
+    // The fake OBS is on 127.0.0.1: set that by hand (a manual address wins) and connect through the relay.
+    await relay.configure({ host: '127.0.0.1', port: obs.port });
+    const phone = connect();
+    await identified(phone);
+    expect((await phone.next()).op).toBe(2); // the plugin's password signed Relay in to OBS
+
+    // Authentication turned off in OBS: the saved password goes.
+    await put(plugin, 'ctd-obs-plugin-studio', { enabled: false, port: obs.port, authRequired: false });
+    expect(await relay.status()).toMatchObject({ hasPassword: false, serverEnabled: false });
+    phone.ws.close();
+  });
+
+  it('needs obs:write and the plugin’s own registered app', async () => {
+    const reader = t.token(['status:read'], 'reader');
+    expect((await put(reader, 'x', { enabled: true, port: 4455, authRequired: false })).statusCode).toBe(403);
+    const plugin = t.token(['apps:write', 'obs:write'], 'plugin');
+    expect((await put(plugin, 'nobody', { enabled: true, port: 4455, authRequired: false })).statusCode).toBe(404);
+    await t.app.inject({ method: 'PUT', url: '/api/v1/apps/p1', headers: { authorization: `Bearer ${plugin}`, 'content-type': 'application/json' }, payload: JSON.stringify({ name: 'P', kind: 'ctd-obs-plugin' }) });
+    expect((await put(plugin, 'p1', { enabled: 'yes', port: 4455 })).statusCode).toBe(400);
+    expect((await put(t.token(['apps:write', 'obs:write'], 'other'), 'p1', { enabled: true, port: 4455, authRequired: false })).statusCode).toBe(409);
+  });
+});
+
 describe('helpers', () => {
   it('computes obs-websocket authentication (the protocol docs’ example)', () => {
     expect(obsAuthString('supersecretpassword', 'lM1GncleQOaCu9lT1yeUZhFYnqhsLLP1G5lAGo3ixaI=', '+IxH4CnCiqpX1rM9scsNynZzbOe4KhDeYcTNS3PDaeY=')).toBe(

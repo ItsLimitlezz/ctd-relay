@@ -1189,11 +1189,25 @@ export function ObsRelayCard() {
         )
       ) : (
         <form className="stack" onSubmit={save}>
-          <p className="small">
-            In OBS: <strong>Tools → WebSocket Server Settings</strong>, tick <strong>Enable WebSocket server</strong>, then copy the
-            port and password here (<strong>Show Connect Info</strong> shows both). The password stays on this server: phones never
-            see it.
-          </p>
+          {s.reportedBy ? (
+            <div className="alert alert-success" role="status">
+              Filled in by <strong>{s.reportedBy.name}</strong> (the CTD OBS plugin), {formatDateTime(s.reportedBy.at)}. It keeps the
+              port and password in step with OBS, so there is nothing to type.
+            </div>
+          ) : (
+            <p className="small">
+              The CTD OBS plugin fills this in by itself. Without it: in OBS, <strong>Tools → WebSocket Server Settings</strong>, tick{' '}
+              <strong>Enable WebSocket server</strong>, then copy the port and password here (<strong>Show Connect Info</strong> shows
+              both).
+            </p>
+          )}
+          {s.serverEnabled === false && (
+            <div className="alert alert-warn" role="alert">
+              OBS's WebSocket server is off, so phones can't control OBS. In OBS: <strong>Tools → WebSocket Server Settings</strong> →{' '}
+              <strong>Enable WebSocket server</strong>.
+            </div>
+          )}
+          <p className="muted small">The password stays on this server: phones never see it.</p>
           <Field
             label="OBS address"
             help={
