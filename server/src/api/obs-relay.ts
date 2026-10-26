@@ -80,6 +80,11 @@ export interface ObsRelaySettings {
 
 export interface PluginShare {
   appId: string;
+  /**
+   * The token that registered the app and made the share. A share counts only while that same token
+   * owns the app: a takeover or re-pair (a new token on the same id) never revives it.
+   */
+  tokenId?: string;
   name: string;
   /** When the plugin last reported. */
   at: string;
@@ -93,6 +98,8 @@ const DEFAULT_SETTINGS: ObsRelaySettings = { host: null, port: DEFAULT_OBS_PORT,
 /** What the CTD OBS plugin reports about OBS's WebSocket server (PUT /apps/{appId}/obs-websocket). */
 export interface PluginWebSocketReport {
   appId: string;
+  /** The token that sent the report (it owns the app). */
+  tokenId?: string;
   appName: string;
   /** False = OBS's WebSocket server is off, or sharing was turned off in the plugin: forget and don't connect. */
   enabled: boolean;
@@ -267,6 +274,10 @@ export class ObsRelay {
       if (this.seenFeeds.size > 200) this.seenFeeds.delete(this.seenFeeds.values().next().value!);
       void this.detectHost(state.profileId ?? null).catch(() => {});
     });
+    // An app removed (DELETE /apps/{id}, token revoked) or taken over by another token: drop its share now.
+    services.bus?.on('apps-changed', () => {
+      void this.dropStaleShare().catch((err: unknown) => this.log.warn({ err }, 'obs relay: dropping a stale OBS share failed'));
+    });
   }
 
   // ---- settings ----
@@ -295,12 +306,37 @@ export class ObsRelay {
     this.services.repos.settings.set(OBS_RELAY_SETTINGS_KEY, next);
   }
 
-  /** The plugin's share, while the app that made it is still registered (else null). */
+  /** The plugin's share, while the app that made it is still registered to the same token (else null). */
   private activePlugin(s: ObsRelaySettings): PluginShare | null {
     const p = s.plugin ?? null;
     if (!p) return null;
     const apps = this.services.apps;
-    return !apps || apps.get(p.appId) ? p : null;
+    if (!apps) return p;
+    const app = apps.get(p.appId);
+    if (!app) return null;
+    return !p.tokenId || app.tokenId === p.tokenId ? p : null;
+  }
+
+  /**
+   * Drop a share whose app was removed or taken over (DELETE /apps/{id}, a revoked token, a new
+   * token on the id), with the password it brought. Runs on every apps change, so nothing stale
+   * lingers until the next phone connects.
+   */
+  async dropStaleShare(): Promise<void> {
+    const s = this.settings();
+    if (!s.plugin || this.activePlugin(s)) return;
+    const dropped = s.plugin;
+    const pluginPassword = s.passwordFrom === 'plugin';
+    // Settings first (synchronously), so no other report can interleave with a stale copy.
+    this.services.repos.settings.set(OBS_RELAY_SETTINGS_KEY, { ...s, plugin: null, ...(pluginPassword ? { passwordFrom: 'manual' as const } : {}) });
+    if (pluginPassword) await this.secrets().delete(PASSWORD_KEY);
+    this.log.info({ appId: dropped.appId }, 'obs relay: dropped the OBS share of a removed or taken-over app');
+    this.services.repos.audit.log({
+      userId: null,
+      username: null,
+      action: 'obs_relay.plugin_share_dropped',
+      detail: `OBS WebSocket share from ${dropped.name} (${dropped.appId}) dropped: the app was removed or re-registered by another token${pluginPassword ? '; password forgotten' : ''}`,
+    });
   }
 
   async status(): Promise<ObsRelayStatus> {
@@ -340,7 +376,14 @@ export class ObsRelay {
     const s = this.settings();
     const before = this.activePlugin(s);
     const changed: string[] = [];
-    const share: PluginShare = { appId: r.appId, name: r.appName, at: new Date(this.now()).toISOString(), enabled: r.enabled, host: r.enabled ? r.host : null };
+    const share: PluginShare = {
+      appId: r.appId,
+      ...(r.tokenId ? { tokenId: r.tokenId } : {}),
+      name: r.appName,
+      at: new Date(this.now()).toISOString(),
+      enabled: r.enabled,
+      host: r.enabled ? r.host : null,
+    };
     if (!before || before.appId !== r.appId) changed.push(`shared by ${r.appName}`);
     if ((before?.enabled ?? null) !== r.enabled) changed.push(r.enabled ? 'sharing on' : 'sharing off');
     if (r.enabled && (before?.host ?? null) !== share.host) changed.push('address');

@@ -63,6 +63,7 @@ export function registerObsSocketRoute(app: FastifyInstance, ctx: V1Context): vo
     const host = obsHostFrom(body.addresses, req.ip);
     const { changed } = await relay.reportFromPlugin({
       appId: id,
+      tokenId: token.id,
       appName: appRecord.name,
       enabled: body.enabled,
       port: body.port,

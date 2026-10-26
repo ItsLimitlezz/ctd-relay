@@ -933,8 +933,9 @@ For the CTD OBS plugin (only the token that registered `appId`):
 - `enabled: false` means OBS's WebSocket server is off, or the user turned sharing off in the
   plugin. Relay forgets the shared password and refuses phones with 4100 ("OBS isn't shared with
   CTD Relay…") instead of connecting.
-- The share counts only while the app that made it is registered. `DELETE /apps/{appId}` (the
-  plugin disconnecting) drops it, password included.
+- The share counts only while the app that made it is registered to the same token. `DELETE
+  /apps/{appId}` (the plugin disconnecting), revoking its token, or another token taking the id over
+  drops it at once, password included. Re-registering the id never brings an old share back.
 - Relay stores the password encrypted and never logs it; the audit log only records that it
   changed.
 - An address set by hand in Settings wins over `addresses`, and connects even while sharing is off.

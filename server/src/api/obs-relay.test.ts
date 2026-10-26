@@ -276,10 +276,15 @@ describe('PUT /api/v1/apps/{appId}/obs-websocket (the CTD OBS plugin fills in OB
     await put(plugin, 'ctd-obs-plugin-studio', { enabled: true, port: obs.port, authRequired: true, password: 'obs-secret', addresses: ['192.168.1.42'] });
     expect(await relay.status()).toMatchObject({ hasPassword: true, detectedHost: '192.168.1.42' });
 
-    // Disconnecting the plugin deletes its app: its address and password no longer count.
+    // Disconnecting the plugin deletes its app: the share and its password go at once (not lazily on
+    // the next status or phone), so a later registration of the same id can't bring them back.
     t.apps.remove('ctd-obs-plugin-studio');
-    expect(await relay.status()).toMatchObject({ hasPassword: false, reportedBy: null, serverEnabled: null });
+    await new Promise((r) => setTimeout(r, 0));
+    expect(relay.settings().plugin).toBeNull();
     expect(await t.services.repos.secrets.scoped('obs-relay').get('password')).toBeNull();
+    expect(t.repos.audit.list({ limit: 1 })[0]).toMatchObject({ action: 'obs_relay.plugin_share_dropped' });
+    await register(); // the same id registered again by the same token: still nothing shared
+    expect(await relay.status()).toMatchObject({ hasPassword: false, reportedBy: null, serverEnabled: null });
 
     // A password typed in Settings survives the plugin reporting "authentication off".
     await relay.configure({ host: '127.0.0.1', port: obs.port, password: 'typed-by-admin' });
@@ -289,6 +294,32 @@ describe('PUT /api/v1/apps/{appId}/obs-websocket (the CTD OBS plugin fills in OB
     // ...and the plugin's real password replaces it once OBS asks for one.
     await put(plugin, 'ctd-obs-plugin-studio', { enabled: true, port: obs.port, authRequired: true, password: 'obs-secret' });
     expect(await t.services.repos.secrets.scoped('obs-relay').get('password')).toBe('obs-secret');
+  });
+
+  it('a takeover of the app id by another token drops the old share and its password', async () => {
+    const relay = obsRelayFor(t.services);
+    await relay.configure({ host: null, port: obs.port, password: null });
+    const reg = (token: string) =>
+      t.app.inject({ method: 'PUT', url: '/api/v1/apps/ctd-obs-plugin-studio', headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' }, payload: JSON.stringify({ name: 'CTD OBS plugin', kind: 'ctd-obs-plugin' }) });
+    const oldToken = t.token(['apps:write', 'obs:write'], 'old pairing');
+    expect((await reg(oldToken)).statusCode).toBe(200);
+    expect((await put(oldToken, 'ctd-obs-plugin-studio', { enabled: true, port: obs.port, authRequired: true, password: 'old-secret', addresses: ['192.168.1.42'] })).statusCode).toBe(200);
+
+    // The old token is revoked without its apps being removed (e.g. straight in the database), then a
+    // new pairing takes the id over: the old share must not carry over to the new owner.
+    const oldId = t.repos.apiTokens.list().find((tk) => tk.name === 'old pairing')!.id;
+    t.repos.apiTokens.delete(oldId);
+    const newToken = t.token(['apps:write', 'obs:write'], 'new pairing');
+    expect((await reg(newToken)).statusCode).toBe(200);
+    await new Promise((r) => setTimeout(r, 0));
+    expect(relay.settings().plugin).toBeNull();
+    expect(await t.services.repos.secrets.scoped('obs-relay').get('password')).toBeNull();
+    expect(await relay.status()).toMatchObject({ reportedBy: null, hasPassword: false });
+
+    // The new owner shares its own.
+    expect((await put(newToken, 'ctd-obs-plugin-studio', { enabled: true, port: obs.port, authRequired: true, password: 'new-secret', addresses: ['192.168.1.42'] })).statusCode).toBe(200);
+    expect(await relay.status()).toMatchObject({ hasPassword: true, reportedBy: { appId: 'ctd-obs-plugin-studio' } });
+    expect(await t.services.repos.secrets.scoped('obs-relay').get('password')).toBe('new-secret');
   });
 
   it('needs obs:write and the plugin’s own registered app', async () => {
