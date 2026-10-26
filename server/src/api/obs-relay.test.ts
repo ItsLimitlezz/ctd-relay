@@ -180,6 +180,22 @@ describe('/api/v1/obs/socket', () => {
     phone.ws.close();
   });
 
+  it('remembers where OBS streamed from when a feed comes online, for phones that connect later', async () => {
+    const relay = obsRelayFor(t.services);
+    await relay.configure({ host: null, port: obs.port });
+    const media = t.services.media as { publisherAddress?: (id: string) => Promise<string | null> };
+    media.publisherAddress = async () => '127.0.0.1';
+    t.bus.emit('feed', { profileId: 'default', feed: 'landscape', online: true, since: '2026-10-26T16:40:00.000Z', video: null, audio: null, bitrateKbps: 6000 } as never);
+    for (let i = 0; i < 50 && relay.settings().lastSeenHost !== '127.0.0.1'; i++) await new Promise((r) => setTimeout(r, 10));
+    expect(relay.settings().lastSeenHost).toBe('127.0.0.1');
+    // OBS stops streaming; a phone connecting now still reaches it.
+    media.publisherAddress = async () => null;
+    const phone = connect();
+    await identified(phone);
+    expect((await phone.next()).op).toBe(2);
+    phone.ws.close();
+  });
+
   it('passes OBS closing on, and cuts off a revoked phone', async () => {
     let phone = connect();
     await identified(phone);
@@ -236,10 +252,43 @@ describe('PUT /api/v1/apps/{appId}/obs-websocket (the CTD OBS plugin fills in OB
     await identified(phone);
     expect((await phone.next()).op).toBe(2); // the plugin's password signed Relay in to OBS
 
-    // Authentication turned off in OBS: the saved password goes.
-    await put(plugin, 'ctd-obs-plugin-studio', { enabled: false, port: obs.port, authRequired: false });
-    expect(await relay.status()).toMatchObject({ hasPassword: false, serverEnabled: false });
     phone.ws.close();
+    await phone.closed;
+
+    // Sharing turned off in the plugin (or OBS's server off): its password goes, and phones are
+    // refused with 4100 instead of connecting.
+    await relay.configure({ host: null, port: obs.port });
+    await put(plugin, 'ctd-obs-plugin-studio', { enabled: false, port: obs.port, authRequired: false });
+    expect(await relay.status()).toMatchObject({ hasPassword: false, serverEnabled: false, reportedBy: { appId: 'ctd-obs-plugin-studio' } });
+    const socketsBefore = obs.sockets.length;
+    const refused = connect();
+    expect(await refused.closed).toEqual({ code: OBS_RELAY_CLOSE.notConfigured, reason: expect.stringContaining("isn't shared") });
+    expect(obs.sockets.length).toBe(socketsBefore); // Relay never opened OBS
+  });
+
+  it('forgets what a disconnected plugin shared; a password typed in Settings stays', async () => {
+    const relay = obsRelayFor(t.services);
+    const plugin = t.token(['apps:write', 'obs:write'], 'CTD OBS plugin');
+    const register = () =>
+      t.app.inject({ method: 'PUT', url: '/api/v1/apps/ctd-obs-plugin-studio', headers: { authorization: `Bearer ${plugin}`, 'content-type': 'application/json' }, payload: JSON.stringify({ name: 'CTD OBS plugin', kind: 'ctd-obs-plugin' }) });
+    await relay.configure({ host: null, port: obs.port, password: null });
+    await register();
+    await put(plugin, 'ctd-obs-plugin-studio', { enabled: true, port: obs.port, authRequired: true, password: 'obs-secret', addresses: ['192.168.1.42'] });
+    expect(await relay.status()).toMatchObject({ hasPassword: true, detectedHost: '192.168.1.42' });
+
+    // Disconnecting the plugin deletes its app: its address and password no longer count.
+    t.apps.remove('ctd-obs-plugin-studio');
+    expect(await relay.status()).toMatchObject({ hasPassword: false, reportedBy: null, serverEnabled: null });
+    expect(await t.services.repos.secrets.scoped('obs-relay').get('password')).toBeNull();
+
+    // A password typed in Settings survives the plugin reporting "authentication off".
+    await relay.configure({ host: '127.0.0.1', port: obs.port, password: 'typed-by-admin' });
+    await register();
+    await put(plugin, 'ctd-obs-plugin-studio', { enabled: true, port: obs.port, authRequired: false });
+    expect((await relay.status()).hasPassword).toBe(true);
+    // ...and the plugin's real password replaces it once OBS asks for one.
+    await put(plugin, 'ctd-obs-plugin-studio', { enabled: true, port: obs.port, authRequired: true, password: 'obs-secret' });
+    expect(await t.services.repos.secrets.scoped('obs-relay').get('password')).toBe('obs-secret');
   });
 
   it('needs obs:write and the plugin’s own registered app', async () => {

@@ -1203,8 +1203,8 @@ export function ObsRelayCard() {
           )}
           {s.serverEnabled === false && (
             <div className="alert alert-warn" role="alert">
-              OBS's WebSocket server is off, so phones can't control OBS. In OBS: <strong>Tools → WebSocket Server Settings</strong> →{' '}
-              <strong>Enable WebSocket server</strong>.
+              Phones can't control OBS: sharing is off in OBS's <strong>CTD Relay</strong> dock, or OBS's WebSocket server is off (
+              <strong>Tools → WebSocket Server Settings</strong> → <strong>Enable WebSocket server</strong>).
             </div>
           )}
           <p className="muted small">The password stays on this server: phones never see it.</p>

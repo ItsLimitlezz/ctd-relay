@@ -53,6 +53,7 @@ export const OBS_RELAY_CLOSE = {
 
 // Close reasons are shown to people as they are (≤ 123 bytes, see closeReason).
 const NOT_CONFIGURED_TEXT = "CTD Relay doesn't know OBS's address yet: stream to Relay once, or set it in Settings → API.";
+const SHARING_OFF_TEXT = "OBS isn't shared with CTD Relay: turn sharing on in OBS's CTD Relay dock, and OBS's WebSocket server.";
 const AUTH_FAILED_TEXT = "OBS rejected CTD Relay's OBS password. Fix it in Relay: Settings → API → OBS.";
 const NEEDS_PASSWORD_TEXT = 'OBS asks for a password: enter it in CTD Relay, Settings → API → OBS.';
 const OBS_CLOSED_TEXT = 'OBS closed the connection (OBS quit or restarted).';
@@ -68,12 +69,24 @@ export interface ObsRelaySettings {
   port: number;
   /** Where OBS last streamed from (the automatic address while OBS isn't streaming). */
   lastSeenHost: string | null;
-  /** The LAN address of the machine running OBS, as the CTD OBS plugin reported it. */
-  pluginHost?: string | null;
-  /** The last report from the CTD OBS plugin (it fills in port and password itself). */
-  reportedBy?: { appId: string; name: string; at: string } | null;
-  /** Whether OBS's WebSocket server is enabled, as the plugin last reported (null = unknown). */
-  serverEnabled?: boolean | null;
+  /**
+   * The CTD OBS plugin's last report (PUT /apps/{appId}/obs-websocket). It counts only while that
+   * app is still registered: disconnecting the plugin deletes the app, and with it this share.
+   */
+  plugin?: PluginShare | null;
+  /** Who saved the OBS password: typed in Settings ('manual', the default) or shared by the plugin. */
+  passwordFrom?: 'manual' | 'plugin';
+}
+
+export interface PluginShare {
+  appId: string;
+  name: string;
+  /** When the plugin last reported. */
+  at: string;
+  /** False: OBS's WebSocket server is off, or the user stopped sharing it in the plugin: don't connect. */
+  enabled: boolean;
+  /** The OBS machine's LAN address, or null when the plugin couldn't tell. */
+  host: string | null;
 }
 const DEFAULT_SETTINGS: ObsRelaySettings = { host: null, port: DEFAULT_OBS_PORT, lastSeenHost: null };
 
@@ -81,6 +94,7 @@ const DEFAULT_SETTINGS: ObsRelaySettings = { host: null, port: DEFAULT_OBS_PORT,
 export interface PluginWebSocketReport {
   appId: string;
   appName: string;
+  /** False = OBS's WebSocket server is off, or sharing was turned off in the plugin: forget and don't connect. */
   enabled: boolean;
   port: number;
   authRequired: boolean;
@@ -229,8 +243,11 @@ export class ObsRelay {
   private readonly idleTimeoutMs: number;
   private readonly timer: NodeJS.Timeout;
 
+  /** OBS connections (profile:feed:since) whose publisher address was already looked up. */
+  private readonly seenFeeds = new Set<string>();
+
   constructor(
-    private readonly services: Pick<AppServices, 'repos' | 'media' | 'log'>,
+    private readonly services: Pick<AppServices, 'repos' | 'media' | 'log'> & Partial<Pick<AppServices, 'bus' | 'apps'>>,
     deps: ObsRelayDeps = {},
   ) {
     this.log = services.log.child({ mod: 'obs-relay' });
@@ -240,6 +257,16 @@ export class ObsRelay {
     this.idleTimeoutMs = deps.idleTimeoutMs ?? IDLE_TIMEOUT_MS;
     this.timer = setInterval(() => this.maintain(), deps.maintenanceIntervalMs ?? MAINTENANCE_INTERVAL_MS);
     this.timer.unref();
+    // Remember where OBS streams from whenever a feed comes online, so a phone that connects later,
+    // while OBS isn't streaming, still finds it ("stream to Relay once").
+    services.bus?.on('feed', (state) => {
+      if (!state.online || !state.since) return;
+      const key = `${state.profileId ?? DEFAULT_PROFILE_ID}:${state.feed}:${state.since}`;
+      if (this.seenFeeds.has(key)) return;
+      this.seenFeeds.add(key);
+      if (this.seenFeeds.size > 200) this.seenFeeds.delete(this.seenFeeds.values().next().value!);
+      void this.detectHost(state.profileId ?? null).catch(() => {});
+    });
   }
 
   // ---- settings ----
@@ -256,54 +283,89 @@ export class ObsRelay {
     return (await this.secrets().get(PASSWORD_KEY)) || null;
   }
 
-  /** `password`: undefined keeps the saved one, '' or null removes it. */
+  /** `password`: undefined keeps the saved one, '' or null removes it. A password typed here is 'manual'. */
   async configure(input: { host: string | null; port: number; password?: string | null }): Promise<void> {
-    this.services.repos.settings.set(OBS_RELAY_SETTINGS_KEY, { ...this.settings(), host: input.host, port: input.port });
-    if (input.password === undefined) return;
-    if (input.password) await this.secrets().set(PASSWORD_KEY, input.password);
-    else await this.secrets().delete(PASSWORD_KEY);
+    const s = this.settings();
+    const next: ObsRelaySettings = { ...s, host: input.host, port: input.port };
+    if (input.password !== undefined) {
+      if (input.password) await this.secrets().set(PASSWORD_KEY, input.password);
+      else await this.secrets().delete(PASSWORD_KEY);
+      next.passwordFrom = 'manual';
+    }
+    this.services.repos.settings.set(OBS_RELAY_SETTINGS_KEY, next);
+  }
+
+  /** The plugin's share, while the app that made it is still registered (else null). */
+  private activePlugin(s: ObsRelaySettings): PluginShare | null {
+    const p = s.plugin ?? null;
+    if (!p) return null;
+    const apps = this.services.apps;
+    return !apps || apps.get(p.appId) ? p : null;
   }
 
   async status(): Promise<ObsRelayStatus> {
     const s = this.settings();
+    const plugin = this.activePlugin(s);
     return {
       host: s.host,
       port: s.port,
-      hasPassword: (await this.password()) !== null,
-      detectedHost: s.pluginHost ?? (await this.detectHost(null)),
+      hasPassword: (await this.currentPassword(s)) !== null,
+      detectedHost: plugin?.host ?? (await this.detectHost(null)),
       sessions: this.sessions.size,
-      reportedBy: s.reportedBy ?? null,
-      serverEnabled: s.serverEnabled ?? null,
+      reportedBy: plugin ? { appId: plugin.appId, name: plugin.name, at: plugin.at } : null,
+      serverEnabled: plugin ? plugin.enabled : null,
     };
   }
 
   /**
+   * The saved password, minus one the plugin shared if that plugin is gone (disconnecting it deletes
+   * its app, and with it what it shared).
+   */
+  private async currentPassword(s: ObsRelaySettings): Promise<string | null> {
+    if (s.passwordFrom === 'plugin' && !this.activePlugin(s)) {
+      await this.secrets().delete(PASSWORD_KEY);
+      this.services.repos.settings.set(OBS_RELAY_SETTINGS_KEY, { ...this.settings(), passwordFrom: 'manual' });
+      return null;
+    }
+    return this.password();
+  }
+
+  /**
    * The CTD OBS plugin reports OBS's WebSocket settings, so nobody types the password. Port and
-   * password follow OBS; an address set by hand in Settings still wins over the plugin's.
-   * Returns what changed (for the audit log; the plugin may report the same thing every few minutes).
+   * password follow OBS; an address typed in Settings still wins. `enabled: false` (OBS's server
+   * off, or sharing turned off in the plugin) forgets what the plugin shared and stops the relay
+   * from connecting. Returns what changed (for the audit log; the plugin repeats itself every few minutes).
    */
   async reportFromPlugin(r: PluginWebSocketReport): Promise<{ changed: string[] }> {
     const s = this.settings();
+    const before = this.activePlugin(s);
     const changed: string[] = [];
-    if (s.port !== r.port) changed.push('port');
-    if ((s.pluginHost ?? null) !== r.host) changed.push('address');
-    if ((s.serverEnabled ?? null) !== r.enabled) changed.push(r.enabled ? 'server enabled' : 'server disabled');
+    const share: PluginShare = { appId: r.appId, name: r.appName, at: new Date(this.now()).toISOString(), enabled: r.enabled, host: r.enabled ? r.host : null };
+    if (!before || before.appId !== r.appId) changed.push(`shared by ${r.appName}`);
+    if ((before?.enabled ?? null) !== r.enabled) changed.push(r.enabled ? 'sharing on' : 'sharing off');
+    if (r.enabled && (before?.host ?? null) !== share.host) changed.push('address');
+    if (r.enabled && s.port !== r.port) changed.push('port');
+
     const saved = await this.password();
-    if (!r.authRequired) {
-      if (saved !== null) {
+    let passwordFrom = s.passwordFrom;
+    const pluginPassword = s.passwordFrom === 'plugin';
+    if (!r.enabled || !r.authRequired) {
+      // Forget a password the plugin shared; one typed in Settings is the admin's to remove.
+      if (pluginPassword && saved !== null) {
         await this.secrets().delete(PASSWORD_KEY);
-        changed.push('password removed (authentication is off in OBS)');
+        passwordFrom = 'manual';
+        changed.push('password forgotten');
       }
-    } else if (typeof r.password === 'string' && r.password && r.password !== saved) {
+    } else if (typeof r.password === 'string' && r.password && (r.password !== saved || !pluginPassword)) {
       await this.secrets().set(PASSWORD_KEY, r.password);
-      changed.push('password');
+      passwordFrom = 'plugin';
+      if (r.password !== saved) changed.push('password');
     }
     this.services.repos.settings.set(OBS_RELAY_SETTINGS_KEY, {
       ...s,
-      port: r.port,
-      pluginHost: r.host,
-      serverEnabled: r.enabled,
-      reportedBy: { appId: r.appId, name: r.appName, at: new Date(this.now()).toISOString() },
+      ...(r.enabled ? { port: r.port } : {}),
+      plugin: share,
+      ...(passwordFrom ? { passwordFrom } : {}),
     });
     return { changed };
   }
@@ -329,16 +391,29 @@ export class ObsRelay {
     return this.settings().lastSeenHost;
   }
 
+  /**
+   * Where the relay connects: an address typed in Settings, else the plugin's (refused with 4100
+   * while the plugin says sharing is off), else where OBS streams from. Null = no address known.
+   */
   async target(profileId: string | null): Promise<ObsTarget | null> {
     const s = this.settings();
-    const host = s.host ?? s.pluginHost ?? (await this.detectHost(profileId));
-    return host ? { host, port: s.port, password: await this.password() } : null;
+    const plugin = this.activePlugin(s);
+    const password = await this.currentPassword(s);
+    if (s.host) return { host: s.host, port: s.port, password };
+    if (plugin && !plugin.enabled) throw new ObsRelayError(OBS_RELAY_CLOSE.notConfigured, SHARING_OFF_TEXT);
+    const host = plugin?.host ?? (await this.detectHost(profileId));
+    return host ? { host, port: s.port, password } : null;
   }
 
   /** Settings → API "Test": connect to OBS as the relay would and ask for its version. */
   async test(): Promise<ObsRelayTestResult> {
     const port = this.settings().port;
-    const target = await this.target(null);
+    let target: ObsTarget | null;
+    try {
+      target = await this.target(null);
+    } catch (err) {
+      return { ok: false, host: null, port, error: err instanceof Error ? err.message : String(err) };
+    }
     if (!target) return { ok: false, host: null, port, error: NOT_CONFIGURED_TEXT };
     let socket: WebSocket | null = null;
     try {
@@ -587,7 +662,7 @@ export class ObsRelay {
 const registry = new WeakMap<object, ObsRelay>();
 
 /** The OBS relay of these services (one per process, shared by the /api/v1 route and Settings → API). */
-export function obsRelayFor(services: Pick<AppServices, 'repos' | 'media' | 'log'>, deps?: ObsRelayDeps): ObsRelay {
+export function obsRelayFor(services: Pick<AppServices, 'repos' | 'media' | 'log'> & Partial<Pick<AppServices, 'bus' | 'apps'>>, deps?: ObsRelayDeps): ObsRelay {
   let relay = registry.get(services);
   if (!relay) {
     relay = new ObsRelay(services, deps);

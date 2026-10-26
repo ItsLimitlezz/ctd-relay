@@ -928,10 +928,16 @@ For the CTD OBS plugin (only the token that registered `appId`):
   keeps them in `plugin_config/obs-websocket/config.json`).
 - `addresses` are the OBS machine's LAN IPs, best first. The first private one is used; else the
   request's own address, if private.
-- `password` omitted keeps the saved one; `authRequired: false` removes it.
+- `password` omitted keeps the saved one; `authRequired: false` removes a password the plugin
+  shared (one typed in Settings stays).
+- `enabled: false` means OBS's WebSocket server is off, or the user turned sharing off in the
+  plugin. Relay forgets the shared password and refuses phones with 4100 ("OBS isn't shared with
+  CTD Relay…") instead of connecting.
+- The share counts only while the app that made it is registered. `DELETE /apps/{appId}` (the
+  plugin disconnecting) drops it, password included.
 - Relay stores the password encrypted and never logs it; the audit log only records that it
   changed.
-- An address set by hand in Settings wins over `addresses`.
+- An address set by hand in Settings wins over `addresses`, and connects even while sharing is off.
 - Send it on start, whenever the settings change, and every few minutes. Repeating the same values
   is cheap and doesn't touch the audit log.
 
@@ -951,7 +957,7 @@ Relay's own close codes (the reason is a sentence to show people):
 
 | Code | Meaning |
 |---|---|
-| 4100 | OBS's address isn't known yet (no address set, OBS never streamed to Relay) |
+| 4100 | OBS's address isn't known yet (no address set, OBS never streamed to Relay), or the CTD OBS plugin says OBS isn't shared |
 | 4101 | Relay can't reach OBS (closed, WebSocket server off, PC asleep) or OBS didn't answer in time; retry with backoff |
 | 4102 | OBS rejected the OBS password saved in Relay (or asks for one and none is saved) |
 | 4103 | OBS went away mid-session; reconnect with backoff |
