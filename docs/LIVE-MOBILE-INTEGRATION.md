@@ -116,8 +116,9 @@ On Android (OkHttp): `Request.Builder().url(…).header("Authorization", "Bearer
 `authentication` field**. The bearer token already signed the phone in, so the existing code path
 sends `Identify` (op 1) without `authentication`. In detail:
 
-- Relay sends `Hello` only once it has reached OBS, usually within a second and always within 6 s. That
-  fits the client's 10 s wait.
+- Relay sends `Hello` only once it has reached OBS, usually within a second and always within 5 s.
+  After your `Identify`, OBS's `Identified` follows within 3 s, or Relay closes with 4101. The worst
+  case, 8 s in all, fits a client's 10 s wait.
 - `Hello.d.obsWebSocketVersion` and `rpcVersion` are the real OBS values.
 - Your `Identify.eventSubscriptions` and `rpcVersion` are passed through to OBS as they are, including
   high-volume subscriptions such as `InputVolumeMeters`.

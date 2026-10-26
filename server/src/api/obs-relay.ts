@@ -21,8 +21,14 @@ export const DEFAULT_OBS_PORT = 4455;
 export const OBS_RELAY_SETTINGS_KEY = 'obsRelay';
 export const OBS_RELAY_SECRETS_SCOPE = 'obs-relay';
 const PASSWORD_KEY = 'password';
-/** How long Relay waits for OBS's Hello, and for its Identified (the phone waits 10 s for each). */
-export const OBS_CONNECT_TIMEOUT_MS = 6_000;
+/** How long Relay waits to reach OBS and get its Hello (the phone gets Relay's Hello only after that). */
+export const OBS_CONNECT_TIMEOUT_MS = 5_000;
+/**
+ * How long Relay waits for OBS's Identified after forwarding the phone's Identify. OBS answers in
+ * milliseconds on a LAN; with OBS_CONNECT_TIMEOUT_MS this keeps the worst case under the 10 s an
+ * obs-websocket client waits, so the phone shows Relay's reason rather than its own timeout.
+ */
+export const OBS_IDENTIFY_TIMEOUT_MS = 3_000;
 export const MAX_SOCKETS_PER_TOKEN = 4;
 /** Pings both ways, drops sockets silent for IDLE_TIMEOUT_MS and phones whose token was revoked. */
 export const MAINTENANCE_INTERVAL_MS = 15_000;
@@ -471,7 +477,7 @@ export class ObsRelay {
         return;
       }
       phase = 'identifying';
-      identifyTimer = setTimeout(() => session.finish(OBS_RELAY_CLOSE.unreachable, IDENTIFY_TIMEOUT_TEXT), this.timeoutMs);
+      identifyTimer = setTimeout(() => session.finish(OBS_RELAY_CLOSE.unreachable, IDENTIFY_TIMEOUT_TEXT), Math.min(this.timeoutMs, OBS_IDENTIFY_TIMEOUT_MS));
       obs.send(identify);
     });
 
