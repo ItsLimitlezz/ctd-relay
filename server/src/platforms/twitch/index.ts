@@ -1,5 +1,5 @@
 // Twitch driver: device-code login (public client), title + stream key + viewer count over Helix,
-// anonymous IRC chat (with moderation and alerts), and three Dual Format modes (relay one feed / OBS
+// anonymous IRC chat (with moderation and alerts) plus follow alerts over EventSub, and three Dual Format modes (relay one feed / OBS
 // direct / Relay encodes both feeds as Enhanced Broadcasting tracks, multitrack.ts). Session test mode streams as a bandwidth test and leaves
 // the (public) channel title alone; it can't reach OBS's own output in "OBS direct" mode, so that
 // destination carries a warning on its card instead.
@@ -17,10 +17,12 @@ import {
   type PushPlan,
 } from '../types.js';
 import {
+  canReadFollows,
+  CONNECT_SCOPES,
   DEVICE_ENDPOINT,
+  FOLLOWS_RECONNECT_HINT,
   forgetValidation,
   missingScopes,
-  SCOPES,
   TITLE_MAX,
   toDriverError,
   TOKEN_ENDPOINT,
@@ -28,6 +30,7 @@ import {
   type TokenInfo,
 } from './api.js';
 import { readTwitchChat } from './chat.js';
+import { readTwitchEvents, withSideSource } from './eventsub.js';
 import { prepareMultitrack } from './multitrack.js';
 import { pollViewers } from './viewers.js';
 import {
@@ -304,7 +307,7 @@ export const twitchDriver: PlatformDriver = {
       start = await startDeviceFlow({
         endpoint: DEVICE_ENDPOINT,
         clientId,
-        scopes: [...SCOPES],
+        scopes: [...CONNECT_SCOPES],
         scopeParam: 'scopes', // Twitch uses `scopes`, not RFC 8628's `scope`
         signal: ctx.signal,
       });
@@ -352,7 +355,7 @@ export const twitchDriver: PlatformDriver = {
         tokenEndpoint: TOKEN_ENDPOINT,
         clientId,
         deviceCode: state.deviceCode,
-        extraParams: { scopes: SCOPES.join(' ') },
+        extraParams: { scopes: CONNECT_SCOPES.join(' ') },
         signal: ctx.signal,
       });
     } catch (err) {
@@ -426,7 +429,11 @@ export const twitchDriver: PlatformDriver = {
       } catch (err) {
         ctx.log.warn({ accountId: account.id, error: message(err) }, 'twitch: reading the display name failed');
       }
-      return { status: 'connected' as const, ...(label ? { label } : {}) };
+      return {
+        status: 'connected' as const,
+        ...(label ? { label } : {}),
+        ...(canReadFollows(info) ? {} : { message: FOLLOWS_RECONNECT_HINT }),
+      };
     } catch (err) {
       const e = toDriverError(err, 'the login check');
       if (e instanceof DriverError && (e.code === 'needs-login' || e.code === 'not-connected')) {
@@ -510,7 +517,17 @@ export const twitchDriver: PlatformDriver = {
             throw toDriverError(err, 'the title');
           }
         },
-        chat: (signal: AbortSignal) => readTwitchChat(login, signal, { log: ctx.log }),
+        // IRC chat, plus follow alerts over EventSub when the login allows them (they can't come from IRC).
+        chat: (signal: AbortSignal) => {
+          const irc = (s: AbortSignal) => readTwitchChat(login, s, { log: ctx.log });
+          if (!canReadFollows(info)) return irc(signal);
+          const events = (s: AbortSignal) =>
+            readTwitchEvents(
+              { broadcasterId, subscribe: (sessionId, sub) => liveClient.subscribeEventSub(sessionId, sub, s), log: ctx.log },
+              s,
+            );
+          return withSideSource(irc, events, signal, ctx.log);
+        },
         // Viewers only (GET /helix/streams every 30 s); never 'ended': Twitch lives aren't recovered.
         // validate() is cached for an hour: it keeps up Twitch's hourly validation during long lives.
         health: (signal: AbortSignal) => {

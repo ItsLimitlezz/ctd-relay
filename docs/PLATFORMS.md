@@ -46,10 +46,11 @@ Only admins can manage developer apps, accounts and destinations. Operators can 
 
 ### Connect
 
-**Accounts → Add account → Twitch → Connect.** The app shows a code. Open [twitch.tv/activate](https://www.twitch.tv/activate), enter it and approve. The app asks for permission to edit your broadcast (title) and read your stream key.
+**Accounts → Add account → Twitch → Connect.** The app shows a code. Open [twitch.tv/activate](https://www.twitch.tv/activate), enter it and approve. The app asks for permission to edit your broadcast (title), read your stream key and read your followers (for follow alerts).
 
 ### Notes
 
+- **Alerts:** subs, gifted subs, Bits and raids come from chat; **follows** come from Twitch EventSub while the destination is live. An account connected before follow alerts existed shows "Reconnect this account to turn on follow alerts": click **Connect** on it once.
 - **Dual Format** modes per destination: "Relay one feed" (default), "OBS sends Dual Format directly", or "Relay both feeds as Dual Format": the app encodes the tracks Twitch's Enhanced Broadcasting asks for (two per feed) on the server and publishes them with the required performance metrics. See [OBS setup](OBS-SETUP.md#twitch-dual-format).
 - **Bandwidth test** (destination option) streams to Twitch without going live publicly, which is handy for testing.
 - Twitch expires the sign-in of a public-client app after about 30 days without use. If you haven't streamed for a month, the account may ask you to connect again.

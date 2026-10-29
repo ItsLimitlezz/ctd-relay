@@ -34,7 +34,7 @@ export function isValidLogin(login: string): boolean {
 }
 
 /** Single-consumer async queue: values in order, then end or an error. */
-class Inbox<T> {
+export class Inbox<T> {
   private readonly items: T[] = [];
   private waiter: { resolve: (r: IteratorResult<T, undefined>) => void; reject: (err: unknown) => void } | null = null;
   private closed: { error: unknown } | null = null;

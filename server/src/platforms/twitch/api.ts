@@ -25,6 +25,13 @@ export const HELIX = 'https://api.twitch.tv/helix';
 
 /** Edit the title + read the stream key. Chat is read anonymously, so no chat scope. */
 export const SCOPES = ['channel:manage:broadcast', 'channel:read:stream_key'] as const;
+/**
+ * Asked for on connect but not required: follow alerts (EventSub channel.follow). Accounts
+ * connected before follows existed keep working without it until they reconnect.
+ */
+export const ALERT_SCOPES = ['moderator:read:followers'] as const;
+/** Everything a (re)connect asks Twitch for. */
+export const CONNECT_SCOPES = [...SCOPES, ...ALERT_SCOPES] as const;
 
 export const TITLE_MAX = 140;
 const VALIDATE_EVERY_MS = 60 * 60 * 1000;
@@ -40,6 +47,14 @@ export interface TokenInfo {
 export function missingScopes(info: Pick<TokenInfo, 'scopes'>): string[] {
   return SCOPES.filter((s) => !info.scopes.includes(s));
 }
+
+/** True when the login may read follows (EventSub channel.follow). */
+export function canReadFollows(info: Pick<TokenInfo, 'scopes'>): boolean {
+  return ALERT_SCOPES.every((s) => info.scopes.includes(s));
+}
+
+/** Shown on the account when it predates follow alerts. */
+export const FOLLOWS_RECONNECT_HINT = 'Reconnect this account to turn on follow alerts.';
 
 // ---------------------------------------------------------------------------
 // Error mapping
@@ -253,6 +268,18 @@ export class TwitchClient {
     if (!stream || (stream.type && stream.type !== 'live')) return null;
     const n = stream.viewer_count;
     return typeof n === 'number' && Number.isSafeInteger(n) && n >= 0 ? n : null;
+  }
+
+  /** POST /helix/eventsub/subscriptions on a WebSocket session (202; 409 = it already exists). */
+  async subscribeEventSub(sessionId: string, sub: { type: string; version: string; condition: Record<string, string> }, signal?: AbortSignal): Promise<void> {
+    await this.authed((token) =>
+      fetchJson<unknown>(`${HELIX}/eventsub/subscriptions`, {
+        method: 'POST',
+        headers: { ...this.helixHeaders(token), 'content-type': 'application/json' },
+        body: JSON.stringify({ ...sub, transport: { method: 'websocket', session_id: sessionId } }),
+        signal: signal ?? this.opts.signal,
+      }),
+    );
   }
 
   async streamKey(broadcasterId: string): Promise<string> {

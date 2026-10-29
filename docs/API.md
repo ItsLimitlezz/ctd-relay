@@ -395,7 +395,14 @@ Alerts are live events only: `GET /chat` returns the chat line, not the alert. S
 | `alert.raid` | Twitch raid, Kick host | `viewers` |
 | `alert.membership` | YouTube new member (`months: 1`), member milestone | `months` |
 | `alert.superchat` | YouTube Super Chat and Super Sticker | `currency` |
-| `alert.follow`, `alert.kicks`, `alert.tip` | Reserved for the CTD Overlay kinds; no chat source sends them yet | — |
+| `alert.follow` | Twitch follow (v1.7; needs the Twitch account connected with follow access, see below) | — |
+| `alert.kicks`, `alert.tip` | Reserved for the CTD Overlay kinds; no chat source sends them yet | — |
+
+**Twitch follows** come from Twitch EventSub (`channel.follow`), not chat, while the Twitch
+destination is live. They need the `moderator:read:followers` permission: accounts connected
+before v1.7 keep working without follows and show "Reconnect this account to turn on follow
+alerts" in Accounts until they are reconnected once. A user who unfollows and follows again
+within 6 hours gets no second alert. The chat line is `"<name> followed"` (`kind: "event"`).
 
 Kick Kicks and YouTube paid gifts (Jewels) are `chat.message` event lines only
 (`kind: "event"`), with no alert.
@@ -411,6 +418,16 @@ Kick Kicks and YouTube paid gifts (Jewels) are `chat.message` event lines only
   "destinationId": "5b1c…",
   "messageId": "twitch:3f1d7c2a-…",
   "ts": 1791830000123
+}
+```
+```json
+{
+  "kind": "follow",
+  "user": { "id": "twitch:52174911", "name": "NightOwl" },
+  "platform": "twitch",
+  "destinationId": "5b1c…",
+  "messageId": "twitch:follow-befa7b53-…",
+  "ts": 1791830005000
 }
 ```
 ```json
@@ -490,8 +507,8 @@ cursor is from before a restart); refetch `/status` and `/chat`.
 
 - Changing the stream (sending chat, changing the title, going live, test mode). The web UI does
   that; apps only write to the hub (§9.2).
-- Follows, Kick KICKs and tips as alerts (`alert.follow`, `alert.kicks` and `alert.tip` are
-  reserved: no chat source sends them yet).
+- Kick KICKs and tips as alerts (`alert.kicks` and `alert.tip` are reserved: no chat source
+  sends them yet). Follows on platforms other than Twitch.
 - Viewer counts for X (not exposed by X) and custom RTMP servers.
 
 ## 7. Example clients
@@ -975,6 +992,12 @@ guide for the app: [`LIVE-MOBILE-INTEGRATION.md`](LIVE-MOBILE-INTEGRATION.md).
 `apiVersion` stays `1`: every change below is additive, so clients written for an earlier v1
 keep working (ignore event types and fields you don't know). `GET /api/v1/openapi.json` reports
 the revision in `info.version`.
+
+### v1.7
+
+- **Twitch follows:** `alert.follow` is now sent for Twitch follows (EventSub `channel.follow`),
+  with a `chat.message` event line `"<name> followed"` right before it. Twitch accounts connected
+  earlier need one reconnect in Accounts to allow it (`moderator:read:followers`).
 
 ### v1.6
 

@@ -14,7 +14,7 @@ import { CONNECT_OFFER_TTL_MS, DEVICE_NAME_MAX, MOBILE_SCOPES } from './connect.
 import { MAX_SOCKETS_PER_TOKEN, OBS_SUBPROTOCOL } from './obs-relay.js';
 
 /** Minor revision of the v1 contract (additive changes only; see the changelog in docs/API.md). */
-export const API_REVISION = '1.6';
+export const API_REVISION = '1.7';
 
 const ref = (name: string) => ({ $ref: `#/components/schemas/${name}` });
 const nullable = (schema: object) => ({ oneOf: [schema, { type: 'null' }] });

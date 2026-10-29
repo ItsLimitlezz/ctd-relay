@@ -242,7 +242,7 @@ describe('connect', () => {
       expiresIn: 1800,
       interval: 5,
     });
-    expect(form(calls[0]!)).toEqual({ client_id: 'cid123', scopes: 'channel:manage:broadcast channel:read:stream_key' });
+    expect(form(calls[0]!)).toEqual({ client_id: 'cid123', scopes: 'channel:manage:broadcast channel:read:stream_key moderator:read:followers' });
     const state = JSON.parse(secrets.data.get('device')!);
     expect(state).toMatchObject({ deviceCode: 'dev-code', clientId: 'cid123', interval: 5 });
   });
@@ -282,7 +282,7 @@ describe('connect', () => {
       client_id: 'cid123',
       device_code: 'dev-code',
       grant_type: 'urn:ietf:params:oauth:grant-type:device_code',
-      scopes: 'channel:manage:broadcast channel:read:stream_key',
+      scopes: 'channel:manage:broadcast channel:read:stream_key moderator:read:followers',
     });
     expect(secrets.data.has('device')).toBe(true);
   });
@@ -382,7 +382,8 @@ describe('tokens', () => {
     const { ctx, secrets } = makeCtx();
     await secrets.setJson('oauth', tokens({ expiresAt: Date.now() + 60_000 }));
     const result = await twitchDriver.checkAccount!(account, ctx);
-    expect(result).toEqual({ status: 'connected', label: 'TwitchDev' });
+    // An account connected before follow alerts: still connected, with a hint to reconnect.
+    expect(result).toEqual({ status: 'connected', label: 'TwitchDev', message: 'Reconnect this account to turn on follow alerts.' });
     const refresh = byRoute(calls, routes.token)[0]!;
     expect(form(refresh)).toEqual({ grant_type: 'refresh_token', client_id: 'cid123', refresh_token: 'rt-1' });
     expect(JSON.parse(secrets.data.get('oauth')!)).toMatchObject({ accessToken: 'at-2', refreshToken: 'rt-2' });
@@ -430,7 +431,7 @@ describe('tokens', () => {
   it('syncs a renamed login into the account options', async () => {
     stubFetch({
       [routes.validate]: () =>
-        json(200, { client_id: 'cid123', login: 'newname', user_id: '141981764', scopes: ['channel:manage:broadcast', 'channel:read:stream_key'] }),
+        json(200, { client_id: 'cid123', login: 'newname', user_id: '141981764', scopes: ['channel:manage:broadcast', 'channel:read:stream_key', 'moderator:read:followers'] }),
       [routes.users]: () => json(200, { data: [{ id: '141981764', login: 'newname', display_name: 'NewName' }] }),
     });
     const { ctx, secrets, updates } = makeCtx();
