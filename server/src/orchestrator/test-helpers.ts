@@ -124,6 +124,7 @@ export class FakeChat implements ChatHub {
   ): void {
     this.attaches.push({ id: destinationId, platform, signal, profileId });
   }
+  post(): void {}
   recent(): ChatMessage[] {
     return [];
   }

@@ -14,7 +14,7 @@ import { CONNECT_OFFER_TTL_MS, DEVICE_NAME_MAX, MOBILE_SCOPES } from './connect.
 import { MAX_SOCKETS_PER_TOKEN, OBS_SUBPROTOCOL } from './obs-relay.js';
 
 /** Minor revision of the v1 contract (additive changes only; see the changelog in docs/API.md). */
-export const API_REVISION = '1.7';
+export const API_REVISION = '1.8';
 
 const ref = (name: string) => ({ $ref: `#/components/schemas/${name}` });
 const nullable = (schema: object) => ({ oneOf: [schema, { type: 'null' }] });
@@ -106,6 +106,24 @@ export function openApiDocument(version: string): Record<string, unknown> {
           parameters: [profileParam('default: the default profile')],
           responses: {
             '200': { description: 'Current status', content: json(ref('Status')) },
+            ...errors,
+            ...profileErrors,
+          },
+        },
+      },
+      '/music': {
+        get: {
+          summary: 'What the profile’s Spotify plays (v1.8)',
+          operationId: 'getMusic',
+          tags: ['status'],
+          description:
+            'Needs `status:read`. `nowPlaying` is null when Spotify is not connected for the profile (Settings → Spotify) or not read yet. Changes arrive as `music.nowplaying` events; while `playing`, add the time since `at` to `progressMs`.',
+          parameters: [profileParam('default: the default profile')],
+          responses: {
+            '200': {
+              description: 'Now playing',
+              content: json({ type: 'object', required: ['nowPlaying'], properties: { nowPlaying: nullable(ref('NowPlaying')) } }),
+            },
             ...errors,
             ...profileErrors,
           },
@@ -676,6 +694,46 @@ export function openApiDocument(version: string): Record<string, unknown> {
           properties: { userId: nullable(str), userName: nullable(str), platform: ref('Platform'), destinationId: str },
         },
         ChatCleared: { type: 'object', properties: { platform: ref('Platform'), destinationId: str } },
+        MusicTrack: {
+          type: 'object',
+          required: ['id', 'uri', 'title', 'artists', 'album', 'artUrl', 'durationMs', 'explicit', 'url'],
+          properties: {
+            id: { type: 'string', description: 'Spotify track id' },
+            uri: { type: 'string', description: 'spotify:track:<id>' },
+            title: str,
+            artists: { type: 'array', items: str },
+            album: nullable(str),
+            artUrl: nullable({ type: 'string', description: 'Album art, about 300 px (https)' }),
+            durationMs: { type: 'integer', minimum: 0 },
+            explicit: { type: 'boolean' },
+            url: nullable({ type: 'string', description: 'https://open.spotify.com/track/<id>' }),
+          },
+        },
+        NowPlaying: {
+          type: 'object',
+          description: 'music.nowplaying data (v1.8). Sent on another song, play/pause and seeks, not for steady progress.',
+          required: ['playing', 'track', 'progressMs', 'at'],
+          properties: {
+            playing: { type: 'boolean' },
+            track: nullable(ref('MusicTrack')),
+            progressMs: nullable({ type: 'integer', minimum: 0 }),
+            at: { type: 'integer', description: 'Epoch ms when progressMs was read' },
+          },
+        },
+        SongRequest: {
+          type: 'object',
+          description: 'music.request data (v1.8): a chat !sr request, queued (ok) or refused with a reason.',
+          required: ['at', 'user', 'platform', 'query', 'ok', 'track', 'reason'],
+          properties: {
+            at: { type: 'integer', description: 'Epoch ms' },
+            user: { type: 'string', description: 'Display name of who asked' },
+            platform: ref('Platform'),
+            query: { type: 'string', description: 'What they typed after !sr' },
+            ok: { type: 'boolean' },
+            track: nullable(ref('MusicTrack')),
+            reason: nullable(str),
+          },
+        },
         Alert: {
           type: 'object',
           description:

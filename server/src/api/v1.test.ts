@@ -48,7 +48,7 @@ describe('auth', () => {
       name: 'ctd-multi-stream',
       version: '9.9.9',
       build: { commit: null, date: null },
-      apiRevision: '1.7',
+      apiRevision: '1.8',
       apiVersion: 1,
       token: { name: 'test', scopes: ['chat:read', 'status:read'], profileId: null },
     });
@@ -147,6 +147,7 @@ describe('GET /openapi.json', () => {
       '/',
       '/openapi.json',
       '/status',
+      '/music',
       '/clock',
       '/chat',
       '/events',
@@ -353,7 +354,7 @@ describe('alert.*', () => {
     const doc = (await get('/api/v1/openapi.json')).json();
     expect(doc.components.schemas.Envelope.properties.type.enum).toEqual(expect.arrayContaining(['alert.superchat', 'alert.subscription', 'alert.tip']));
     expect(doc.components.schemas.Alert.properties.kind.enum).toHaveLength(9);
-    expect(doc.info.version).toMatch(/^1\.7 /);
+    expect(doc.info.version).toMatch(/^1\.8 /);
   });
 });
 

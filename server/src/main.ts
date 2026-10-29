@@ -6,6 +6,7 @@ import path from 'node:path';
 import pino, { type Logger } from 'pino';
 import type { AppSettings } from '../../shared/api.js';
 import { eventHubFor } from './api/event-hub.js';
+import { musicFor } from './music/music-service.js';
 import { createAppRegistry } from './api/hub.js';
 import { createLanHandler } from './api/lan.js';
 import { createPairingService } from './api/pairing.js';
@@ -207,6 +208,9 @@ export async function main(): Promise<void> {
 
   // External API event buffer: subscribe before anything starts emitting.
   const apiEvents = eventHubFor(services);
+  // Spotify now playing + chat song requests (listens to chat, polls connected profiles).
+  const music = musicFor(services);
+  music.start();
 
   await services.media.start();
   await services.orchestrators.init();
@@ -250,6 +254,7 @@ export async function main(): Promise<void> {
       await services.media.stop();
       await services.tls.stop();
       await app.close();
+      music.close();
       apiEvents.close();
       closeHub(services);
     } catch (err) {

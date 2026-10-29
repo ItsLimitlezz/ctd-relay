@@ -23,6 +23,7 @@ import chatRoutes from './routes/chat.js';
 import destinationRoutes from './routes/destinations.js';
 import healthRoutes from './routes/health.js';
 import ingestRoutes from './routes/ingest.js';
+import musicRoutes from './routes/music.js';
 import pairingRoutes from './routes/pairings.js';
 import platformRoutes from './routes/platforms.js';
 import profileRoutes from './routes/profiles.js';
@@ -107,6 +108,8 @@ export async function buildApp(services: AppServices, tlsMaterial: TlsMaterial |
   await app.register(sessionRoutes, opts);
   await app.register(ingestRoutes, opts);
   await app.register(chatRoutes, opts);
+  // Spotify now playing + chat song requests (Settings → Spotify).
+  await app.register(musicRoutes, opts);
   await app.register(settingsRoutes, opts);
   await app.register(browserRoutes, opts);
   await app.register(wsRoutes, opts);

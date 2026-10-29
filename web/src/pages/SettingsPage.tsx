@@ -18,6 +18,7 @@ import { HttpsTab } from './settings/HttpsTab';
 import { ObsTab } from './settings/ObsTab';
 import { OverlayTab } from './settings/OverlayTab';
 import { SETTINGS_TABS, settingsTab, type SettingsTabId } from './settings/settings-helpers';
+import { SpotifyTab } from './settings/SpotifyTab';
 import { UsersTab } from './settings/UsersTab';
 import './settings/admin.css';
 
@@ -39,7 +40,7 @@ export default function SettingsPage() {
       <div className="page-header">
         <div>
           <h1>Settings</h1>
-          <p>Server, security, OBS and API configuration. OBS setup and the chat overlay are per profile; the rest is shared.</p>
+          <p>Server, security, OBS and API configuration. OBS setup, the chat overlay and Spotify are per profile; the rest is shared.</p>
         </div>
         <Link to="/profiles" className={buttonClass('secondary', 'sm')}>
           <LayersIcon width={16} height={16} /> Streaming profiles
@@ -73,6 +74,8 @@ function TabContent({ tab, settings }: { tab: SettingsTabId; settings: ApiResour
       return <UsersTab />;
     case 'overlay':
       return <OverlayTab />;
+    case 'spotify':
+      return <SpotifyTab />;
     case 'api':
       return <ApiTab />;
     case 'audit':

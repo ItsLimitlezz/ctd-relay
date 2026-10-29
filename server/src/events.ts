@@ -1,4 +1,5 @@
 import { EventEmitter } from 'node:events';
+import type { NowPlaying, SongRequestResult } from '../../shared/api.js';
 import type {
   Account,
   ChatMessage,
@@ -53,6 +54,10 @@ export interface AppEvents {
   'app-message': [AppMessage];
   /** An OBS event a connected app (the CTD OBS plugin) sent into the hub (POST /api/v1/apps/{id}/events). */
   'obs-event': [ObsEvent];
+  /** What a profile's Spotify plays changed: another song, play/pause, a seek (emitted by MusicService). */
+  music: [{ profileId: string; nowPlaying: NowPlaying }];
+  /** A chat song request was handled, queued or refused (emitted by MusicService). */
+  'music-request': [{ profileId: string; destinationId: string; result: SongRequestResult }];
 }
 
 /** OBS event relayed by the hub (docs/API.md §10). `data` is already size-checked. */

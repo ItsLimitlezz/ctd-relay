@@ -120,6 +120,7 @@ TrueNAS: see [Account recovery](docs/INSTALL-TRUENAS.md#account-recovery).
 | [INSTALL-TRUENAS.md](docs/INSTALL-TRUENAS.md) | Installing, port forwarding, HTTPS options, backups, updates |
 | [OBS-SETUP.md](docs/OBS-SETUP.md) | OBS and Aitum Vertical settings, going live, Twitch Dual Format |
 | [PLATFORMS.md](docs/PLATFORMS.md) | What each platform supports and how to connect it, including developer apps |
+| [SPOTIFY.md](docs/SPOTIFY.md) | Now playing on stream and `!sr` song requests from chat |
 | [SECURITY.md](docs/SECURITY.md) | What is exposed, how it's protected, reporting vulnerabilities |
 | [DEVELOPMENT.md](docs/DEVELOPMENT.md) | Running from source, tests, releasing, adding a platform |
 | [ARCHITECTURE.md](docs/ARCHITECTURE.md) | Design and roadmap |

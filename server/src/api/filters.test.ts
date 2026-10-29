@@ -37,7 +37,7 @@ describe('resolveTypes', () => {
     expect(types('*.down')).toEqual(['destination.down', 'system.reset']);
     expect(types('destination.*')).toEqual(['destination.down', 'destination.status', 'destination.up', 'system.reset']);
     expect(types('chat.message')).toEqual(['chat.message', 'system.reset']);
-    expect(types('*', ['chat:read'])).toEqual([...ALERTS, 'chat.cleared', 'chat.message', 'chat.message.deleted', 'chat.user.cleared', 'system.reset']);
+    expect(types('*', ['chat:read'])).toEqual([...ALERTS, 'chat.cleared', 'chat.message', 'chat.message.deleted', 'chat.user.cleared', 'music.request', 'system.reset']);
   });
 
   it('alert.* needs chat:read and is not part of chat.*', () => {

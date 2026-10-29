@@ -17,6 +17,7 @@ export const SETTINGS_TABS = [
   { id: 'apps', label: 'Developer apps' },
   { id: 'users', label: 'Users' },
   { id: 'overlay', label: 'Chat overlay' },
+  { id: 'spotify', label: 'Spotify' },
   { id: 'api', label: 'API' },
   { id: 'audit', label: 'Audit log' },
   { id: 'about', label: 'About' },

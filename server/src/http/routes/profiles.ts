@@ -143,6 +143,7 @@ const profileRoutes: FastifyPluginAsync<RouteOptions> = async (app, { services }
     for (const key of PROFILE_SETTING_KEYS) repos.settings.delete(profileSettingKey(id, key));
     repos.secrets.deleteScope(profileSecretScope(id, 'ingest'));
     repos.secrets.deleteScope(profileSecretScope(id, 'chat'));
+    repos.secrets.deleteScope(profileSecretScope(id, 'spotify'));
 
     // 6. API tokens limited to it (and the apps they registered). Every-profile tokens stay, but the
     //    resources their apps assigned to this profile go (they would otherwise show as "Deleted

@@ -19,6 +19,7 @@ import type { PreviewService } from './previews.js';
 import type { ApiEventType, Envelope } from './types.js';
 import { parseUlid } from './ulid.js';
 import { registerHubRoutes } from './v1-hub.js';
+import { musicFor } from '../music/music-service.js';
 import { registerObsSocketRoute } from './v1-obs-socket.js';
 
 export const API_PREFIX = '/api/v1';
@@ -261,6 +262,14 @@ const v1Plugin: FastifyPluginAsync<V1Options> = async (app, opts) => {
     const p = resolveProfile(token, query(req).profile, DEFAULT_PROFILE_ID);
     if (!p.ok) return sendProblem(reply, p.status, p.code, p.detail);
     return reply.header('cache-control', 'no-store').send(hub().status(p.profile ?? DEFAULT_PROFILE_ID));
+  });
+
+  // What the profile's Spotify plays (v1.8): null = Spotify not connected (or not read yet).
+  app.get('/music', { preHandler: requireToken('status:read') }, async (req, reply) => {
+    const { token } = authOf(req);
+    const p = resolveProfile(token, query(req).profile, DEFAULT_PROFILE_ID);
+    if (!p.ok) return sendProblem(reply, p.status, p.code, p.detail);
+    return reply.header('cache-control', 'no-store').send({ nowPlaying: musicFor(services).nowPlaying(p.profile ?? DEFAULT_PROFILE_ID) });
   });
 
   // The arrival time is taken before authentication so the client's delay estimate stays honest.

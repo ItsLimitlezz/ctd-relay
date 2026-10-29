@@ -499,6 +499,12 @@ A profile's summary changed / profiles were created, renamed or deleted (§9.1).
 ### `apps.changed`, `app.message` — `apps:read`
 Connected apps changed / a message from another app (§9.2).
 
+### `music.nowplaying` — `status:read` (v1.8)
+What the profile's Spotify plays changed: another song, play/pause or a seek (§13).
+
+### `music.request` — `chat:read` (v1.8)
+A chat song request (`!sr`) was queued or refused (§13).
+
 ### `system.reset`
 `data: {}` — events you would have received after your cursor are no longer buffered (or the
 cursor is from before a restart); refetch `/status` and `/chat`.
@@ -987,11 +993,75 @@ OBS's own `40xx` close codes pass through as they are. Relay pings every 15 s an
 silent for 60 s. One OBS per Relay: a token limited to a profile reaches the same OBS. Integration
 guide for the app: [`LIVE-MOBILE-INTEGRATION.md`](LIVE-MOBILE-INTEGRATION.md).
 
+## 13. Spotify: now playing and song requests (v1.8)
+
+Each profile can connect a Spotify account (**Settings → Spotify**, setup in
+[`SPOTIFY.md`](SPOTIFY.md)). Relay then reads what it plays, and viewers can add songs to its
+queue from any platform's chat. Relay never controls playback (no skip, pause or volume).
+
+### `GET /api/v1/music?profile=<id>` — `status:read`
+```json
+{
+  "nowPlaying": {
+    "playing": true,
+    "track": {
+      "id": "4uLU6hMCjMI75M1A2tKUQC",
+      "uri": "spotify:track:4uLU6hMCjMI75M1A2tKUQC",
+      "title": "One More Time",
+      "artists": ["Daft Punk"],
+      "album": "Discovery",
+      "artUrl": "https://i.scdn.co/image/ab67616d00001e02…",
+      "durationMs": 320357,
+      "explicit": false,
+      "url": "https://open.spotify.com/track/4uLU6hMCjMI75M1A2tKUQC"
+    },
+    "progressMs": 61234,
+    "at": 1791830000123
+  }
+}
+```
+- `nowPlaying` is `null` when the profile has no Spotify connected (or Relay hasn't read it yet).
+  `track` is `null` when nothing plays (podcasts and ads aren't shown).
+- `music.nowplaying` events carry the same `nowPlaying` object. They're sent for another song,
+  play/pause and seeks, not for steady progress: while `playing`, show
+  `progressMs + (now − at)`, capped at `durationMs`.
+- Relay reads Spotify every 5 s while the profile is live, every 30 s otherwise.
+
+### `music.request` data
+```json
+{
+  "at": 1791830000123,
+  "user": "NightOwl",
+  "platform": "twitch",
+  "query": "one more time daft punk",
+  "ok": true,
+  "track": { "id": "4uLU6hMCjMI75M1A2tKUQC", "title": "One More Time", "artists": ["Daft Punk"], "…": "…" },
+  "reason": null
+}
+```
+Refused or failed requests have `"ok": false`, a `reason` written for viewers (`"song requests
+are for subscribers, VIPs and moderators"`, `"wait 42 s before requesting again"`, `"explicit
+songs are turned off"`, `"no song found"`, `"Spotify is not playing on any device right now"`),
+and `track` when one was found. `src.connection` / `src.platform` are the chat it came from.
+
+**Chat commands:** `!sr <song name or Spotify track link>` (also `!songrequest`) and `!song` (what
+plays). With "chat replies" on, Relay adds an event line to that chat (`"🎵 NightOwl added One
+More Time — Daft Punk"`, or why not), sent as a normal `chat.message` (`kind: "event"`), attributed
+to the viewer. Relay can't post in the platforms' own chats. Settings per profile: on/off, who may
+request (everyone / subscribers / VIPs / moderators; moderators always may and have no cooldown),
+cooldown per viewer, longest song, explicit songs.
+
 ## Changelog
 
 `apiVersion` stays `1`: every change below is additive, so clients written for an earlier v1
 keep working (ignore event types and fields you don't know). `GET /api/v1/openapi.json` reports
 the revision in `info.version`.
+
+### v1.8
+
+- **Spotify (§13):** `GET /music` and the `music.nowplaying` event (`status:read`): what the
+  profile's Spotify plays. `music.request` (`chat:read`): chat `!sr` song requests, queued or
+  refused. Relay's answers also appear as `chat.message` event lines.
 
 ### v1.7
 

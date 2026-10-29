@@ -44,6 +44,8 @@ export type ApiEventType =
   | 'obs.issue.raised'
   | 'obs.issue.cleared'
   | 'obs.sync.status'
+  | 'music.nowplaying'
+  | 'music.request'
   | 'system.reset';
 
 /** Scope each event type needs. system.reset is a control frame every stream may get. */
@@ -78,6 +80,8 @@ export const EVENT_SCOPES: Record<ApiEventType, ApiScope | null> = {
   'obs.issue.raised': 'status:read',
   'obs.issue.cleared': 'status:read',
   'obs.sync.status': 'status:read',
+  'music.nowplaying': 'status:read',
+  'music.request': 'chat:read',
   'system.reset': null,
 };
 

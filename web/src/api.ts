@@ -34,6 +34,9 @@ import type {
   SettingsResponse,
   SetupRequest,
   SetupStatusResponse,
+  SongRequestSettings,
+  SpotifyConnectStart,
+  SpotifyStatus,
   TitleResponse,
   TotpSetupResponse,
   UpdateAccountRequest,
@@ -232,6 +235,16 @@ export const api = {
   obsRelay: () => get<ObsRelayStatus>('/api/obs-relay'),
   updateObsRelay: (body: UpdateObsRelayRequest) => put<ObsRelayStatus>('/api/obs-relay', body),
   testObsRelay: () => post<ObsRelayTestResult>('/api/obs-relay/test', {}),
+
+  // Spotify: now playing + chat song requests (per profile; the developer app is shared)
+  music: (profileId?: string) => get<SpotifyStatus>(withProfileQuery('/api/music', profileId)),
+  setSpotifyApp: (clientId: string, profileId?: string) => put<SpotifyStatus>(withProfileQuery('/api/music/app', profileId), { clientId }),
+  startSpotifyConnect: (profileId?: string) => post<SpotifyConnectStart>(withProfileQuery('/api/music/connect/start', profileId)),
+  completeSpotifyConnect: (pastedUrl: string, profileId?: string) =>
+    post<SpotifyStatus>(withProfileQuery('/api/music/connect/complete', profileId), { pastedUrl }),
+  disconnectSpotify: (profileId?: string) => del<SpotifyStatus>(withProfileQuery('/api/music/connection', profileId)),
+  updateSongRequests: (patch: Partial<SongRequestSettings>, profileId?: string) =>
+    put<SpotifyStatus>(withProfileQuery('/api/music/requests', profileId), patch),
 
   // app pairing + connected apps (Settings → API)
   /** Pending "connect this app" requests, newest first. */

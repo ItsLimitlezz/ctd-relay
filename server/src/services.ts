@@ -31,7 +31,7 @@ import type {
 import { DEFAULT_PROFILE_ID } from '../../shared/types.js';
 import type { AppConfig } from './config.js';
 import type { EventBus } from './events.js';
-import type { ChatSourceItem, DriverContext, PlatformDriver, PushPlan } from './platforms/types.js';
+import type { ChatMessageInput, ChatSourceItem, DriverContext, PlatformDriver, PushPlan } from './platforms/types.js';
 
 // ---------------------------------------------------------------------------
 // Secrets
@@ -225,7 +225,7 @@ export interface Repos {
 export function profileSettingKey(profileId: string, key: string): string {
   return profileId === DEFAULT_PROFILE_ID ? key : `profile:${profileId}:${key}`;
 }
-export function profileSecretScope(profileId: string, scope: 'ingest' | 'chat'): string {
+export function profileSecretScope(profileId: string, scope: 'ingest' | 'chat' | 'spotify'): string {
   return profileId === DEFAULT_PROFILE_ID ? scope : `${scope}:${profileId}`;
 }
 
@@ -328,6 +328,11 @@ export interface ChatHub {
     /** Profile of the destination; stamped on every message/moderation. Default: default profile. */
     profileId?: string,
   ): void;
+  /**
+   * Add a line of Relay's own to a destination's chat (e.g. "🎵 … added …" for a song request):
+   * normalized, stored and emitted like platform chat. Nothing is sent to the platform.
+   */
+  post(destinationId: string, platform: PlatformId, input: ChatMessageInput, profileId?: string): void;
   /** Recent chat of one profile (oldest first). Default: the default profile. */
   recent(limit?: number, profileId?: string): ChatMessage[];
   /** Per-profile token for the OBS chat overlay URL (created on first call). */

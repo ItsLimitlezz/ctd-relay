@@ -382,6 +382,10 @@ export function createChatHub({ bus, log, secrets, profiles }: ChatHubDeps): Cha
         });
     },
 
+    post(destinationId, platform, input, profileId = DEFAULT_PROFILE_ID) {
+      push(profileId || DEFAULT_PROFILE_ID, destinationId, platform, input);
+    },
+
     recent(limit = DEFAULT_RECENT, profileId = DEFAULT_PROFILE_ID) {
       const n = Number.isFinite(limit) ? Math.min(Math.max(Math.floor(limit), 0), RING_SIZE) : DEFAULT_RECENT;
       return chats.get(profileId || DEFAULT_PROFILE_ID)?.buffer.last(n) ?? [];

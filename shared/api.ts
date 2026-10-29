@@ -441,6 +441,99 @@ export type ObsRelayTestResult =
   | { ok: true; host: string; port: number; obsVersion: string | null; obsWebSocketVersion: string | null }
   | { ok: false; host: string | null; port: number; error: string };
 
+// ---------------------------------------------------------------------------
+// Spotify (now playing + chat song requests), per profile [admin]
+//
+// GET /api/music?profile= -> SpotifyStatus
+// PUT /api/music/app { clientId } -> SpotifyStatus (the Spotify developer app, shared by every profile)
+// POST /api/music/connect/start?profile= -> SpotifyConnectStart
+// POST /api/music/connect/complete?profile= { pastedUrl } -> SpotifyStatus
+// DELETE /api/music/connection?profile= -> SpotifyStatus
+// PUT /api/music/requests?profile= Partial<SongRequestSettings> -> SpotifyStatus
+// ---------------------------------------------------------------------------
+
+export interface MusicTrack {
+  /** Spotify track id. */
+  id: string;
+  /** spotify:track:<id> */
+  uri: string;
+  title: string;
+  artists: string[];
+  album: string | null;
+  /** Album art (about 300 px when Spotify has it). */
+  artUrl: string | null;
+  durationMs: number;
+  explicit: boolean;
+  /** https://open.spotify.com/track/<id> */
+  url: string | null;
+}
+
+export interface NowPlaying {
+  playing: boolean;
+  /** Null when nothing plays (or a podcast/ad, which Relay doesn't show). */
+  track: MusicTrack | null;
+  progressMs: number | null;
+  /** Epoch ms when progressMs was read: while playing, add the time since. */
+  at: number;
+}
+
+/** Who may use !sr. Each level includes the ones above it (moderators and the broadcaster always may). */
+export type SongRequestWho = 'everyone' | 'subscribers' | 'vips' | 'moderators';
+
+export interface SongRequestSettings {
+  enabled: boolean;
+  who: SongRequestWho;
+  /** Seconds between two requests of one viewer (0–3600). Moderators are exempt. */
+  cooldownSec: number;
+  /** Longest track accepted, in seconds (60–3600). */
+  maxDurationSec: number;
+  allowExplicit: boolean;
+  /** Post "🎵 … added …" (and why a request was refused) as event lines in Relay's chat. */
+  chatReplies: boolean;
+}
+
+export interface SongRequestResult {
+  at: number;
+  /** Who asked (display name). */
+  user: string;
+  platform: PlatformId;
+  /** What they typed after !sr. */
+  query: string;
+  ok: boolean;
+  track: MusicTrack | null;
+  /** Why it was refused or failed (ok: false). */
+  reason: string | null;
+}
+
+export interface SpotifyStatus {
+  profileId: string;
+  /** Client ID of the Spotify developer app (shared by every profile); null = not set up. */
+  clientId: string | null;
+  /** The redirect URI to add to the Spotify app. */
+  redirectUri: string;
+  connected: boolean;
+  account: { id: string; name: string } | null;
+  /** The last problem talking to Spotify (cleared once it works again). */
+  error: string | null;
+  nowPlaying: NowPlaying | null;
+  requests: SongRequestSettings;
+  /** Latest song requests, newest first (up to 20, since the server started). */
+  recentRequests: SongRequestResult[];
+}
+
+export interface PutSpotifyAppRequest {
+  clientId: string;
+}
+
+export interface SpotifyConnectStart {
+  authorizeUrl: string;
+  redirectUri: string;
+}
+
+export interface SpotifyConnectCompleteRequest {
+  pastedUrl: string;
+}
+
 /** GET /api/pairings [admin] -> PairingRequest[] (pending app connections, newest first) */
 /** POST /api/pairings/:id/approve [admin] -> CreateApiTokenResponse (the app receives the token itself; the secret is not shown) */
 export interface ApprovePairingRequest {
