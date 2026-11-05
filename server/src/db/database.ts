@@ -136,6 +136,62 @@ export const MIGRATIONS: readonly string[] = [
   );
   CREATE INDEX connected_apps_token ON connected_apps(token_id);
   `,
+  // v4: show profiles (one versioned OBS/overlay bundle per Relay profile), their revisions, the
+  // content-addressed blob index and the shared asset library. Blob bytes live on disk, not here.
+  `
+  CREATE TABLE show_profiles (
+    id            TEXT PRIMARY KEY,
+    profile_id    TEXT NOT NULL UNIQUE, -- exactly one show profile per Relay profile
+    name          TEXT NOT NULL,
+    head_revision INTEGER NOT NULL DEFAULT 0,
+    created_at    TEXT NOT NULL,
+    updated_at    TEXT NOT NULL
+  );
+  CREATE INDEX show_profiles_profile ON show_profiles(profile_id);
+
+  CREATE TABLE show_revisions (
+    show_profile_id TEXT NOT NULL REFERENCES show_profiles(id) ON DELETE CASCADE,
+    revision        INTEGER NOT NULL,
+    parent_revision INTEGER,
+    manifest        TEXT NOT NULL, -- manifest JSON (<= 1 MB)
+    bundle_sha256   TEXT NOT NULL, -- blob: the bundle's JSON files as one tar
+    size            INTEGER NOT NULL,
+    saved_by_app    TEXT,
+    saved_by_token  TEXT,
+    note            TEXT,
+    pinned          INTEGER NOT NULL DEFAULT 0,
+    created_at      TEXT NOT NULL,
+    PRIMARY KEY (show_profile_id, revision)
+  );
+
+  CREATE TABLE blobs (
+    sha256      TEXT PRIMARY KEY,
+    size        INTEGER NOT NULL,
+    kind        TEXT NOT NULL,
+    created_at  TEXT NOT NULL,
+    last_ref_at TEXT NOT NULL
+  );
+
+  CREATE TABLE revision_blobs (
+    show_profile_id TEXT NOT NULL,
+    revision        INTEGER NOT NULL,
+    sha256          TEXT NOT NULL,
+    PRIMARY KEY (show_profile_id, revision, sha256),
+    FOREIGN KEY (show_profile_id, revision) REFERENCES show_revisions ON DELETE CASCADE
+  );
+  CREATE INDEX revision_blobs_sha ON revision_blobs(sha256);
+
+  CREATE TABLE asset_library (
+    id          TEXT PRIMARY KEY,
+    sha256      TEXT NOT NULL REFERENCES blobs(sha256),
+    name        TEXT NOT NULL,
+    kind        TEXT NOT NULL,
+    profile_id  TEXT, -- NULL = every profile
+    uploaded_by TEXT,
+    created_at  TEXT NOT NULL
+  );
+  CREATE INDEX asset_library_sha ON asset_library(sha256);
+  `,
 ];
 
 /** Run `fn` inside a transaction (BEGIN IMMEDIATE), rolling back on error. Not reentrant. */

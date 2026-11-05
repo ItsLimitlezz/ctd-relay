@@ -155,7 +155,11 @@ const profileRoutes: FastifyPluginAsync<RouteOptions> = async (app, { services }
     }
     const appsChanged = dropAppResources(id);
 
-    // 7. The profile itself.
+    // 7. Its show profile (revisions cascade) and library entries; blob files are left to the sweeper.
+    repos.showProfiles.deleteByProfile(id);
+    repos.assetLibrary.deleteByProfile(id);
+
+    // 8. The profile itself.
     repos.profiles.delete(id);
     if (appsChanged > 0) bus.emit('apps-changed');
     bus.emit('destinations-changed', { profileId: id });

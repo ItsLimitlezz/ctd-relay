@@ -204,6 +204,125 @@ export interface ApiTokensRepo {
   delete(id: string): void;
 }
 
+/** A show profile: the versioned OBS/overlay bundle of one Relay profile (exactly one per profile). */
+export interface ShowProfileRecord {
+  id: string;
+  profileId: string;
+  name: string;
+  headRevision: number;
+  createdAt: string;
+  updatedAt: string;
+}
+export interface ShowRevisionSummary {
+  showProfileId: string;
+  revision: number;
+  parentRevision: number | null;
+  bundleSha256: string;
+  size: number;
+  savedByApp: string | null;
+  savedByToken: string | null;
+  note: string | null;
+  pinned: boolean;
+  createdAt: string;
+}
+export interface ShowRevisionRecord extends ShowRevisionSummary {
+  /** Raw manifest JSON text. */
+  manifest: string;
+}
+export interface BlobRecord {
+  sha256: string;
+  size: number;
+  kind: string;
+  createdAt: string;
+  lastRefAt: string;
+}
+export interface LibraryAsset {
+  id: string;
+  sha256: string;
+  name: string;
+  kind: string;
+  profileId: string | null;
+  uploadedBy: string | null;
+  createdAt: string;
+  /** Joined from blobs. */
+  size: number;
+}
+export interface BlobUsage {
+  profileId: string;
+  showProfileId: string;
+  revision: number;
+  isHead: boolean;
+}
+
+export interface ShowProfilesRepo {
+  list(profileId?: string): ShowProfileRecord[];
+  get(id: string): ShowProfileRecord | null;
+  getByProfile(profileId: string): ShowProfileRecord | null;
+  /**
+   * One transaction: when parentRevision is 0 and no show profile exists for profileId, create it (new UUID, given name).
+   * Throws RevisionConflictError(head) when parentRevision !== current head (incl. 0 when one exists, or >0 when none exists → head 0).
+   * Inserts revision head+1, sets head_revision and updated_at (and name), inserts revision_blobs rows for every sha in `blobs`
+   * (dedupe; include bundleSha256 even if the caller omits it), touches blobs.last_ref_at for them, then prunes to `keep` (default 50) newest + pinned.
+   */
+  addRevision(
+    input: {
+      profileId: string;
+      name: string;
+      parentRevision: number;
+      manifest: string;
+      bundleSha256: string;
+      size: number;
+      blobs: string[];
+      savedByApp: string | null;
+      savedByToken: string | null;
+      note: string | null;
+    },
+    keep?: number,
+  ): ShowRevisionRecord;
+  /** Newest first. */
+  listRevisions(showProfileId: string): ShowRevisionSummary[];
+  getRevision(showProfileId: string, revision: number): ShowRevisionRecord | null;
+  /** NotFoundError if missing. */
+  setPinned(showProfileId: string, revision: number, pinned: boolean): void;
+  /** Deletes a non-head revision (ConflictError for the head, NotFoundError if missing). */
+  deleteRevision(showProfileId: string, revision: number): void;
+  /** Keep the newest `keep` revisions plus pinned ones; the head is never removed. Returns rows removed. */
+  prune(showProfileId: string, keep?: number): number;
+  /** Removes the show profile of a Relay profile (revisions cascade). */
+  deleteByProfile(profileId: string): void;
+}
+
+export interface BlobsRepo {
+  get(sha256: string): BlobRecord | null;
+  /** Insert or keep; always sets last_ref_at = now. */
+  upsert(input: { sha256: string; size: number; kind: string }): BlobRecord;
+  touch(sha256s: string[]): void;
+  delete(sha256: string): void;
+  /** Of these hashes, the ones with no blobs row (input order, deduped). */
+  missing(sha256s: string[]): string[];
+  /** Blobs referenced by no revision_blobs row and no asset_library row, with last_ref_at < beforeIso. */
+  listUnreferenced(beforeIso: string): BlobRecord[];
+  totalSize(): number;
+  /**
+   * Visibility for a token: true if a revision of a show profile in `profileId` (null = any profile) or a library entry
+   * with profile_id IS NULL or = profileId (null = any entry) references the blob.
+   */
+  isVisible(sha256: string, profileId: string | null): boolean;
+  /** Which show-profile revisions reference the blob. */
+  usage(sha256: string): BlobUsage[];
+}
+
+export interface AssetLibraryRepo {
+  /** profileId undefined = all entries; a string = entries with profile_id IS NULL or = it; kind filters. Newest first. */
+  list(opts?: { profileId?: string; kind?: string }): LibraryAsset[];
+  get(id: string): LibraryAsset | null;
+  create(input: { sha256: string; name: string; kind: string; profileId: string | null; uploadedBy: string | null }): LibraryAsset;
+  update(id: string, patch: Partial<{ name: string; profileId: string | null }>): LibraryAsset;
+  delete(id: string): void;
+  /** Library entries assigned to this Relay profile are removed when it is deleted. */
+  deleteByProfile(profileId: string): void;
+}
+
 export interface Repos {
   users: UsersRepo;
   authSessions: AuthSessionsRepo;
@@ -215,6 +334,9 @@ export interface Repos {
   apiTokens: ApiTokensRepo;
   profiles: ProfilesRepo;
   connectedApps: ConnectedAppsRepo;
+  showProfiles: ShowProfilesRepo;
+  blobs: BlobsRepo;
+  assetLibrary: AssetLibraryRepo;
 }
 
 /**

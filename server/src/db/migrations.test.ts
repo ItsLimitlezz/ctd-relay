@@ -24,6 +24,7 @@ const SHIPPED_STEP_HASHES = [
   '4dd2c5b18087e881c32c2570a7f8871fa8b0a317c949d9392dc5bc7d306d2f9f', // v1: initial schema
   'd4c55d6e657418f8be8c2ab177595c933ec0b967bab0629f8a789f9ef6d21d69', // v2: api_tokens
   '000982e766f90785801da6c4a224207382f40d50cd1ae5271aa101a1426f26e3', // v3: profiles + connected apps
+  'c501ccc8618f7e0a89d5cf9b5af09c38e0faf2d3ba42a3882eae8d117d7fca84', // v4: show profiles, revisions, blobs, asset library
 ];
 
 const masterKey = crypto.randomBytes(32);
@@ -281,6 +282,42 @@ describe('a fresh database', () => {
       expect(repos.connectedApps.list()).toEqual([]);
     } finally {
       db.close();
+    }
+  });
+
+  it('is at v4 with the show profile tables', () => {
+    const db = openDatabase(':memory:');
+    try {
+      expect(schemaVersion(db)).toBe(4);
+      expect(MIGRATIONS.length).toBe(4);
+      expect(tables(db)).toEqual(expect.arrayContaining(['show_profiles', 'show_revisions', 'blobs', 'revision_blobs', 'asset_library']));
+      const repos = createRepos(db, box);
+      expect(repos.showProfiles.list()).toEqual([]);
+      expect(repos.assetLibrary.list()).toEqual([]);
+      expect(repos.blobs.totalSize()).toBe(0);
+    } finally {
+      db.close();
+    }
+  });
+});
+
+describe('v3 to v4', () => {
+  it('keeps existing data and adds empty show profile tables', async () => {
+    const old = new DatabaseSync(':memory:');
+    migrate(old, MIGRATIONS.slice(0, 3));
+    expect(schemaVersion(old)).toBe(3);
+    await seedOwnerData(old, 3);
+    const names = tables(old);
+    const before = dump(old, names);
+    migrate(old);
+    try {
+      expect(schemaVersion(old)).toBe(4);
+      expect(dump(old, names)).toEqual(before);
+      for (const t of ['show_profiles', 'show_revisions', 'blobs', 'revision_blobs', 'asset_library']) {
+        expect(old.prepare(`SELECT COUNT(*) AS n FROM ${t}`).get()?.n, t).toBe(0);
+      }
+    } finally {
+      old.close();
     }
   });
 });
