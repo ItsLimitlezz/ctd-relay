@@ -8,9 +8,11 @@
 //   BPM SM  ca60e71c-6a8b-4388-a377-151df7bf8ac2  session frame counters (rendered, lagged, dropped, output)
 //   BPM ERM f1fbc1d5-101e-4fb5-a61e-b8ce3c07b8c0  per-rendition frame counters (input, skipped, output)
 //
-// Each is its own SEI NAL unit. Timestamps are RFC 3339 strings with event 4 (packet interleave
-// request), the only event IVS reads today. Counters are differences since the previous IDR on that
-// track; the first IDR carries zeros, as the guide asks.
+// Each is its own SEI NAL unit. Timestamps are RFC 3339 strings. SM and ERM carry event 4 (packet
+// interleave request), the only one IVS expects there. TS also carries event 1 (composition time)
+// when it's known, like OBS (shared/bpm/bpm.c; OBS's frame encode events are optional and Relay can't
+// measure them inside FFmpeg). Counters are differences since the previous IDR on that track; the
+// first IDR carries zeros, as the guide asks.
 
 const UUID_TS = Buffer.from('0aecffe752724e2fa62fd19cd61a93b5', 'hex');
 const UUID_SM = Buffer.from('ca60e71c6a8b4388a377151df7bf8ac2', 'hex');
@@ -19,6 +21,7 @@ const UUID_ERM = Buffer.from('f1fbc1d5101e4fb5a61eb8ce3c07b8c0', 'hex');
 const SEI_NAL_HEADER = 0x06; // forbidden_zero 0, nal_ref_idc 0, nal_unit_type 6
 const USER_DATA_UNREGISTERED = 5;
 const TS_TYPE_RFC3339 = 1;
+const TS_EVENT_CTS = 1;
 const TS_EVENT_PIR = 4;
 
 export const SM_FRAMES_RENDERED = 1;
@@ -63,9 +66,19 @@ export function seiNal(uuid: Buffer, body: Buffer): Buffer {
   return Buffer.concat([Buffer.from([SEI_NAL_HEADER]), emulationPrevent(rbsp)]);
 }
 
+function timestampEntry(event: number, ms: number): Buffer {
+  return Buffer.concat([Buffer.from([TS_TYPE_RFC3339, event]), Buffer.from(rfc3339(ms), 'ascii'), Buffer.from([0])]);
+}
+
 /** reserved(4) = 0, num_timestamps_minus1(4) = 0, then one RFC 3339 timestamp (st(v): NUL-terminated). */
 function timestampBlock(ms: number): Buffer {
-  return Buffer.concat([Buffer.from([0x00, TS_TYPE_RFC3339, TS_EVENT_PIR]), Buffer.from(rfc3339(ms), 'ascii'), Buffer.from([0])]);
+  return Buffer.concat([Buffer.from([0x00]), timestampEntry(TS_EVENT_PIR, ms)]);
+}
+
+/** The TS message's timestamps: composition time (when known) and packet interleave request, in OBS's order. */
+function tsMessageBlock(ms: number, compositionMs: number | undefined): Buffer {
+  if (compositionMs === undefined) return timestampBlock(ms);
+  return Buffer.concat([Buffer.from([0x01]), timestampEntry(TS_EVENT_CTS, compositionMs), timestampEntry(TS_EVENT_PIR, ms)]);
 }
 
 function counterBlock(counters: readonly (readonly [tag: number, value: number])[]): Buffer {
@@ -91,11 +104,11 @@ export interface RenditionCounters {
   output: number;
 }
 
-/** The three BPM SEI NAL units to put in front of an IDR. */
-export function bpmNals(ms: number, session: SessionCounters, rendition: RenditionCounters): Buffer[] {
+/** The three BPM SEI NAL units to put in front of an IDR. `compositionMs`: when the frame was composed, if known. */
+export function bpmNals(ms: number, session: SessionCounters, rendition: RenditionCounters, compositionMs?: number): Buffer[] {
   const ts = timestampBlock(ms);
   return [
-    seiNal(UUID_TS, ts),
+    seiNal(UUID_TS, tsMessageBlock(ms, compositionMs)),
     seiNal(
       UUID_SM,
       Buffer.concat([

@@ -29,12 +29,25 @@ export interface IvsForwarderOptions {
 export class BpmInserter {
   private readonly counters = new BpmCounters();
   private readonly lengthSize = new Map<number, number>();
+  /** Wall clock at stream time 0: the lowest seen, so the estimate below is never in the future. */
+  private clockAtZero: number | null = null;
   idrs = 0;
 
   constructor(private readonly now: () => number = Date.now) {}
 
-  /** The tag body to send (with the metrics in front of an IDR). */
-  video(body: Buffer): Buffer {
+  /**
+   * When a frame with this stream timestamp was composed, estimated from the wall clock: FFmpeg gives
+   * no composition time, and this is the closest thing Relay can measure. Always before `at`.
+   */
+  private compositionTime(timestampMs: number | undefined, at: number): number | undefined {
+    if (timestampMs === undefined) return undefined;
+    const zero = at - timestampMs;
+    this.clockAtZero = this.clockAtZero === null ? zero : Math.min(this.clockAtZero, zero);
+    return Math.min(this.clockAtZero + timestampMs, at - 1);
+  }
+
+  /** The tag body to send (with the metrics in front of an IDR). `timestampMs`: the tag's stream timestamp. */
+  video(body: Buffer, timestampMs?: number): Buffer {
     const info = parseVideoTag(body);
     if (!info?.avc) return body;
     if (info.kind === 'sequence-start') {
@@ -46,7 +59,8 @@ export class BpmInserter {
     let out = body;
     if (findIdr(body.subarray(info.dataOffset), size) >= 0) {
       const c = this.counters.atIdr(info.track);
-      out = insertBeforeIdr(body, info.dataOffset, size, bpmNals(this.now(), c.session, c.rendition)) ?? body;
+      const at = this.now();
+      out = insertBeforeIdr(body, info.dataOffset, size, bpmNals(at, c.session, c.rendition, this.compositionTime(timestampMs, at))) ?? body;
       this.idrs++;
     }
     this.counters.frame(info.track);
@@ -115,7 +129,7 @@ export class IvsForwarder {
   }
 
   private forward(pub: TagPublisher, tag: FlvTag): boolean {
-    if (tag.type === TAG_VIDEO) return pub.send(RTMP_VIDEO, tag.timestamp, this.bpm.video(tag.body));
+    if (tag.type === TAG_VIDEO) return pub.send(RTMP_VIDEO, tag.timestamp, this.bpm.video(tag.body, tag.timestamp));
     if (tag.type === TAG_AUDIO) return pub.send(RTMP_AUDIO, tag.timestamp, tag.body);
     if (tag.type === TAG_SCRIPT) return pub.send(RTMP_DATA, tag.timestamp, tag.body);
     return true;

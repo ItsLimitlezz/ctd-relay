@@ -4,8 +4,8 @@
 //
 // What it does (RTMP 1.0 spec + Enhanced RTMP v2):
 // - simple handshake (C0/C1, S0/S1/S2, C2 = S1 echoed), as librtmp/OBS do;
-// - Set Chunk Size 4096, connect (with fourCcList, so the server knows the client speaks E-RTMP),
-//   releaseStream, FCPublish, createStream, publish(live), then @setDataFrame + audio/video messages
+// - Set Chunk Size 4096, connect (the same fields as OBS: app, type, flashVer, swfUrl, tcUrl; OBS sends
+//   no fourCcList), releaseStream, FCPublish, createStream, publish(live), then @setDataFrame + audio/video messages
 //   (every message with a full type-0 chunk header: simple, and the overhead is tiny at 4 KB chunks);
 // - answers pings, acknowledges bytes when the server sets a window, follows the server's chunk size;
 // - on close: FCUnpublish and deleteStream before ending the connection (IVS asks for FCUnpublish).
@@ -36,7 +36,6 @@ const CSID_DATA = 5;
 const CSID_VIDEO = 6;
 const DEFAULT_TIMEOUT_MS = 10_000;
 const CLOSE_TIMEOUT_MS = 2_000;
-const FOURCC_LIST = ['avc1', 'hvc1', 'av01'];
 
 export interface RtmpTarget {
   tls: boolean;
@@ -203,7 +202,6 @@ export class RtmpPublisher extends EventEmitter {
           flashVer: 'FMLE/3.0 (compatible; FMSc/1.0)',
           swfUrl: t.tcUrl,
           tcUrl: t.tcUrl,
-          fourCcList: FOURCC_LIST,
         },
       ]),
       'the server to accept the connection',

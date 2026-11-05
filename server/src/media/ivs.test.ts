@@ -65,6 +65,20 @@ describe('BPM SEI', () => {
     expect(unescape(erm!).subarray(47)[0]).toBe(2);
   });
 
+  it('adds the composition time to the TS message only, before the PIR timestamp, like OBS', () => {
+    const pir = Date.parse('2024-03-25T15:10:34.489Z');
+    const counters = { rendered: 0, lagged: 0, dropped: 0, output: 0 };
+    const [ts, sm, erm] = bpmNals(pir, counters, { input: 0, skipped: 0, output: 0 }, pir - 40);
+    // TS: num_timestamps_minus1 = 1, then CTS (event 1), then PIR (event 4).
+    expect(ts!.subarray(19, 22)).toEqual(Buffer.from([1, 1, 1]));
+    expect(ts!.toString('ascii', 22, 46)).toBe('2024-03-25T15:10:34.449Z');
+    expect(ts!.subarray(46, 49)).toEqual(Buffer.from([0, 1, 4]));
+    expect(ts!.toString('ascii', 49, 73)).toBe('2024-03-25T15:10:34.489Z');
+    // SM and ERM keep PIR only, which is all IVS expects there.
+    expect(sm!.subarray(19, 22)).toEqual(Buffer.from([0, 1, 4]));
+    expect(erm!.subarray(19, 22)).toEqual(Buffer.from([0, 1, 4]));
+  });
+
   it('sizes longer payloads with 0xFF continuation bytes', () => {
     const nal = seiNal(Buffer.alloc(16, 1), Buffer.alloc(300, 0x41));
     expect([nal[1], nal[2], nal[3]]).toEqual([5, 255, 316 - 255]);
@@ -122,6 +136,20 @@ describe('Enhanced FLV', () => {
 });
 
 describe('BpmInserter', () => {
+  it('estimates composition time from the stream timestamp, always before the interleave time', () => {
+    let clock = Date.parse('2024-03-25T15:00:00.000Z');
+    const b = new BpmInserter(() => clock);
+    const tsOf = (out: Buffer) => out.toString('latin1');
+    const first = tsOf(b.video(legacy(true, avcc(IDR)), 0));
+    expect(first).toContain('2024-03-25T14:59:59.999Z'); // can't equal the PIR time
+    expect(first).toContain('2024-03-25T15:00:00.000Z');
+    // 2 s of stream later, but the IDR arrives 50 ms late: composition time is on the stream's clock.
+    clock += 2050;
+    const late = tsOf(b.video(legacy(true, avcc(IDR)), 2000));
+    expect(late).toContain('2024-03-25T15:00:02.000Z');
+    expect(late).toContain('2024-03-25T15:00:02.050Z');
+  });
+
   it('adds the three BPM NALs in front of every IDR on every track, nothing elsewhere', () => {
     const b = new BpmInserter(() => 0);
     const key0 = b.video(legacy(true, avcc(IDR)));
@@ -179,7 +207,14 @@ describe('RtmpPublisher', () => {
     await ingest.unpublished;
     const names = ingest.commands.map((c) => c[0]);
     expect(names).toEqual(['connect', 'releaseStream', 'FCPublish', 'createStream', 'publish', 'FCUnpublish', 'deleteStream']);
-    expect(ingest.commands[0]![2]).toMatchObject({ app: 'app', tcUrl: `rtmp://127.0.0.1:${ingest.port}/app`, fourCcList: ['avc1', 'hvc1', 'av01'] });
+    // The same fields as OBS's connect (librtmp SendConnectPacket), and no others.
+    expect(ingest.commands[0]![2]).toEqual({
+      app: 'app',
+      type: 'nonprivate',
+      flashVer: 'FMLE/3.0 (compatible; FMSc/1.0)',
+      swfUrl: `rtmp://127.0.0.1:${ingest.port}/app`,
+      tcUrl: `rtmp://127.0.0.1:${ingest.port}/app`,
+    });
     expect(ingest.commands[4]).toEqual(['publish', 0, null, 'live_key?clientConfigId=c', 'live']);
     expect(ingest.messages).toEqual([{ type: RTMP_VIDEO, timestamp: 0x01000000, streamId: 1, payload: big }]);
   });
