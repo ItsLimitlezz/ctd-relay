@@ -20,7 +20,7 @@
 An open-source alternative to Restream that you run yourself. OBS sends a **landscape** feed (its main output) and a **vertical** feed (the Aitum Vertical plugin) to your own server, which relays each one to the platforms that want it: Twitch, YouTube, Kick, Facebook, X, Instagram, TikTok and any custom RTMP server. One stream title is kept in sync everywhere, and every platform's chat lands in one combined view. It ships as a single Docker image that installs on TrueNAS in a few minutes, and no domain name is needed.
 
 > [!NOTE]
-> **Status: early.** The core relay, the API-based platforms and the web UI are the focus of the first releases. Browser-automated platforms (Instagram, TikTok, X, Facebook profile) are **experimental** and may break when those sites change. Relaying both feeds to Twitch as Dual Format is experimental too, and Twitch currently refuses it. Feedback and testers are very welcome.
+> **Status: early.** The core relay, the API-based platforms and the web UI are the focus of the first releases. Browser-automated platforms (Instagram, TikTok, X, Facebook profile) are **experimental** and may break when those sites change. Relaying both feeds to Twitch as Dual Format is experimental too, and hasn't been tested with a real stream yet. Feedback and testers are very welcome.
 
 ## Features
 
@@ -29,7 +29,7 @@ An open-source alternative to Restream that you run yourself. OBS sends a **land
 - **Goes live when OBS does.** Auto go-live when the feed arrives (or manual), per-destination health and stats, automatic retries, and short OBS disconnects ridden out without ending the lives.
 - **One title everywhere.** Set it once and it's pushed to every platform, before and during the stream. The category or game is never touched.
 - **Combined chat** (read-only) from all platforms, plus a chat overlay for an OBS browser source.
-- **Twitch Dual Format**: relay one feed, or let OBS send Dual Format directly while the app manages title and chat (the recommended way to get Dual Format). Relaying both feeds as Dual Format is experimental: Twitch currently refuses it, so use OBS direct.
+- **Twitch Dual Format**: relay one feed, or let OBS send Dual Format directly while the app manages title and chat (the recommended way to get Dual Format). Relaying both feeds as Dual Format is experimental: it passes Twitch's configuration step but hasn't been tested with a real stream yet, so OBS direct is the safer choice for now.
 - **Built-in browser automation** for platforms without an API: you log in by hand in a live view of the app's browser, and the app creates the live, reads the per-stream key and clicks "Go live".
 - **Profiles.** Independent set-ups (your own channel, a club night…), each with its own accounts, destinations, title and OBS keys, and several can be live at once.
 - **Stream Guard** for Instagram: notices when a live is taken down, starts a fresh one automatically and rotates the link you attach to each live.
@@ -66,7 +66,7 @@ All of them use the same documented API: [docs/API.md](docs/API.md) ([quick star
 
 | Platform | Feed(s) | Stream key | Title | Chat (read) | Notes |
 |---|---|---|---|---|---|
-| Twitch | landscape (+ vertical via Dual Format) | Official API | Official API | Twitch chat | Dual Format: OBS direct (relaying both feeds is experimental; Twitch currently refuses it) |
+| Twitch | landscape (+ vertical via Dual Format) | Official API | Official API | Twitch chat | Dual Format: OBS direct (relaying both feeds is experimental and not yet tested with a real stream) |
 | YouTube | landscape and/or vertical | Official API (a broadcast per stream) | Official API | Official API | Chat polling uses the daily API quota |
 | Kick | landscape | Pasted once | Official API | Public chat feed | |
 | Facebook Page | landscape | Official API | Official API | Official API | Your own Meta app in development mode |

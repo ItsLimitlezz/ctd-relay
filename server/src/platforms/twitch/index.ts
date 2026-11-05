@@ -37,10 +37,12 @@ import {
   buildIngestUrl,
   DEFAULT_INGEST,
   DEFAULT_LANDSCAPE_FORMAT,
+  DEFAULT_REPORTED_CLIENT,
   DEFAULT_VERTICAL_FORMAT,
   readOptions,
   type TwitchDestinationOptions,
 } from './options.js';
+import { CUSTOM_GPU_EXAMPLE, CUSTOM_GPU_ID, DEFAULT_REPORTED_GPU_ID, REPORTED_GPU_PRESETS } from './reported-gpus.js';
 
 /** Pending device authorization, stored encrypted at account key 'device'. */
 interface DeviceState {
@@ -105,6 +107,35 @@ export const twitchInfo: PlatformInfo = {
       placeholder: DEFAULT_VERTICAL_FORMAT,
       help: 'Only used by "Relay both feeds": the resolution and frame rate of the Aitum Vertical feed, e.g. 1080x1920@60.',
     },
+    {
+      key: 'reportedGpu',
+      label: 'GPU reported to Twitch (relay Dual Format only)',
+      type: 'select',
+      target: 'option',
+      default: DEFAULT_REPORTED_GPU_ID,
+      options: [...REPORTED_GPU_PRESETS.map((p) => ({ value: p.id, label: p.label })), { value: CUSTOM_GPU_ID, label: 'Custom (fill in the field below)' }],
+      help: "Only used by \"Relay both feeds\": Twitch only gives a configuration to clients with a supported GPU, so Relay tells it you have this one. Relay still encodes on this server's CPU with x264, following the settings Twitch returns for this GPU.",
+    },
+    {
+      key: 'customGpu',
+      label: 'Custom GPU (relay Dual Format only)',
+      type: 'text',
+      target: 'option',
+      placeholder: CUSTOM_GPU_EXAMPLE,
+      help: 'Only used when the reported GPU is Custom: model | vendor id | device id | driver version | VRAM in GB (optional). The ids are in hex.',
+    },
+    {
+      key: 'reportedClient',
+      label: 'Client reported to Twitch (relay Dual Format only)',
+      type: 'select',
+      target: 'option',
+      default: DEFAULT_REPORTED_CLIENT,
+      options: [
+        { value: 'obs', label: 'OBS Studio (same requests as real OBS)' },
+        { value: 'relay', label: 'CTD Relay' },
+      ],
+      help: 'Only used by "Relay both feeds": the software name Relay gives Twitch when it asks for a configuration.',
+    },
   ],
   developerApp: {
     consoleUrl: 'https://dev.twitch.tv/console/apps',
@@ -135,7 +166,7 @@ export const twitchInfo: PlatformInfo = {
   notes: [
     'Dual Format: "Relay one feed" sends this destination\'s feed as a normal Twitch stream.',
     '"OBS sends Dual Format directly": OBS streams to Twitch itself with Enhanced Broadcasting and the Aitum Vertical canvas; this app sends no video to Twitch and only keeps the title in sync and reads chat.',
-    '"Relay both feeds": Relay asks Twitch\'s Enhanced Broadcasting service for a configuration and encodes what it asks for on this server: two tracks per feed (e.g. 1080p60 and 360p30 of each), Twitch\'s minimum for Dual Format, about 12 Mbps of upload and a good share of the CPU. When Twitch refuses, the destination streams the landscape feed alone (with a warning on its card) instead of staying down.',
+    '"Relay both feeds": Relay asks Twitch\'s Enhanced Broadcasting service for a configuration and encodes what it asks for on this server: two tracks per feed (e.g. 1080p60 and 360p30 of each), Twitch\'s minimum for Dual Format, about 12 Mbps of upload and a good share of the CPU. Relay tells Twitch it is OBS Studio with the GPU you pick (you can change both), although it encodes on this server. When Twitch refuses, the destination streams the landscape feed alone (with a warning on its card) instead of staying down.',
     'Bandwidth test streams without going live. Sign-ins expire after about 30 days without use.',
   ].join(' '),
   testMode: {
@@ -266,6 +297,8 @@ async function pushPlan(
           vertical: options.verticalFormat,
           ingestServer: options.ingestServer,
           bandwidthTest: options.bandwidthTest,
+          gpu: options.reportedGpu,
+          client: options.reportedClient,
         },
         ctx.signal,
         (warning) => ctx.log.warn({ destinationId: dest.id, warning }, 'twitch: Enhanced Broadcasting warning'),

@@ -4,14 +4,17 @@ import {
   buildConfigRequest,
   CLIENT_CONFIG_URL,
   fetchClientConfig,
+  OBS_CLIENT_VERSION,
+  OBS_USER_AGENT,
   planFromConfig,
   prepareMultitrack,
-  REPORTED_GPU,
+  reportedSystem,
   stripHtml,
   type ClientConfigResponse,
   type MultitrackInput,
 } from './multitrack.js';
 import { parseVideoFormat } from './options.js';
+import { DEFAULT_REPORTED_GPU, reportedGpuPreset } from './reported-gpus.js';
 
 const AUTH = 'v1_abc_123_def_live_1_KEY';
 
@@ -22,7 +25,6 @@ function input(over: Partial<MultitrackInput> = {}): MultitrackInput {
     vertical: parseVideoFormat('1080x1920@60')!,
     ingestServer: null,
     bandwidthTest: false,
-    now: new Date('2026-10-11T12:00:00Z'),
     ...over,
   };
 }
@@ -69,16 +71,17 @@ afterEach(() => {
 
 describe('buildConfigRequest', () => {
   it('describes both canvases, this machine plus the reported GPU, and asks for Dual Format’s minimum of 4 tracks', () => {
-    const body = buildConfigRequest(input({ clientVersion: '1.2.3' }));
+    const body = buildConfigRequest(input());
     expect(body).toMatchObject({
       service: 'IVS',
       schema_version: '2025-01-25',
       authentication: 'live_1_KEY',
-      stream_attempt_start_time: '2026-10-11T12:00:00.000Z',
-      client: { name: 'ctd-relay', version: '1.2.3', supported_codecs: ['h264'] },
+      client: { name: 'obs-studio', version: OBS_CLIENT_VERSION, supported_codecs: ['h264'] },
       preferences: {
+        maximum_aggregate_bitrate: null,
         maximum_video_tracks: 4,
         vod_track_audio: false,
+        composition_gpu_index: 0,
         canvases: [
           { width: 1920, height: 1080, canvas_width: 1920, canvas_height: 1080, framerate: { numerator: 60, denominator: 1 } },
           { width: 1080, height: 1920, canvas_width: 1080, canvas_height: 1920, framerate: { numerator: 60, denominator: 1 } },
@@ -88,9 +91,87 @@ describe('buildConfigRequest', () => {
     const caps = body.capabilities as { cpu: { logical_cores: number }; memory: { total: number }; gpu: unknown[] };
     expect(caps.cpu.logical_cores).toBeGreaterThan(0);
     expect(caps.memory.total).toBeGreaterThan(0);
-    expect(caps.gpu).toEqual([REPORTED_GPU]);
+    expect(caps.gpu).toEqual([DEFAULT_REPORTED_GPU]);
     expect((buildConfigRequest(input({ maxTracks: 2 })).preferences as { maximum_video_tracks: number }).maximum_video_tracks).toBe(4);
     expect((buildConfigRequest(input({ maxTracks: 6 })).preferences as { maximum_video_tracks: number }).maximum_video_tracks).toBe(6);
+  });
+
+  it('has the same top-level fields as OBS’s request and no others', () => {
+    const body = buildConfigRequest(input());
+    expect(Object.keys(body).sort()).toEqual(['authentication', 'capabilities', 'client', 'preferences', 'schema_version', 'service']);
+    expect(Object.keys(body.capabilities as object).sort()).toEqual(['cpu', 'gaming_features', 'gpu', 'memory', 'system']);
+  });
+
+  it('reports the GPU the destination picked', () => {
+    const gpu = reportedGpuPreset('arc-a770')!;
+    const caps = buildConfigRequest(input({ gpu })).capabilities as { gpu: unknown[] };
+    expect(caps.gpu).toEqual([gpu]);
+  });
+
+  it('can report CTD Relay as the client instead of OBS', () => {
+    const body = buildConfigRequest(input({ client: 'relay', clientVersion: '1.2.3' }));
+    expect(body.client).toEqual({ name: 'ctd-relay', version: '1.2.3', supported_codecs: ['h264'] });
+  });
+});
+
+describe('reportedSystem', () => {
+  const host = { platform: 'linux' as const, release: '6.12.33', version: '#1 SMP', arch: 'x64', osRelease: null };
+
+  it('reports Windows the way OBS does', () => {
+    expect(reportedSystem({ ...host, platform: 'win32', release: '10.0.19045', version: 'Windows 10 Pro' })).toEqual({
+      version: '10.0',
+      name: 'Windows',
+      build: 19045,
+      release: 'unavailable',
+      revision: '0',
+      bits: 64,
+      arm: false,
+      armEmulation: false,
+    });
+  });
+
+  it('reports Linux the way OBS does, from /etc/os-release', () => {
+    const osRelease = 'PRETTY_NAME="Debian GNU/Linux 12"\nNAME="Debian GNU/Linux"\nVERSION_ID="12"\nID=debian\n';
+    expect(reportedSystem({ ...host, arch: 'arm64', osRelease })).toEqual({
+      version: 'Linux 6.12.33 #1 SMP',
+      name: 'Debian GNU/Linux',
+      build: 0,
+      release: '12',
+      revision: '',
+      bits: 64,
+      arm: true,
+      armEmulation: false,
+    });
+  });
+
+  it('falls back like OBS when there is no /etc/os-release, and caps the version length', () => {
+    const system = reportedSystem({ ...host, version: 'x'.repeat(300) });
+    expect(system.name).toBe('Linux-based distribution');
+    expect(system.release).toBe('unknown');
+    expect(String(system.version)).toHaveLength(128);
+  });
+});
+
+describe('the configuration request’s user agent', () => {
+  function stubFetch(): () => Headers {
+    let seen = new Headers();
+    vi.stubGlobal('fetch', async (_url: string, init: RequestInit) => {
+      seen = new Headers(init.headers);
+      return new Response(JSON.stringify(config()), { status: 200, headers: { 'content-type': 'application/json' } });
+    });
+    return () => seen;
+  }
+
+  it('is OBS’s when reporting OBS', async () => {
+    const headers = stubFetch();
+    await prepareMultitrack(input(), new AbortController().signal);
+    expect(headers().get('user-agent')).toBe(OBS_USER_AGENT);
+  });
+
+  it('is not OBS’s when reporting CTD Relay', async () => {
+    const headers = stubFetch();
+    await prepareMultitrack(input({ client: 'relay' }), new AbortController().signal);
+    expect(headers().get('user-agent')).not.toBe(OBS_USER_AGENT);
   });
 });
 

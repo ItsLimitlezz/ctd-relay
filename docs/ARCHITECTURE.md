@@ -118,7 +118,7 @@ Destinations fail independently. One platform failing never blocks the others. T
 Twitch Dual Format uses **Enhanced Broadcasting**: several video tracks (landscape and vertical) inside one Enhanced-RTMP connection, negotiated through Twitch's client configuration endpoint. Restream does not appear to support it, so supporting it would set this project apart.
 
 - **Approach A (built, Oct 2026):** the server does what OBS's Enhanced Broadcasting does:
-  1. It calls GetClientConfiguration, describing a supported GPU (Twitch refuses clients without one).
+  1. It calls GetClientConfiguration with the same request as OBS, describing a supported GPU (Twitch refuses clients without one). The reported GPU and client are options on the destination (`platforms/twitch/reported-gpus.ts`).
   2. It encodes the returned tracks from the two feeds with x264 (constant bitrate, IDRs aligned on a shared clock). That is at least two per canvas, Twitch's minimum.
   3. It publishes the Enhanced FLV with its own RTMP client (`media/rtmp-publisher.ts`), inserting the broadcast performance metrics SEI that IVS requires before every IDR (`media/bpm.ts`, `media/ivs-forwarder.ts`).
 

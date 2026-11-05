@@ -22,12 +22,22 @@
 // - Connect: url_template with {stream_key} replaced by `authentication`, then the user's query
 //   (bandwidthtest), then clientConfigId=<config_id>. Track 0 goes as single-track packets, the
 //   others as Multitrack/OneTrack packets (FFmpeg 8 flvenc does exactly this).
+// - Probed again on 2026-11-04 (fake key, one change at a time): the client name, OS, user agent and
+//   stream_attempt_start_time made no difference at this step; only the GPU did (reported-gpus.ts).
+//   The fake key was accepted too, so a configuration says nothing about whether the ingest will
+//   accept the stream. That has not been tried with a real key.
+// - By default the request matches OBS's (frontend/utility/GoLiveAPI_PostData.cpp, system-info-*.cpp),
+//   read from OBS 33.0.1. Two differences are on purpose: supported_codecs stays H.264 because Relay
+//   only encodes H.264 (OBS lists what its encoders support, and H.265/AV1 could come back), and the
+//   CPU, memory and OS are this machine's.
 
+import fs from 'node:fs';
 import os from 'node:os';
 import { FEEDS, type Feed } from '../../../../shared/types.js';
 import { fetchJson, PlatformHttpError } from '../common/http.js';
 import { DriverError, type IvsTrack, type PushPlan } from '../types.js';
-import { appendQuery, type VideoFormat } from './options.js';
+import { appendQuery, type ReportedClient, type VideoFormat } from './options.js';
+import { DEFAULT_REPORTED_GPU, type ReportedGpu } from './reported-gpus.js';
 
 export const CLIENT_CONFIG_URL = 'https://ingest.twitch.tv/api/v3/GetClientConfiguration';
 const SCHEMA_VERSION = '2025-01-25';
@@ -39,20 +49,11 @@ export const MIN_DUAL_FORMAT_TRACKS = 4;
 export const DEFAULT_X264_PRESET = 'veryfast';
 const X264_PRESETS = ['ultrafast', 'superfast', 'veryfast', 'faster', 'fast', 'medium', 'slow'];
 
-/**
- * The GPU Relay describes to Twitch. Twitch's config service only hands a configuration to a client
- * with a supported encoding GPU; Relay encodes on the CPU (x264), so it describes a current NVIDIA
- * card and maps the settings Twitch returns for it (NVENC) to x264. If Twitch stops accepting it,
- * change it here.
- */
-export const REPORTED_GPU = {
-  model: 'NVIDIA GeForce RTX 5090',
-  vendor_id: 0x10de,
-  device_id: 0x2b85,
-  dedicated_video_memory: 32 * 1024 ** 3,
-  shared_system_memory: 16 * 1024 ** 3,
-  driver_version: '32.0.15.7270',
-};
+/** What the "OBS Studio" client identity reports: the OBS release the request was copied from. */
+export const OBS_CLIENT_VERSION = '33.0.1';
+/** OBS's HTTP client (frontend/utility/RemoteTextThread.cpp). */
+export const OBS_USER_AGENT = `obs-basic ${OBS_CLIENT_VERSION}`;
+const MAX_SYSTEM_VERSION_LENGTH = 128;
 
 interface Framerate {
   numerator?: number;
@@ -89,8 +90,12 @@ export interface MultitrackInput {
   bandwidthTest: boolean;
   /** Most video tracks Twitch may ask for (at least 4: two per canvas). */
   maxTracks?: number;
+  /** The GPU described to Twitch (default: DEFAULT_REPORTED_GPU). */
+  gpu?: ReportedGpu;
+  /** Who the request says it comes from (default: 'obs'). */
+  client?: ReportedClient;
+  /** Version reported by the 'relay' client. */
   clientVersion?: string;
-  now?: Date;
 }
 
 /** Collapse Twitch's HTML status message into plain text. */
@@ -118,10 +123,58 @@ function canvas(f: VideoFormat): Record<string, unknown> {
   return { width: f.width, height: f.height, canvas_width: f.width, canvas_height: f.height, framerate: f.fps };
 }
 
+export interface HostInfo {
+  platform: NodeJS.Platform;
+  /** os.release(): "10.0.19045" on Windows, the kernel release on Linux. */
+  release: string;
+  /** os.version(): the kernel build string on Linux. */
+  version: string;
+  arch: string;
+  /** Contents of /etc/os-release, when there is one. */
+  osRelease: string | null;
+}
+
+function hostInfo(): HostInfo {
+  const platform = os.platform();
+  let osRelease: string | null = null;
+  if (platform === 'linux') {
+    try {
+      osRelease = fs.readFileSync('/etc/os-release', 'utf8');
+    } catch {
+      // not every system has it
+    }
+  }
+  return { platform, release: os.release(), version: os.version(), arch: os.arch(), osRelease };
+}
+
+function osReleaseField(text: string | null, field: string): string {
+  const line = text?.split('\n').find((l) => l.startsWith(`${field}=`));
+  return line ? line.slice(field.length + 1).replace(/"/g, '').trim() : '';
+}
+
+/** This machine's OS, in the shape OBS reports it (system-info-windows.cpp, system-info-posix.cpp). */
+export function reportedSystem(host: HostInfo): Record<string, unknown> {
+  const common = { bits: /64/.test(host.arch) ? 64 : 32, arm: host.arch.startsWith('arm') || host.arch === 'aarch64', armEmulation: false };
+  if (host.platform === 'win32') {
+    const [major = '10', minor = '0', build = '0'] = host.release.split('.');
+    return { version: `${major}.${minor}`, name: 'Windows', build: Number(build) || 0, release: 'unavailable', revision: '0', ...common };
+  }
+  if (host.platform === 'linux') {
+    return {
+      version: `Linux ${host.release} ${host.version}`.slice(0, MAX_SYSTEM_VERSION_LENGTH),
+      name: osReleaseField(host.osRelease, 'NAME') || 'Linux-based distribution',
+      build: 0,
+      release: osReleaseField(host.osRelease, 'VERSION_ID') || 'unknown',
+      revision: '',
+      ...common,
+    };
+  }
+  return { version: host.version, name: host.platform === 'darwin' ? 'macOS' : host.platform, build: 0, release: host.release, revision: '', ...common };
+}
+
 /** This machine's CPU, memory and OS, plus the reported GPU. */
-function capabilities(): Record<string, unknown> {
+function capabilities(gpu: ReportedGpu): Record<string, unknown> {
   const cpus = os.cpus();
-  const arch = os.arch();
   return {
     cpu: {
       physical_cores: cpus.length || 1,
@@ -130,18 +183,15 @@ function capabilities(): Record<string, unknown> {
       ...(cpus[0]?.model ? { name: cpus[0].model.trim() } : {}),
     },
     memory: { total: os.totalmem(), free: os.freemem() },
-    system: {
-      version: os.version(),
-      name: os.type(),
-      build: 0,
-      release: os.release(),
-      revision: '',
-      bits: /64/.test(arch) ? 64 : 32,
-      arm: arch.startsWith('arm'),
-      armEmulation: false,
-    },
-    gpu: [REPORTED_GPU],
+    gaming_features: null,
+    system: reportedSystem(hostInfo()),
+    gpu: [gpu],
   };
+}
+
+function clientInfo(input: MultitrackInput): { name: string; version: string } {
+  if ((input.client ?? 'obs') === 'obs') return { name: 'obs-studio', version: OBS_CLIENT_VERSION };
+  return { name: 'ctd-relay', version: input.clientVersion ?? process.env.npm_package_version ?? '0' };
 }
 
 /** The GetClientConfiguration request for two canvases: landscape (0) and vertical (1). */
@@ -150,17 +200,14 @@ export function buildConfigRequest(input: MultitrackInput): Record<string, unkno
     service: 'IVS',
     schema_version: SCHEMA_VERSION,
     authentication: input.streamKey,
-    stream_attempt_start_time: (input.now ?? new Date()).toISOString(),
-    client: {
-      name: 'ctd-relay',
-      version: input.clientVersion ?? process.env.npm_package_version ?? '0',
-      supported_codecs: ['h264'],
-    },
-    capabilities: capabilities(),
+    client: { ...clientInfo(input), supported_codecs: ['h264'] },
+    capabilities: capabilities(input.gpu ?? DEFAULT_REPORTED_GPU),
     preferences: {
+      maximum_aggregate_bitrate: null,
       // Every track costs CPU on this server: ask for Dual Format's minimum unless told otherwise.
       maximum_video_tracks: Math.max(MIN_DUAL_FORMAT_TRACKS, Math.floor(input.maxTracks ?? MIN_DUAL_FORMAT_TRACKS)),
       vod_track_audio: false,
+      composition_gpu_index: 0,
       audio_samples_per_sec: 48_000,
       audio_channels: 2,
       audio_max_buffering_ms: 960,
@@ -175,11 +222,12 @@ export async function fetchClientConfig(
   body: Record<string, unknown>,
   signal: AbortSignal,
   url = CLIENT_CONFIG_URL,
+  userAgent?: string,
 ): Promise<ClientConfigResponse> {
   try {
     const json = await fetchJson<ClientConfigResponse>(url, {
       method: 'POST',
-      headers: { 'content-type': 'application/json', accept: 'application/json' },
+      headers: { 'content-type': 'application/json', accept: 'application/json', ...(userAgent ? { 'user-agent': userAgent } : {}) },
       body: JSON.stringify(body),
       signal,
       timeoutMs: CONFIG_TIMEOUT_MS,
@@ -323,6 +371,7 @@ export async function prepareMultitrack(
   warn?: (msg: string) => void,
   url?: string,
 ): Promise<PushPlan> {
-  const config = await fetchClientConfig(buildConfigRequest(input), signal, url);
+  const userAgent = (input.client ?? 'obs') === 'obs' ? OBS_USER_AGENT : undefined;
+  const config = await fetchClientConfig(buildConfigRequest(input), signal, url, userAgent);
   return planFromConfig(config, input, warn);
 }

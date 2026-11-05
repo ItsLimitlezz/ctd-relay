@@ -1,6 +1,7 @@
 // Twitch destination options (see PlatformInfo.destinationFields in index.ts) and ingest URL helpers.
 
 import type { Destination } from '../../../../shared/types.js';
+import { CUSTOM_GPU_EXAMPLE, CUSTOM_GPU_ID, DEFAULT_REPORTED_GPU, DEFAULT_REPORTED_GPU_ID, parseCustomGpu, reportedGpuPreset, type ReportedGpu } from './reported-gpus.js';
 
 /**
  * Twitch's recommended global ingest ("Default" entry of https://ingest.twitch.tv/ingests,
@@ -10,6 +11,11 @@ export const DEFAULT_INGEST = 'rtmps://ingest.global-contribute.live-video.net/a
 
 export type DualFormatMode = 'off' | 'obs-direct' | 'relay-multitrack';
 export const DUAL_FORMAT_MODES: readonly DualFormatMode[] = ['off', 'obs-direct', 'relay-multitrack'];
+
+/** Who "Relay both feeds" says it is: OBS Studio (same requests as real OBS) or CTD Relay. */
+export type ReportedClient = 'obs' | 'relay';
+export const REPORTED_CLIENTS: readonly ReportedClient[] = ['obs', 'relay'];
+export const DEFAULT_REPORTED_CLIENT: ReportedClient = 'obs';
 
 /** Output format of one feed, described to Twitch's Enhanced Broadcasting config service. */
 export interface VideoFormat {
@@ -28,6 +34,9 @@ export interface TwitchDestinationOptions {
   bandwidthTest: boolean;
   landscapeFormat: VideoFormat;
   verticalFormat: VideoFormat;
+  /** The GPU described to Twitch by "Relay both feeds". */
+  reportedGpu: ReportedGpu;
+  reportedClient: ReportedClient;
 }
 
 const FORMAT_RE = /^(\d{2,5})\s*x\s*(\d{2,5})(?:\s*@\s*(\d{1,3}(?:\.\d{1,3})?|\d{1,6}\/\d{1,6}))?$/i;
@@ -110,6 +119,25 @@ export function readOptions(dest: Pick<Destination, 'options'>): { options: Twit
     return parseVideoFormat(fallback)!;
   };
 
+  // Like the feed formats, these only matter for "Relay both feeds".
+  const relayMode = dualFormat === 'relay-multitrack';
+  const rawGpu = str(o.reportedGpu) || DEFAULT_REPORTED_GPU_ID;
+  let reportedGpu = DEFAULT_REPORTED_GPU;
+  if (rawGpu === CUSTOM_GPU_ID) {
+    const custom = parseCustomGpu(str(o.customGpu));
+    if (custom) reportedGpu = custom;
+    else if (relayMode) problems.push(`Custom GPU must look like ${CUSTOM_GPU_EXAMPLE}`);
+  } else {
+    const known = reportedGpuPreset(rawGpu);
+    if (known) reportedGpu = known;
+    else if (relayMode) problems.push(`Unknown reported GPU "${rawGpu.slice(0, 40)}"`);
+  }
+
+  const rawClient = str(o.reportedClient) || DEFAULT_REPORTED_CLIENT;
+  let reportedClient = DEFAULT_REPORTED_CLIENT;
+  if ((REPORTED_CLIENTS as readonly string[]).includes(rawClient)) reportedClient = rawClient as ReportedClient;
+  else if (relayMode) problems.push(`Unknown reported client "${rawClient.slice(0, 40)}"`);
+
   return {
     options: {
       dualFormat,
@@ -117,6 +145,8 @@ export function readOptions(dest: Pick<Destination, 'options'>): { options: Twit
       bandwidthTest: o.bandwidthTest === true || o.bandwidthTest === 'true',
       landscapeFormat: format('landscapeFormat', 'Landscape feed format', DEFAULT_LANDSCAPE_FORMAT),
       verticalFormat: format('verticalFormat', 'Vertical feed format', DEFAULT_VERTICAL_FORMAT),
+      reportedGpu,
+      reportedClient,
     },
     problems,
   };

@@ -6,7 +6,7 @@ How each platform is supported, how to connect it, and how to register the free 
 
 | Platform | Default feed | Connect with | Stream key | Title | Chat (read-only) | Status |
 |---|---|---|---|---|---|---|
-| [Twitch](#twitch) | landscape (+ vertical with Dual Format) | Device code + your Twitch app | API | API | Twitch chat (IRC) | Supported. Relaying both feeds as Dual Format is **experimental** (Twitch currently refuses it). |
+| [Twitch](#twitch) | landscape (+ vertical with Dual Format) | Device code + your Twitch app | API | API | Twitch chat (IRC) | Supported. Relaying both feeds as Dual Format is **experimental** (not yet tested with a real stream). |
 | [YouTube](#youtube) | landscape and/or vertical | Device code + your Google app | API (a new broadcast per stream) | API | API | Supported |
 | [Kick](#kick) | landscape | OAuth + your Kick app | Pasted once | API | Kick's public chat feed | Supported |
 | [Facebook Page](#facebook) | landscape | OAuth + your Meta app | API (a new live video per stream) | API | API | Supported |

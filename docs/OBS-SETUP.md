@@ -140,7 +140,7 @@ Your PC uploads the Twitch stream itself. The extra outputs to the app stay on y
 
 OBS only sends its two feeds to the app, and the app does what OBS's Enhanced Broadcasting would do:
 
-1. It asks Twitch's Enhanced Broadcasting service for a configuration. Twitch insists on a supported encoding GPU, so the app describes one, as noted in the code.
+1. It asks Twitch's Enhanced Broadcasting service for a configuration, with the same request OBS sends. Twitch insists on a supported encoding GPU, so the app describes one and, by default, says it is OBS Studio. You can change both on the Twitch destination: **GPU reported to Twitch** (or a **Custom GPU**) and **Client reported to Twitch**. The stream is still encoded on the server with x264, following the settings Twitch returns for that GPU.
 2. It encodes the tracks Twitch asks for on the server with x264. Twitch requires at least two tracks per feed; the app asks for that minimum, typically 1080p60 + 360p30 for each feed.
 3. It keeps the keyframes aligned across all tracks and adds the broadcast performance metrics Twitch requires before every keyframe.
 4. It publishes the result to Twitch itself.
@@ -148,6 +148,8 @@ OBS only sends its two feeds to the app, and the app does what OBS's Enhanced Br
 Expect about 12 Mbps of upload and a good share of the server's CPU while live. Both feeds must be online. Set the destination's **Landscape feed format** and **Vertical feed format** fields to what OBS sends (for example `1920x1080@60` and `1080x1920@60`); Twitch picks the tracks from them.
 
 If Twitch refuses the configuration, the destination streams the landscape feed alone, with a warning on its card, and tries Dual Format again on the next live. Session test mode (a bandwidth test) is the safe way to try it first.
+
+Reporting a GPU you don't have and a different client name is a workaround Twitch doesn't document. We don't know how Twitch treats it, so decide whether you're comfortable with that for your channel.
 
 ## Troubleshooting
 
