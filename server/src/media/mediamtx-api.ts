@@ -31,7 +31,7 @@ export interface MediaMtxApi {
   publisherAddress(pathName: string): Promise<string | null>;
 }
 
-/** "192.168.1.50:61234" / "[::ffff:192.168.1.50]:61234" / "[fe80::1]:5" -> the IP alone. */
+/** "10.20.30.40:61234" / "[::ffff:10.20.30.40]:61234" / "[fe80::1]:5" -> the IP alone. */
 export function hostOfRemoteAddr(remoteAddr: unknown): string | null {
   if (typeof remoteAddr !== 'string' || !remoteAddr) return null;
   const bracketed = /^\[([^\]]+)\](?::\d+)?$/.exec(remoteAddr);

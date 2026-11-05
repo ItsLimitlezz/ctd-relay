@@ -618,10 +618,10 @@ What OBS needs to stream into this profile — lets the CTD OBS plugin set OBS's
 user picks a profile:
 ```json
 { "profileId": "6f1d…",
-  "serverUrl": "rtmp://192.168.1.50:1936/live",
+  "serverUrl": "rtmp://10.20.30.40:1936/live",
   "feeds": [
-    { "feed": "landscape", "streamKey": "dprtmnt/landscape?key=Xb3…", "fullUrl": "rtmp://192.168.1.50:1936/live/dprtmnt/landscape?key=Xb3…" },
-    { "feed": "vertical",  "streamKey": "dprtmnt/vertical?key=Q9k…",  "fullUrl": "rtmp://192.168.1.50:1936/live/dprtmnt/vertical?key=Q9k…" }
+    { "feed": "landscape", "streamKey": "dprtmnt/landscape?key=Xb3…", "fullUrl": "rtmp://10.20.30.40:1936/live/dprtmnt/landscape?key=Xb3…" },
+    { "feed": "vertical",  "streamKey": "dprtmnt/vertical?key=Q9k…",  "fullUrl": "rtmp://10.20.30.40:1936/live/dprtmnt/vertical?key=Q9k…" }
   ] }
 ```
 The default profile keeps its pre-profiles keys (`landscape?key=…`). `serverUrl` uses the RTMP
@@ -644,13 +644,13 @@ Register or update this app; call again at least every 60 s as a heartbeat (or
 first registered an id may update or delete it (`409 app_owned`).
 ```json
 { "name": "CTD Overlay", "kind": "ctd-overlay", "version": "1.4.0",
-  "baseUrl": "http://192.168.1.50:30200",
+  "baseUrl": "http://10.20.30.40:30200",
   "capabilities": ["overlays", "overlay.create"],
   "resources": [
     { "type": "overlay", "id": "ovl_h", "name": "DPRTMNT takeover — landscape", "profileId": "6f1d…",
-      "url": "http://192.168.1.50:30200/o/takeover-h?key=…", "width": 1920, "height": 1080 },
+      "url": "http://10.20.30.40:30200/o/takeover-h?key=…", "width": 1920, "height": 1080 },
     { "type": "overlay", "id": "ovl_v", "name": "DPRTMNT takeover — vertical", "profileId": "6f1d…",
-      "url": "http://192.168.1.50:30200/o/takeover-v?key=…", "width": 1080, "height": 1920 }
+      "url": "http://10.20.30.40:30200/o/takeover-v?key=…", "width": 1080, "height": 1920 }
   ] }
 ```
 Response: `200` with the `ConnectedApp` (below). Limits: 200 resources, `meta` ≤ 4 KB each, body
@@ -685,7 +685,7 @@ Fields not listed are ignored. Each `PUT` replaces the whole registration (send 
 ```json
 { "items": [
   { "id": "ctd-overlay", "name": "CTD Overlay", "kind": "ctd-overlay", "version": "1.4.0",
-    "baseUrl": "http://192.168.1.50:30200", "capabilities": ["overlays", "overlay.create"],
+    "baseUrl": "http://10.20.30.40:30200", "capabilities": ["overlays", "overlay.create"],
     "resources": [ … only resources assigned to that profile or unassigned … ],
     "profileId": null, "registeredAt": "…", "lastSeenAt": "…", "online": true }
 ] }
@@ -707,7 +707,7 @@ to it; unassigned ones are listed by `GET /apps`), from every app, with its `met
 ```json
 { "items": [ { "appId": "ctd-overlay", "appName": "CTD Overlay", "appOnline": true,
   "id": "ovl_h", "name": "DPRTMNT takeover — landscape",
-  "url": "http://192.168.1.50:30200/o/takeover-h?key=…", "width": 1920, "height": 1080,
+  "url": "http://10.20.30.40:30200/o/takeover-h?key=…", "width": 1920, "height": 1080,
   "meta": { "canvas": "landscape", "slot": "takeover-landscape" } } ] }
 ```
 `url`, `width`, `height` and `meta` are left out when the app didn't send them.
@@ -757,7 +757,7 @@ UI, the app receives its own token.
      "scopes": ["status:read", "chat:read", "ingest:read", "apps:read", "apps:write"], "profileId": null }
    ```
    → `201 { "pairingId": "…", "pollSecret": "…", "code": "KQ7-2MX", "expiresIn": 600, "interval": 3,
-   "approveUrl": "https://192.168.1.50:30443/settings?tab=api&pair=…" }`.
+   "approveUrl": "https://10.20.30.40:30443/settings?tab=api&pair=…" }`.
    The app shows `code` (and `approveUrl`) to the user; `pollSecret` is a secret, never shown.
    `appName` ≤ 60 characters, `kind` `[a-z0-9-]` ≤ 40; scopes this server doesn't know (any
    entry, whatever its shape) are ignored (`400` if none is left); `profileId` is a wish, the admin

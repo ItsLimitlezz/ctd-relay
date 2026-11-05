@@ -348,8 +348,8 @@ describe('helpers', () => {
   });
 
   it('reads the publisher address from MediaMTX’s remoteAddr', () => {
-    expect(hostOfRemoteAddr('192.168.1.50:61234')).toBe('192.168.1.50');
-    expect(hostOfRemoteAddr('[::ffff:192.168.1.50]:61234')).toBe('192.168.1.50');
+    expect(hostOfRemoteAddr('10.20.30.40:61234')).toBe('10.20.30.40');
+    expect(hostOfRemoteAddr('[::ffff:10.20.30.40]:61234')).toBe('10.20.30.40');
     expect(hostOfRemoteAddr('[fe80::1]:5')).toBe('fe80::1');
     expect(hostOfRemoteAddr('')).toBeNull();
     expect(hostOfRemoteAddr(undefined)).toBeNull();

@@ -440,7 +440,7 @@ describe('Settings → API (static render)', () => {
         name: 'CTD Overlay',
         kind: 'ctd-overlay',
         version: '1.4.0',
-        baseUrl: 'http://192.168.1.50:30200',
+        baseUrl: 'http://10.20.30.40:30200',
         capabilities: ['overlays', 'overlay.create'],
         resources: [
           { type: 'overlay', id: 'ovl_h', name: 'DPRTMNT takeover — landscape', profileId: 'club', url: 'http://h/o/1' },
@@ -473,7 +473,7 @@ describe('Settings → API (static render)', () => {
     expect(out).toContain('v1.4.0');
     expect(out).toContain('Online');
     expect(out).toContain('Offline · last seen 10 min ago');
-    expect(out).toContain('href="http://192.168.1.50:30200/"');
+    expect(out).toContain('href="http://10.20.30.40:30200/"');
     expect(out).not.toContain('javascript:');
     // Default profile first, then DPRTMNT.
     expect(out.indexOf('Miami or Bust:')).toBeLessThan(out.indexOf('DPRTMNT:'));

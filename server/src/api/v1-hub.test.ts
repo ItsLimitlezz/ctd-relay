@@ -131,20 +131,20 @@ describe('profiles', () => {
 
   it('GET /profiles/{id}/ingest needs ingest:read; the default profile keeps its keys', async () => {
     expectProblem(await get(`/api/v1/profiles/${DEFAULT_PROFILE_ID}/ingest`, t.token(['status:read'])), 403, 'missing_scope');
-    const res = await get(`/api/v1/profiles/${DEFAULT_PROFILE_ID}/ingest`, all, { host: '192.168.1.50:30080' });
+    const res = await get(`/api/v1/profiles/${DEFAULT_PROFILE_ID}/ingest`, all, { host: '10.20.30.40:30080' });
     expect(res.statusCode).toBe(200);
     expect(res.headers['cache-control']).toBe('no-store');
     expect(res.json()).toEqual({
       profileId: DEFAULT_PROFILE_ID,
-      serverUrl: 'rtmp://192.168.1.50:1936/live',
+      serverUrl: 'rtmp://10.20.30.40:1936/live',
       feeds: [
-        { feed: 'landscape', streamKey: 'landscape?key=Lkeydefault', fullUrl: 'rtmp://192.168.1.50:1936/live/landscape?key=Lkeydefault' },
-        { feed: 'vertical', streamKey: 'vertical?key=Vkeydefault', fullUrl: 'rtmp://192.168.1.50:1936/live/vertical?key=Vkeydefault' },
+        { feed: 'landscape', streamKey: 'landscape?key=Lkeydefault', fullUrl: 'rtmp://10.20.30.40:1936/live/landscape?key=Lkeydefault' },
+        { feed: 'vertical', streamKey: 'vertical?key=Vkeydefault', fullUrl: 'rtmp://10.20.30.40:1936/live/vertical?key=Vkeydefault' },
       ],
     });
-    const club = (await get(`/api/v1/profiles/${dprtmnt.id}/ingest`, all, { host: '192.168.1.50:30080' })).json();
+    const club = (await get(`/api/v1/profiles/${dprtmnt.id}/ingest`, all, { host: '10.20.30.40:30080' })).json();
     expect(club.feeds[0].streamKey).toBe(`${dprtmnt.slug}/landscape?key=Lkey${dprtmnt.id.replace(/-/g, '')}`);
-    expect(club.feeds[1].fullUrl).toBe(`rtmp://192.168.1.50:1936/live/${club.feeds[1].streamKey}`);
+    expect(club.feeds[1].fullUrl).toBe(`rtmp://10.20.30.40:1936/live/${club.feeds[1].streamKey}`);
 
     // The OBS host from Settings wins, then LAN_HTTP_HOST, then the host the app called.
     const before = process.env.LAN_HTTP_HOST;
@@ -169,11 +169,11 @@ describe('connected apps', () => {
     name: 'CTD Overlay',
     kind: 'ctd-overlay',
     version: '1.4.0',
-    baseUrl: 'http://192.168.1.50:30200',
+    baseUrl: 'http://10.20.30.40:30200',
     capabilities: ['overlays', 'overlay.create'],
     resources: [
-      { type: 'overlay', id: 'ovl_h', name: 'DPRTMNT takeover — landscape', profileId, url: 'http://192.168.1.50:30200/o/takeover-h?key=k', width: 1920, height: 1080, meta: { canvas: 'landscape' } },
-      { type: 'overlay', id: 'ovl_any', name: 'Chat', profileId: null, url: 'http://192.168.1.50:30200/o/chat?key=k' },
+      { type: 'overlay', id: 'ovl_h', name: 'DPRTMNT takeover — landscape', profileId, url: 'http://10.20.30.40:30200/o/takeover-h?key=k', width: 1920, height: 1080, meta: { canvas: 'landscape' } },
+      { type: 'overlay', id: 'ovl_any', name: 'Chat', profileId: null, url: 'http://10.20.30.40:30200/o/chat?key=k' },
     ],
   });
 
@@ -200,7 +200,7 @@ describe('connected apps', () => {
           appOnline: true,
           id: 'ovl_h',
           name: 'DPRTMNT takeover — landscape',
-          url: 'http://192.168.1.50:30200/o/takeover-h?key=k',
+          url: 'http://10.20.30.40:30200/o/takeover-h?key=k',
           width: 1920,
           height: 1080,
           meta: { canvas: 'landscape' },
@@ -336,7 +336,7 @@ describe('pairing', () => {
   const request = { appName: 'CTD OBS plugin (Studio PC)', kind: 'ctd-obs-plugin', scopes: ['status:read', 'chat:read', 'ingest:read', 'apps:read', 'apps:write', 'future:scope'], profileId: null };
 
   it('pair → pending → approved (token once) → expired; the token works and is bound to the chosen profile', async () => {
-    const started = await call('POST', '/api/v1/pairing', null, request, { host: '192.168.1.50:30080' });
+    const started = await call('POST', '/api/v1/pairing', null, request, { host: '10.20.30.40:30080' });
     expect(started.statusCode, started.body).toBe(201);
     const body = started.json();
     expect(body).toEqual({
@@ -345,7 +345,7 @@ describe('pairing', () => {
       code: expect.stringMatching(/^[A-Z2-9]{3}-[A-Z2-9]{3}$/),
       expiresIn: 600,
       interval: 3,
-      approveUrl: `https://192.168.1.50:30443/settings?tab=api&pair=${body.pairingId}`,
+      approveUrl: `https://10.20.30.40:30443/settings?tab=api&pair=${body.pairingId}`,
     });
     // Known scopes only, in canonical order.
     expect(t.pairings.list()[0]).toMatchObject({ code: body.code, requestedScopes: ['chat:read', 'status:read', 'ingest:read', 'apps:read', 'apps:write'], ip: expect.any(String) });
@@ -404,16 +404,16 @@ describe('pairing', () => {
 
   it('webUiBase maps the LAN plain-HTTP port back to the HTTPS web UI', () => {
     const config = { tlsMode: 'self-signed' as const, webPort: 8443, httpPort: 8080 };
-    expect(webUiBase(config, '192.168.1.50:30080', false, 'https://x')).toBe('https://192.168.1.50:30443');
-    expect(webUiBase(config, '192.168.1.50', false, 'https://x')).toBe('https://192.168.1.50');
-    expect(webUiBase(config, '192.168.1.50:8080', false, 'https://x')).toBe('https://192.168.1.50:8443');
+    expect(webUiBase(config, '10.20.30.40:30080', false, 'https://x')).toBe('https://10.20.30.40:30443');
+    expect(webUiBase(config, '10.20.30.40', false, 'https://x')).toBe('https://10.20.30.40');
+    expect(webUiBase(config, '10.20.30.40:8080', false, 'https://x')).toBe('https://10.20.30.40:8443');
     expect(webUiBase(config, 'nas.lan:30443', true, 'https://x')).toBe('https://nas.lan:30443');
     expect(webUiBase({ ...config, tlsMode: 'off' }, 'nas.lan:8443', false, 'https://x')).toBe('http://nas.lan:8443');
     expect(webUiBase(config, 'bad host/../', false, 'https://203.0.113.7/')).toBe('https://203.0.113.7');
     // LAN_HTTP_PORT override: the HTTPS port can't be derived from it; the public web UI address is used.
-    expect(webUiBase(config, '192.168.1.50:9080', false, 'https://203.0.113.7:30443/', 9080)).toBe('https://203.0.113.7:30443');
-    expect(webUiBase(config, '192.168.1.50:30080', false, 'https://x', 9080)).toBe('https://192.168.1.50:30443');
-    expect(webUiBase(config, '192.168.1.50:8080', false, 'https://x', 8080)).toBe('https://192.168.1.50:8443');
+    expect(webUiBase(config, '10.20.30.40:9080', false, 'https://203.0.113.7:30443/', 9080)).toBe('https://203.0.113.7:30443');
+    expect(webUiBase(config, '10.20.30.40:30080', false, 'https://x', 9080)).toBe('https://10.20.30.40:30443');
+    expect(webUiBase(config, '10.20.30.40:8080', false, 'https://x', 8080)).toBe('https://10.20.30.40:8443');
   });
 
   it('the per-address limits count an IPv6 /64 as one address', () => {
