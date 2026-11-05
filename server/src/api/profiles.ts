@@ -23,7 +23,7 @@ export function apiProfile(s: ProfileSummary): ApiProfile {
   };
 }
 
-/** Host part of a URL-ish value ("192.168.1.50", "nas.lan:8443", "http://nas/", "[fd00::1]"), bracketed for IPv6. */
+/** Host part of a URL-ish value ("10.20.30.40", "nas.lan:8443", "http://nas/", "[fd00::1]"), bracketed for IPv6. */
 export function hostOnly(value: string): string {
   let host = value.trim();
   if (host.includes('://')) {

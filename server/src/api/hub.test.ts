@@ -42,7 +42,7 @@ const overlay = (id: string, profileId: string | null, over: Partial<AppResource
   id,
   name: `Overlay ${id}`,
   profileId,
-  url: `http://192.168.1.50:30200/o/${id}?key=k`,
+  url: `http://10.20.30.40:30200/o/${id}?key=k`,
   width: 1920,
   height: 1080,
   ...over,
@@ -53,7 +53,7 @@ const reg = (id: string, over: Partial<AppRegistration> = {}): AppRegistration =
   name: 'CTD Overlay',
   kind: 'ctd-overlay',
   version: '1.4.0',
-  baseUrl: 'http://192.168.1.50:30200',
+  baseUrl: 'http://10.20.30.40:30200',
   capabilities: ['overlays', 'overlay.create'],
   resources: [],
   ...over,
@@ -292,12 +292,12 @@ describe('views', () => {
         appOnline: true,
         id: 'd',
         name: 'Overlay d',
-        url: 'http://192.168.1.50:30200/o/d?key=k',
+        url: 'http://10.20.30.40:30200/o/d?key=k',
         width: 1920,
         height: 1080,
         meta: { canvas: 'landscape' },
       },
-      { appId: 'other', appName: 'Other', appOnline: true, id: 'd2', name: 'Overlay d2', url: 'http://192.168.1.50:30200/o/d2?key=k', width: 1920, height: 1080 },
+      { appId: 'other', appName: 'Other', appOnline: true, id: 'd2', name: 'Overlay d2', url: 'http://10.20.30.40:30200/o/d2?key=k', width: 1920, height: 1080 },
     ]);
     expect(overlaysFor(registry.list(), 'default').map((o) => o.id)).toEqual(['a']);
   });

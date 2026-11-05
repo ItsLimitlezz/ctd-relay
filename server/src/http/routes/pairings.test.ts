@@ -41,7 +41,7 @@ function connectedApp(id: string, tokenId: string): ConnectedApp {
     name: 'CTD Overlay',
     kind: 'ctd-overlay',
     version: '1.4.0',
-    baseUrl: 'http://192.168.1.50:30200',
+    baseUrl: 'http://10.20.30.40:30200',
     capabilities: ['overlays'],
     resources: [],
     tokenId,

@@ -1109,7 +1109,7 @@ export function PhoneConnectCard({
 // OBS on your computer (the phone's OBS socket relay)
 // ---------------------------------------------------------------------------
 
-/** "Connected to OBS 31.1.2 (WebSocket 5.6.2) at 192.168.1.50:4455." */
+/** "Connected to OBS 31.1.2 (WebSocket 5.6.2) at 10.20.30.40:4455." */
 export function obsTestText(r: Extract<ObsRelayTestResult, { ok: true }>): string {
   const what = [r.obsVersion ? `OBS ${r.obsVersion}` : 'OBS', r.obsWebSocketVersion ? `(WebSocket ${r.obsWebSocketVersion})` : null].filter(Boolean).join(' ');
   return `Connected to ${what} at ${r.host}:${r.port}.`;
@@ -1216,7 +1216,7 @@ export function ObsRelayCard() {
                 : 'Leave empty to use the address OBS streams to Relay from (stream once first), or enter the IP of the computer running OBS.'
             }
           >
-            <TextInput value={host} placeholder={s.detectedHost ?? '192.168.1.50'} autoComplete="off" spellCheck={false} mono maxLength={253} onValueChange={setHost} />
+            <TextInput value={host} placeholder={s.detectedHost ?? '10.20.30.40'} autoComplete="off" spellCheck={false} mono maxLength={253} onValueChange={setHost} />
           </Field>
           <Field label="Port" error={portError}>
             <TextInput value={port} inputMode="numeric" autoComplete="off" mono maxLength={5} invalid={!!portError} onValueChange={setPort} />

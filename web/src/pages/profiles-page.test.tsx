@@ -162,10 +162,10 @@ describe('profile switcher + tags (static render)', () => {
 describe('OBS setup per profile (static render)', () => {
   const info = (profileId: string, prefix: string): IngestInfo => ({
     profileId,
-    serverUrl: 'rtmp://192.168.1.50:1936/live',
+    serverUrl: 'rtmp://10.20.30.40:1936/live',
     feeds: [
-      { feed: 'landscape', streamKey: `${prefix}landscape?key=abc`, fullUrl: `rtmp://192.168.1.50:1936/live/${prefix}landscape?key=abc` },
-      { feed: 'vertical', streamKey: `${prefix}vertical?key=def`, fullUrl: `rtmp://192.168.1.50:1936/live/${prefix}vertical?key=def` },
+      { feed: 'landscape', streamKey: `${prefix}landscape?key=abc`, fullUrl: `rtmp://10.20.30.40:1936/live/${prefix}landscape?key=abc` },
+      { feed: 'vertical', streamKey: `${prefix}vertical?key=def`, fullUrl: `rtmp://10.20.30.40:1936/live/${prefix}vertical?key=def` },
     ],
   });
 
@@ -177,7 +177,7 @@ describe('OBS setup per profile (static render)', () => {
     expect(out).toContain('Stream to DPRTMNT');
     expect(out).toContain('Each profile has its own stream keys');
     expect(out).not.toContain('original keys');
-    expect(out).toContain('value="rtmp://192.168.1.50:1936/live"');
+    expect(out).toContain('value="rtmp://10.20.30.40:1936/live"');
     expect(out).not.toContain('key=abc'); // masked
   });
 

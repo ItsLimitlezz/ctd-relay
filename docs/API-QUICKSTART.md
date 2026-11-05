@@ -6,8 +6,8 @@ Full reference: [API.md](API.md). Everything below is JSON over HTTP.
 
 | Where | Base URL |
 |---|---|
-| Same LAN / same NAS | `http://192.168.1.50:30080/api/v1` (plain HTTP, LAN clients only) |
-| HTTPS | `https://192.168.1.50:30443/api/v1` |
+| Same LAN / same NAS | `http://10.20.30.40:30080/api/v1` (plain HTTP, LAN clients only) |
+| HTTPS | `https://10.20.30.40:30443/api/v1` |
 
 Every request: `Authorization: Bearer ctd_pat_…`
 
@@ -62,10 +62,10 @@ Re-send this at least every 60 s as a heartbeat:
 ```http
 PUT /apps/ctd-overlay-dprtmnt
 { "name": "CTD Overlay", "kind": "ctd-overlay", "version": "1.0.0",
-  "baseUrl": "http://192.168.1.50:4850", "capabilities": ["overlays", "overlay.create"],
+  "baseUrl": "http://10.20.30.40:4850", "capabilities": ["overlays", "overlay.create"],
   "resources": [
     { "type": "overlay", "id": "ovl_h", "name": "Takeover — landscape", "profileId": "<profileId>",
-      "url": "http://192.168.1.50:4850/o/takeover-h?key=…", "width": 1920, "height": 1080,
+      "url": "http://10.20.30.40:4850/o/takeover-h?key=…", "width": 1920, "height": 1080,
       "meta": { "canvas": "landscape", "slot": "takeover-landscape", "transparent": true } } ] }
 ```
 - Use one app id per connection: `ctd-overlay-<profile slug>`, or `ctd-overlay` for a token that covers every profile.

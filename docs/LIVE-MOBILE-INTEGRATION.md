@@ -135,7 +135,7 @@ sends `Identify` (op 1) without `authentication`. In detail:
 
 **Closed after the upgrade.** Relay's own close codes are in the `41xx` range so they never collide
 with OBS's `40xx` codes. The close **reason** is a short English sentence, ready to show; display it.
-For example: `CTD Relay can't reach OBS at 192.168.1.50:4455. Is OBS open, with its WebSocket server on?`
+For example: `CTD Relay can't reach OBS at 10.20.30.40:4455. Is OBS open, with its WebSocket server on?`
 
 | Code | Meaning | App behaviour |
 |---|---|---|

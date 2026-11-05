@@ -898,7 +898,7 @@ export function openApiDocument(version: string): Record<string, unknown> {
           required: ['profileId', 'serverUrl', 'feeds'],
           properties: {
             profileId: str,
-            serverUrl: { type: 'string', description: 'OBS Settings → Stream → Server, e.g. rtmp://192.168.1.50:1936/live' },
+            serverUrl: { type: 'string', description: 'OBS Settings → Stream → Server, e.g. rtmp://10.20.30.40:1936/live' },
             feeds: {
               type: 'array',
               items: {

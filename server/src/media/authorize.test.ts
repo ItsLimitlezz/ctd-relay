@@ -22,7 +22,7 @@ const keys: IngestSecrets = {
 const single = singleProfileAuth(keys);
 
 function req(overrides: Partial<MediaMtxAuthRequest>): MediaMtxAuthRequest {
-  return { user: '', password: '', ip: '192.168.1.50', action: 'publish', path: 'live/landscape', protocol: 'rtmp', id: null, query: '', ...overrides };
+  return { user: '', password: '', ip: '10.20.30.40', action: 'publish', path: 'live/landscape', protocol: 'rtmp', id: null, query: '', ...overrides };
 }
 
 describe('authorizeMediaRequest (default profile, unchanged behaviour)', () => {
@@ -42,7 +42,7 @@ describe('authorizeMediaRequest (default profile, unchanged behaviour)', () => {
     ['read from loopback with reader creds', req({ action: 'read', ip: '127.0.0.1', user: 'internal', password: keys.internalReader }), true],
     ['read from ::1', req({ action: 'read', ip: '::1', user: 'internal', password: keys.internalReader }), true],
     ['read from mapped loopback', req({ action: 'read', ip: '::ffff:127.0.0.1', user: 'internal', password: keys.internalReader }), true],
-    ['read from LAN with reader creds', req({ action: 'read', ip: '192.168.1.50', user: 'internal', password: keys.internalReader }), false],
+    ['read from LAN with reader creds', req({ action: 'read', ip: '10.20.30.40', user: 'internal', password: keys.internalReader }), false],
     ['read from loopback with wrong password', req({ action: 'read', ip: '127.0.0.1', user: 'internal', password: 'x' }), false],
     ['read from loopback with wrong user', req({ action: 'read', ip: '127.0.0.1', user: 'admin', password: keys.internalReader }), false],
     ['read from loopback without creds', req({ action: 'read', ip: '127.0.0.1' }), false],

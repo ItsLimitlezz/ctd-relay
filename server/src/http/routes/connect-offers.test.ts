@@ -101,7 +101,7 @@ describe('connect a phone', () => {
   it('flags a public URL that is really a LAN address (no mobile data)', () => {
     expect(urlIsPrivate('https://203.0.113.7/api/v1')).toBe(false);
     expect(urlIsPrivate('https://stream.example.com/api/v1')).toBe(false);
-    expect(urlIsPrivate('https://192.168.1.50:30443/api/v1')).toBe(true);
+    expect(urlIsPrivate('https://10.20.30.40:30443/api/v1')).toBe(true);
     expect(urlIsPrivate('https://nas.local/api/v1')).toBe(true);
     expect(urlIsPrivate('https://[fd00::1]/api/v1')).toBe(true);
     expect(urlIsPrivate('https://100.100.1.2/api/v1')).toBe(true); // CGNAT / Tailscale

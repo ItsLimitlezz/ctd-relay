@@ -146,8 +146,8 @@ describe('lanClientPolicy (LAN_HTTP / LAN_HTTP_CIDRS)', () => {
   it('LAN_HTTP_CIDRS replaces the private ranges (e.g. to exclude the Docker gateway)', () => {
     const p = lanClientPolicy({ LAN_HTTP_CIDRS: ' 192.168.1.0/24, fd00::/8 ,10.0.0.7, bogus, 10.0.0.0/99 ' });
     expect(p.enabled).toBe(true);
-    expect(p.isLanClient('192.168.1.50')).toBe(true);
-    expect(p.isLanClient('::ffff:192.168.1.50')).toBe(true);
+    expect(p.isLanClient('192.168.1.77')).toBe(true);
+    expect(p.isLanClient('::ffff:192.168.1.77')).toBe(true);
     expect(p.isLanClient('fd00::5')).toBe(true);
     expect(p.isLanClient('10.0.0.7')).toBe(true);
     expect(p.isLanClient('10.0.0.8')).toBe(false);
