@@ -22,7 +22,7 @@ All non-Apple, so test builds run on the **PC**. Needs Node >= 24.7 (built-in `n
 - Checks: `npm run typecheck` · `npm test` (Vitest, projects `server` and `web`) · `npm run build` · `npm run smoke` (end-to-end with real MediaMTX/FFmpeg in `./tools`)
 - Run locally: `TLS_MODE=off npm run dev` (PowerShell: `$env:TLS_MODE='off'; npm run dev`), web UI `npm run dev:web`, fake rig `npm run dev:sim`. Server is at http://localhost:8443; setup code is printed in the log.
 - Docker: `docker build -t ctd-relay .` / `docker compose up -d --build` (whether the PC has Docker: TBD (owner to confirm)).
-- Cloud sessions can run typecheck/tests if Node 24 and Chromium are available (`CI_NO_BROWSER=1` skips browser tests); otherwise tag the PR `Needs local build: PC`.
+- Cloud sessions can run typecheck/tests if Node 24 and Chromium are available (`CI_NO_BROWSER=1` skips browser tests); otherwise tag the PR `needs-build:pc`.
 
 ## Release
 Open-source (AGPL-3.0), so prod builds may use GitHub Actions. Per `docs/DEVELOPMENT.md` → Releasing: bump `version` in `package.json`, tag `vX.Y.Z`, push the tag; `.github/workflows/docker.yml` builds linux/amd64 + arm64 and pushes `ghcr.io/itslimitlezz/ctd-relay:X.Y.Z`, `:X.Y`, `:latest` (also under the pre-rename name `ctd-multi-stream`). First publish creates the GHCR package private; make it public. Release needs the hub's Senior check first.
