@@ -1,5 +1,5 @@
 import type { AddressInfo } from 'node:net';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { WebSocketServer, type WebSocket as WsSocket } from 'ws';
 import { clearChatroomCache, kickChat } from './chat-source.js';
 import { PusherError } from './pusher.js';
@@ -67,7 +67,14 @@ describe('centrifugoEvents', () => {
     const server = fakeCentrifugo(wss, { requireToken: 'guest-jwt' });
     const events = centrifugoEvents({ url, token: async () => 'guest-jwt', channels: ['chatrooms.668.v2'], optionalChannels: ['channel_668'], signal: ctl.signal });
     const first = events.next();
-    await new Promise((r) => setTimeout(r, 200));
+    // Publish only once the client has subscribed: how long that takes depends on the machine.
+    await vi.waitFor(
+      () => {
+        expect(server.seen).toContainEqual(expect.objectContaining({ subscribe: { channel: 'chatrooms.668.v2' } }));
+        expect(server.seen).toContainEqual(expect.objectContaining({ subscribe: { channel: 'channel_668' } }));
+      },
+      { timeout: 10_000 },
+    );
     const ws = server.sockets[0]!;
     ws.send('{}'); // ping
     ws.send(
@@ -76,10 +83,7 @@ describe('centrifugoEvents', () => {
     expect((await first).value).toMatchObject({ event: 'App\\Events\\ChatMessageEvent', channel: 'chatrooms.668.v2', data: { id: 'm1', content: 'LOL' } });
     expect((await events.next()).value).toMatchObject({ data: { id: 'm2' } });
     expect(server.seen).toContainEqual({ id: 1, connect: { token: 'guest-jwt', name: 'js' } });
-    expect(server.seen).toContainEqual(expect.objectContaining({ subscribe: { channel: 'chatrooms.668.v2' } }));
-    expect(server.seen).toContainEqual(expect.objectContaining({ subscribe: { channel: 'channel_668' } }));
-    await new Promise((r) => setTimeout(r, 100)); // the pong is on its way to the server
-    expect(server.seen).toContainEqual({ pong: true });
+    await vi.waitFor(() => expect(server.seen).toContainEqual({ pong: true }), { timeout: 10_000 }); // the pong is on its way to the server
     ctl.abort();
     expect((await events.next()).done).toBe(true);
   });
