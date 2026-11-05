@@ -1,5 +1,9 @@
 // Fixtures for the external API tests (excluded from the build).
 
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { createBlobStore, type BlobLimits } from '../storage/blob-store.js';
 import crypto from 'node:crypto';
 import cookie from '@fastify/cookie';
 import helmet from '@fastify/helmet';
@@ -236,7 +240,7 @@ export interface TestApi {
 }
 
 export async function createTestApi(
-  opts: { tlsMode?: AppConfig['tlsMode']; heartbeatMs?: number; now?: () => number; previews?: PreviewService } = {},
+  opts: { tlsMode?: AppConfig['tlsMode']; heartbeatMs?: number; now?: () => number; previews?: PreviewService; blobLimits?: () => BlobLimits } = {},
 ): Promise<TestApi> {
   const now = opts.now ?? Date.now;
   const secretBox = createSecretBox(crypto.randomBytes(32));
@@ -254,6 +258,8 @@ export async function createTestApi(
   } as unknown as TlsManager;
   const apps = createAppRegistry({ repos, bus, log: silentLog, now });
   const pairings = createPairingService({ repos, bus, log: silentLog, config, now });
+  const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ctd-api-'));
+  const blobStore = createBlobStore({ dataDir, repo: repos.blobs, ...(opts.blobLimits ? { limits: opts.blobLimits } : {}) });
   const services = {
     config,
     log: silentLog,
@@ -261,6 +267,7 @@ export async function createTestApi(
     repos,
     secretBox,
     tls,
+    blobStore,
     orchestrators: fakeOrchestrators(repos, stateOf),
     apps,
     pairings,
@@ -340,6 +347,7 @@ export async function createTestApi(
       apps.close();
       pairings.close();
       db.close();
+      fs.rmSync(dataDir, { recursive: true, force: true });
     },
   };
 }

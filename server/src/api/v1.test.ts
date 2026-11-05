@@ -48,7 +48,7 @@ describe('auth', () => {
       name: 'ctd-multi-stream',
       version: '9.9.9',
       build: { commit: null, date: null },
-      apiRevision: '1.8',
+      apiRevision: '1.9',
       apiVersion: 1,
       token: { name: 'test', scopes: ['chat:read', 'status:read'], profileId: null },
     });
@@ -168,6 +168,14 @@ describe('GET /openapi.json', () => {
       '/connect/claim',
       '/pairing',
       '/pairing/{pairingId}/token',
+      '/profiles/{id}/show',
+      '/profiles/{id}/show/revisions',
+      '/profiles/{id}/show/revisions/{rev}',
+      '/profiles/{id}/show/revisions/{rev}/bundle',
+      '/profiles/{id}/show/revisions/{rev}/secrets',
+      '/blobs/check',
+      '/blobs/{sha256}',
+      '/library',
     ]);
     expect(doc.components.securitySchemes.bearer).toMatchObject({ type: 'http', scheme: 'bearer' });
     // Every $ref resolves.
@@ -354,7 +362,7 @@ describe('alert.*', () => {
     const doc = (await get('/api/v1/openapi.json')).json();
     expect(doc.components.schemas.Envelope.properties.type.enum).toEqual(expect.arrayContaining(['alert.superchat', 'alert.subscription', 'alert.tip']));
     expect(doc.components.schemas.Alert.properties.kind.enum).toHaveLength(9);
-    expect(doc.info.version).toMatch(/^1\.8 /);
+    expect(doc.info.version).toMatch(/^1\.9 /);
   });
 });
 

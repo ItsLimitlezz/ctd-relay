@@ -119,6 +119,7 @@ describe('profiles', () => {
       down: 0,
       createdAt: dprtmnt.createdAt,
       updatedAt: dprtmnt.updatedAt,
+      show: null, // v1.9: no show profile saved yet
     });
     expect((await get(`/api/v1/profiles/${dprtmnt.id}`, all)).json()).toEqual(items[1]);
     expectProblem(await get('/api/v1/profiles/nope', all), 404, 'unknown_profile');

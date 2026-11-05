@@ -58,6 +58,10 @@ export interface AppEvents {
   music: [{ profileId: string; nowPlaying: NowPlaying }];
   /** A chat song request was handled, queued or refused (emitted by MusicService). */
   'music-request': [{ profileId: string; destinationId: string; result: SongRequestResult }];
+  /** A show-profile revision was saved (emitted by the /api/v1 show routes). */
+  'show-changed': [{ profileId: string; revision: number; parentRevision: number | null; byAppId: string | null }];
+  /** The asset library changed (emitted by the Assets routes). `profileId` null = an every-profile entry. */
+  'library-changed': [{ profileId: string | null }];
 }
 
 /** OBS event relayed by the hub (docs/API.md §10). `data` is already size-checked. */

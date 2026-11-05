@@ -594,6 +594,58 @@ export type BrowserClientMessage =
   | { type: 'resize'; width: number; height: number };
 
 // ---------------------------------------------------------------------------
+// Assets: the show-profile asset library (LUTs first), web UI Assets page (v1.9)
+// Admins upload and delete; operators see the list. Files are content-addressed blobs shared with
+// the external API's show profiles (/api/v1/blobs, /api/v1/library).
+// ---------------------------------------------------------------------------
+
+/** Kinds an asset can have (the blob kinds minus 'bundle'). */
+export type AssetKind = 'lut' | 'image' | 'video' | 'audio' | 'font' | 'html' | 'other';
+export const ASSET_KINDS: readonly AssetKind[] = ['lut', 'image', 'video', 'audio', 'font', 'html', 'other'];
+
+/** A show-profile revision that references an asset. */
+export interface AssetUsage {
+  profileId: string;
+  revision: number;
+  /** The show profile's current revision: while true, the asset can't be deleted. */
+  isHead: boolean;
+}
+
+export interface AssetItem {
+  id: string;
+  sha256: string;
+  name: string;
+  kind: AssetKind;
+  /** null = every profile. */
+  profileId: string | null;
+  size: number;
+  /** Username of the admin who uploaded it. */
+  uploadedBy: string | null;
+  createdAt: string;
+  usage: AssetUsage[];
+}
+
+/** GET /api/assets [user] -> AssetsResponse */
+export interface AssetsResponse {
+  items: AssetItem[];
+  /** Bytes used by every blob (assets and show-profile bundles) and the quota. */
+  usedBytes: number;
+  quotaBytes: number;
+}
+/**
+ * PUT /api/assets?name=&kind=&profile= [admin, CSRF] -> AssetItem. Raw body (the file,
+ * application/octet-stream), header `x-content-sha256` = its lowercase hex SHA-256. `profile` empty
+ * = every profile. 400 'hash_mismatch' / 'invalid', 413 'too_large' / 'quota_exceeded', 415 when the
+ * content doesn't fit the kind.
+ */
+/** PATCH /api/assets/:id [admin] -> AssetItem */
+export interface UpdateAssetRequest {
+  name?: string;
+  profileId?: string | null;
+}
+/** DELETE /api/assets/:id [admin] -> {}. 409 'asset_in_use' while a head revision references it. */
+
+// ---------------------------------------------------------------------------
 // Live events WebSocket
 // ---------------------------------------------------------------------------
 

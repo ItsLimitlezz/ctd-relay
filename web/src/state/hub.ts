@@ -12,8 +12,8 @@ export const EVERY_PROFILE = '*';
 export const APP_TOKEN_NAME_MAX = 60;
 /** Scopes a pairing gets when the app asked for none it can have. */
 export const BASIC_SCOPES: readonly ApiScope[] = ['chat:read', 'status:read'];
-/** Scopes that hand out secrets (stream keys): highlighted when approving. */
-export const SECRET_SCOPES: readonly ApiScope[] = ['ingest:read'];
+/** Scopes that hand out secrets (stream keys, show-profile secrets): highlighted when approving. */
+export const SECRET_SCOPES: readonly ApiScope[] = ['ingest:read', 'show:secrets'];
 
 // ---------------------------------------------------------------------------
 // Profile pickers
