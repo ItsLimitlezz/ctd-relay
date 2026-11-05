@@ -46,6 +46,8 @@ const EnvSchema = z.object({
   /** Set by the Docker build (CI): the git commit and build time of this image. */
   CTD_BUILD_COMMIT: optionalString,
   CTD_BUILD_DATE: optionalString,
+  /** Show-profile asset storage: total quota in bytes (default 20 GB, see storage/blob-store.ts). */
+  ASSETS_QUOTA_BYTES: z.coerce.number().int().positive().optional(),
 });
 
 /** Which build is running: shown at the bottom of the web UI and in the external API. */
@@ -88,6 +90,8 @@ export interface AppConfig {
   version: string;
   /** Missing in hand-built test configs. */
   build?: BuildInfo;
+  /** Asset storage limit overrides from the environment (defaults in storage/blob-store.ts). Missing in test configs. */
+  assetLimits?: { quotaBytes?: number };
 }
 
 /**
@@ -130,5 +134,6 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env, version = '0.0.
     logLevel: e.LOG_LEVEL,
     version,
     build: buildInfo(e.CTD_BUILD_COMMIT, e.CTD_BUILD_DATE),
+    assetLimits: e.ASSETS_QUOTA_BYTES ? { quotaBytes: e.ASSETS_QUOTA_BYTES } : {},
   };
 }

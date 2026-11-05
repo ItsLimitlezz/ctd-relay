@@ -44,3 +44,11 @@ describe('tool paths', () => {
     expect(toolPath(undefined, 'ffmpeg', 'linux')).toBe(path.resolve('tools', 'ffmpeg'));
   });
 });
+
+describe('ASSETS_QUOTA_BYTES', () => {
+  it('is an optional positive override of the asset quota', () => {
+    expect(loadConfig({}).assetLimits).toEqual({});
+    expect(loadConfig({ ASSETS_QUOTA_BYTES: '1000000' }).assetLimits).toEqual({ quotaBytes: 1_000_000 });
+    expect(() => loadConfig({ ASSETS_QUOTA_BYTES: '-5' })).toThrow();
+  });
+});
