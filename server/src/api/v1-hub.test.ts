@@ -146,11 +146,12 @@ describe('profiles', () => {
     expect(club.feeds[0].streamKey).toBe(`${dprtmnt.slug}/landscape?key=Lkey${dprtmnt.id.replace(/-/g, '')}`);
     expect(club.feeds[1].fullUrl).toBe(`rtmp://10.20.30.40:1936/live/${club.feeds[1].streamKey}`);
 
-    // The OBS host from Settings wins, then LAN_HTTP_HOST, then the host the app called.
+    // The OBS host from Settings wins, then the host the app called when public, then LAN_HTTP_HOST.
     const before = process.env.LAN_HTTP_HOST;
     try {
       process.env.LAN_HTTP_HOST = 'truenas.lan';
-      expect((await get(`/api/v1/profiles/${dprtmnt.id}/ingest`, all, { host: '203.0.113.7' })).json().serverUrl).toBe('rtmp://truenas.lan:1936/live');
+      expect((await get(`/api/v1/profiles/${dprtmnt.id}/ingest`, all, { host: '203.0.113.7' })).json().serverUrl).toBe('rtmp://203.0.113.7:1936/live');
+      expect((await get(`/api/v1/profiles/${dprtmnt.id}/ingest`, all, { host: '192.168.1.77:30080' })).json().serverUrl).toBe('rtmp://truenas.lan:1936/live');
       t.settings.ingestHost = 'http://10.0.0.5:8443/';
       expect((await get(`/api/v1/profiles/${dprtmnt.id}/ingest`, all)).json().serverUrl).toBe('rtmp://10.0.0.5:1936/live');
     } finally {

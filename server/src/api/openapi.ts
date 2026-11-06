@@ -236,7 +236,7 @@ export function openApiDocument(version: string): Record<string, unknown> {
           operationId: 'getProfileIngest',
           tags: ['profiles'],
           description:
-            'Needs `ingest:read`. The stream keys are secrets. The default profile keeps its pre-profiles keys (`landscape?key=…`); other profiles use `<slug>/landscape?key=…`. `serverUrl` uses the OBS host from Settings when set, else LAN_HTTP_HOST, else the host you called.',
+            'Needs `ingest:read`. The stream keys are secrets. The default profile keeps its pre-profiles keys (`landscape?key=…`); other profiles use `<slug>/landscape?key=…`. `serverUrl` uses the OBS host from Settings when set, else the host you called when it is public, else LAN_HTTP_HOST.',
           parameters: [idPath],
           responses: { '200': { description: 'Ingest settings', content: json(ref('Ingest')) }, ...errors, ...profileErrors },
         },

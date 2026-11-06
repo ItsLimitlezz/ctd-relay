@@ -2,7 +2,8 @@
 
 import { FEEDS, type ProfileSummary } from '../../../shared/types.js';
 import type { AppServices } from '../services.js';
-import { LAN_HTTP_HOST_ENV } from './access.js';
+import { LAN_HTTP_HOST_ENV, isLocalHostName } from './access.js';
+import { classifyIp, normalizeIp } from '../tls/public-ip.js';
 import type { ApiIngest, ApiProfile } from './types.js';
 
 /** A ProfileSummary as the API documents it (explicit fields, in documentation order). */
@@ -41,16 +42,26 @@ export function hostOnly(value: string): string {
   return /^(?:\[[0-9A-Fa-f:.]+\]|[A-Za-z0-9.-]+)$/.test(host) ? host : '';
 }
 
+/** True when the host the client used is a public address or name (not LAN, loopback or a LAN-only name). */
+function isPublicHost(host: string): boolean {
+  const bare = host.startsWith('[') ? host.slice(1, -1) : host;
+  const ip = normalizeIp(bare);
+  if (ip) return !['private', 'cgnat', 'ula', 'loopback', 'link-local', 'invalid'].includes(classifyIp(ip));
+  const name = bare.toLowerCase().replace(/\.$/, '');
+  return name !== 'localhost' && !name.endsWith('.localhost') && !isLocalHostName(name);
+}
+
 /**
  * Host OBS should stream to: the OBS host set in Settings (what the web UI's OBS setup shows), else
- * LAN_HTTP_HOST (the NAS address for LAN apps), else the host the app used to reach the API.
+ * the host the app used to reach the API when that is public (OBS reached Relay that way, so it can
+ * again), else LAN_HTTP_HOST (the NAS address for LAN apps), else the request host as given.
  */
 export function obsHost(opts: { ingestHostSetting: string; lanHttpHost: string | undefined; requestHostname: string }): string {
-  for (const candidate of [opts.ingestHostSetting, opts.lanHttpHost ?? '', opts.requestHostname]) {
-    const host = hostOnly(candidate);
-    if (host) return host;
-  }
-  return 'localhost';
+  const setting = hostOnly(opts.ingestHostSetting);
+  if (setting) return setting;
+  const requestHost = hostOnly(opts.requestHostname);
+  if (requestHost && isPublicHost(requestHost)) return requestHost;
+  return hostOnly(opts.lanHttpHost ?? '') || requestHost || 'localhost';
 }
 
 /** GET /profiles/{id}/ingest. Contains stream keys: never log it. */
