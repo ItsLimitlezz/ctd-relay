@@ -31,6 +31,7 @@ import { createRepos } from '../db/repos.js';
 import { EventBus } from '../events.js';
 import authPlugin from '../http/auth-plugin.js';
 import { sendError } from '../http/guards.js';
+import assetRoutes from '../http/routes/assets.js';
 import tokenRoutes from '../http/routes/tokens.js';
 import { createSecretBox } from '../security/secretbox.js';
 import type { AppServices, ConnectedAppsRepo, MediaServer, Orchestrator, OrchestratorRegistry, ProfilesRepo, Repos, TlsManager } from '../services.js';
@@ -307,6 +308,7 @@ export async function createTestApi(
   await app.register(lanHttpPlugin, { services });
   await app.register(authPlugin, { services });
   await app.register(tokenRoutes, { services });
+  await app.register(assetRoutes, { services });
   await app.register(v1Routes, {
     services,
     hub,

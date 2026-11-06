@@ -7,6 +7,7 @@ export type RouteName =
   | 'chat'
   | 'destinations'
   | 'accounts'
+  | 'assets'
   | 'settings'
   | 'profiles'
   | 'profile'
@@ -27,6 +28,7 @@ export const ROUTES: readonly RouteDef[] = [
   { name: 'chat', path: '/chat', label: 'Chat', adminOnly: false, nav: true },
   { name: 'destinations', path: '/destinations', label: 'Destinations', adminOnly: true, nav: true },
   { name: 'accounts', path: '/accounts', label: 'Accounts', adminOnly: true, nav: true },
+  { name: 'assets', path: '/assets', label: 'Assets', adminOnly: false, nav: true },
   { name: 'settings', path: '/settings', label: 'Settings', adminOnly: true, nav: true },
   // Streaming profiles (reached from the profile switcher and Settings, not the main nav).
   { name: 'profiles', path: '/profiles', label: 'Profiles', adminOnly: true, nav: false },
