@@ -1,6 +1,7 @@
 // Service interfaces. Each implementation lives in its own module (see docs/CONTRACTS.md);
 // the composition root (main.ts) wires them together into AppServices.
 
+import type { BlobStore } from './storage/blob-store.js';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { Duplex } from 'node:stream';
 import type { Logger } from 'pino';
@@ -594,6 +595,8 @@ export interface AppServices {
   apps: AppRegistry;
   pairings: PairingService;
   tls: TlsManager;
+  /** Show-profile bundles and assets on disk (content-addressed, under DATA_DIR/blobs). */
+  blobStore: BlobStore;
   /** Build a DriverContext for a platform call. */
   driverContext(opts: {
     platform: PlatformId;
