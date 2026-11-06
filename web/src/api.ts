@@ -6,6 +6,9 @@
 import type {
   ApiError,
   ApiTokensResponse,
+  AssetItem,
+  AssetKind,
+  AssetsResponse,
   AppSettings,
   ApprovePairingRequest,
   AuditResponse,
@@ -38,6 +41,7 @@ import type {
   SpotifyConnectStart,
   SpotifyStatus,
   TitleResponse,
+  UpdateAssetRequest,
   TotpSetupResponse,
   UpdateAccountRequest,
   UpdateDestinationRequest,
@@ -135,6 +139,63 @@ async function withCsrf(p: Promise<MeResponse>): Promise<MeResponse> {
   const me = await p;
   setCsrfToken(me.csrfToken);
   return me;
+}
+
+/** Lowercase hex SHA-256 of a file (the server checks the upload against it). */
+async function sha256Hex(file: Blob): Promise<string> {
+  if (typeof crypto === 'undefined' || !crypto.subtle) {
+    throw new ApiRequestError(0, 'Uploading needs a secure connection (https or localhost) to hash the file', 'insecure_context');
+  }
+  const digest = await crypto.subtle.digest('SHA-256', await file.arrayBuffer());
+  return Array.from(new Uint8Array(digest), (b) => b.toString(16).padStart(2, '0')).join('');
+}
+
+export interface AssetUploadMeta {
+  name: string;
+  kind: AssetKind;
+  /** null = every profile. */
+  profileId: string | null;
+}
+
+/** PUT /api/assets with upload progress (fetch can't report it), so this uses XMLHttpRequest. */
+async function uploadAsset(file: File, meta: AssetUploadMeta, onProgress?: (fraction: number) => void): Promise<AssetItem> {
+  const sha = await sha256Hex(file);
+  const qs = new URLSearchParams({ name: meta.name, kind: meta.kind, profile: meta.profileId ?? '' });
+  return new Promise<AssetItem>((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open('PUT', `/api/assets?${qs.toString()}`);
+    xhr.responseType = 'text';
+    xhr.withCredentials = true;
+    xhr.setRequestHeader('content-type', 'application/octet-stream');
+    xhr.setRequestHeader('x-content-sha256', sha);
+    if (csrfToken) xhr.setRequestHeader(CSRF_HEADER, csrfToken);
+    xhr.upload.onprogress = (e) => {
+      if (e.lengthComputable && e.total > 0) onProgress?.(e.loaded / e.total);
+    };
+    xhr.onerror = () => reject(new ApiRequestError(0, 'Could not reach the server', 'network'));
+    xhr.ontimeout = () => reject(new ApiRequestError(0, 'The server took too long to respond', 'timeout'));
+    xhr.onabort = () => reject(new ApiRequestError(0, 'Upload cancelled', 'aborted'));
+    xhr.onload = () => {
+      let parsed: unknown;
+      try {
+        parsed = xhr.responseText ? JSON.parse(xhr.responseText) : undefined;
+      } catch {
+        /* non-JSON body */
+      }
+      if (xhr.status >= 200 && xhr.status < 300) {
+        onProgress?.(1);
+        resolve(parsed as AssetItem);
+        return;
+      }
+      const err = (parsed ?? {}) as Partial<ApiError>;
+      if (xhr.status === 401 && err.code === 'unauthenticated') {
+        setCsrfToken(null);
+        onUnauthorized?.();
+      }
+      reject(new ApiRequestError(xhr.status, err.error ?? (xhr.statusText || `HTTP ${xhr.status}`), err.code));
+    };
+    xhr.send(file);
+  });
 }
 
 export const api = {
@@ -255,6 +316,15 @@ export const api = {
   denyPairing: (id: string) => post<object>(`/api/pairings/${encodeURIComponent(id)}/deny`),
   apps: () => get<ConnectedApp[]>('/api/apps'),
   removeApp: (id: string) => del<object>(`/api/apps/${encodeURIComponent(id)}`),
+
+  // assets: the show-profile asset library (LUTs first). Upload, rename and delete are admin-only.
+  assets: {
+    list: () => get<AssetsResponse>('/api/assets'),
+    upload: uploadAsset,
+    update: (id: string, body: UpdateAssetRequest) => patch<AssetItem>(`/api/assets/${encodeURIComponent(id)}`, body),
+    /** 409 code 'asset_in_use' while a show profile's current revision uses it. */
+    remove: (id: string) => del<object>(`/api/assets/${encodeURIComponent(id)}`),
+  },
 
   // browser login viewer
   browserOpen: (accountId: string, url?: string) =>

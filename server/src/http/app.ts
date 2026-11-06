@@ -16,6 +16,7 @@ import type { AppServices, TlsMaterial } from '../services.js';
 import authPlugin from './auth-plugin.js';
 import { sendError, type RouteOptions } from './guards.js';
 import accountRoutes from './routes/accounts.js';
+import assetRoutes from './routes/assets.js';
 import auditRoutes from './routes/audit.js';
 import authRoutes from './routes/auth.js';
 import browserRoutes from './routes/browser.js';
@@ -114,6 +115,7 @@ export async function buildApp(services: AppServices, tlsMaterial: TlsMaterial |
   await app.register(browserRoutes, opts);
   await app.register(wsRoutes, opts);
   await app.register(tokenRoutes, opts);
+  await app.register(assetRoutes, opts);
   // The hub's admin side: pending app pairings + connected apps (Settings → API).
   await app.register(pairingRoutes, opts);
   await app.register(overlayModeration, opts);
