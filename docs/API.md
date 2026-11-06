@@ -527,13 +527,6 @@ A revision of a profile's show profile was saved (§14). `src.profile` is that p
 An entry of the asset library was added, renamed, reassigned or removed (§14.7).
 `data: {}` — refetch `GET /library`. `src.profile` is the entry's profile, or `null` for an entry shared by every profile.
 
-### `show.changed` — `show:read` (v1.9)
-A revision of a profile's show profile was saved (§14). `src.profile` is that profile.
-`data: { "profileId", "revision", "parentRevision", "byAppId" }` (`byAppId`: the saving app, or `null`).
-
-### `library.changed` — `show:read` (v1.9)
-The asset library changed (§14.4). `data: {}` — refetch `GET /library`.
-
 ### `system.reset`
 `data: {}` — events you would have received after your cursor are no longer buffered (or the
 cursor is from before a restart); refetch `/status` and `/chat`.
