@@ -24,11 +24,24 @@ Public paths that work without logging in:
 
 ## External API tokens
 
-- An admin creates tokens in **Settings → API**. A token has scopes (`chat:read`, `status:read`) and is **read-only**: nothing in `/api/v1` can start or stop a stream, change the title or touch settings.
+- An admin creates tokens in **Settings → API**. A token has scopes (`chat:read`, `status:read`, …) and cannot start or stop a stream, change the title or touch settings. The write scopes only let an app register itself, message other apps, send OBS events, relay OBS control, or (v1.9) save show profiles and upload files.
 - The secret is shown once and stored only as a SHA-256 hash. Revoking a token takes effect immediately (open event streams close within 30 s). Creating and revoking tokens is in the audit log.
 - Each token is limited to 600 requests per minute and 5 open event streams. The API never sets or reads cookies.
 - A token holder can read your chat and stream status (titles, destination names, watch URLs, error messages). Stream keys, account tokens and settings are never part of the API.
 - Treat a token like a password: give each app its own, and revoke it when an app is retired or a dock URL (`/dock#token=…`) may have leaked.
+
+### Show profiles and uploaded files (v1.9)
+
+The CTD OBS plugin saves OBS set-ups ("show profiles", [API.md §14](API.md#14-show-profiles-v19)) through three more scopes:
+
+- `show:read` reads saved show profiles, their files and the asset library. `show:write` saves revisions and uploads files. Neither reads stream keys or settings.
+- `show:secrets` is different: it hands out the **third-party secrets** saved with a show profile (keys in browser-source URLs, plugin passwords). Grant it only to a token on a machine you trust, one token per machine, and not to profile-limited tokens you hand to others. A token without it still loads everything else; the sources that need a secret show "needs re-entry". Every read is audited.
+- The secrets are encrypted at rest (AES-256-GCM, secret scope `show:<id>`, one entry per revision) like other tokens and keys. They are never part of a bundle, a manifest or a log line. Stream keys are not stored in show profiles at all.
+- **Uploaded files are plain files** under `DATA_DIR/blobs/` (named by their SHA-256), not encrypted: they are LUTs, images, video and bundles of settings that hold no secrets, can be gigabytes large and are streamed, and the data folder is already the thing to protect. Back them up and protect them like the rest of the data folder.
+- Downloads check access: a token limited to one profile can fetch a file only when a revision of its profile (or a library entry visible to it) uses it. For any other hash, `POST /blobs/check` says "missing" and the download says 404, so a token can't tell whether another profile has a file; uploading the exact bytes is what proves it holds them.
+- Downloads are sent as `Content-Disposition: attachment` with `X-Content-Type-Options: nosniff` and a generic content type, so an uploaded HTML file can't run in the web UI's origin.
+- Uploads are hashed while they arrive (a mismatch is refused), counted against a size limit per kind and a total storage quota, and the first bytes are checked against the declared kind (a LUT must be a `.cube` text or PNG). Windows, Linux and macOS executables and `#!` scripts are refused. At most 2 uploads run at once per token.
+- The audit log records `show.save` (a revision saved), `show.blob.upload` (a new file stored) and `show.secrets.read`.
 
 ## LAN plain HTTP
 
