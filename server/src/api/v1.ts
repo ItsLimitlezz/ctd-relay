@@ -1,5 +1,6 @@
 // External API v1 (docs/API.md): bearer-token auth, problem+json errors, SSE events; profiles and
-// the hub (connected apps, app-to-app messages, pairing) since v1.2 (v1-hub.ts).
+// the hub (connected apps, app-to-app messages, pairing) since v1.2 (v1-hub.ts); show profiles and
+// blobs since v1.9 (v1-show.ts).
 //
 // Registered under the /api/v1 prefix. It never uses the session cookie and never sets one. The
 // global auth plugin CSRF-checks unsafe methods only for requests that carry a web UI session
@@ -21,6 +22,7 @@ import { parseUlid } from './ulid.js';
 import { registerHubRoutes } from './v1-hub.js';
 import { musicFor } from '../music/music-service.js';
 import { registerObsSocketRoute } from './v1-obs-socket.js';
+import { registerShowRoutes } from './v1-show.js';
 
 export const API_PREFIX = '/api/v1';
 export const RATE_LIMIT_PER_MINUTE = 600;
@@ -484,6 +486,7 @@ const v1Plugin: FastifyPluginAsync<V1Options> = async (app, opts) => {
 
   registerHubRoutes(app, ctx);
   registerObsSocketRoute(app, ctx);
+  registerShowRoutes(app, ctx);
 };
 
 export default v1Plugin;

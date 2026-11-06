@@ -20,7 +20,11 @@ export type ProblemCode =
   | 'expired'
   | 'feed_offline'
   | 'unavailable'
-  | 'internal';
+  | 'internal'
+  | 'revision_conflict'
+  | 'missing_blobs'
+  | 'hash_mismatch'
+  | 'quota_exceeded';
 
 const TITLES: Record<ProblemCode, string> = {
   unauthenticated: 'Unauthenticated',
@@ -37,6 +41,10 @@ const TITLES: Record<ProblemCode, string> = {
   feed_offline: 'Feed offline',
   unavailable: 'Temporarily unavailable',
   internal: 'Internal error',
+  revision_conflict: 'Revision conflict',
+  missing_blobs: 'Missing blobs',
+  hash_mismatch: 'Hash mismatch',
+  quota_exceeded: 'Storage quota exceeded',
 };
 
 export const PROBLEM_CODES = Object.keys(TITLES) as ProblemCode[];

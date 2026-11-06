@@ -24,6 +24,16 @@ export class ConflictError extends Error {
   }
 }
 
+/** Thrown when a show profile save was based on a stale revision (409); `head` is the current one. */
+export class RevisionConflictError extends Error {
+  readonly statusCode = 409;
+  readonly code = 'revision_conflict';
+  constructor(readonly head: number) {
+    super(`Revision conflict: the current revision is ${head}`);
+    this.name = 'RevisionConflictError';
+  }
+}
+
 export function isUniqueViolation(err: unknown): boolean {
   const e = err as { errcode?: number; message?: string } | null;
   // 2067 = SQLITE_CONSTRAINT_UNIQUE, 1555 = SQLITE_CONSTRAINT_PRIMARYKEY

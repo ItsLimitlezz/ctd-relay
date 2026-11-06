@@ -21,6 +21,7 @@ import { ProfileProvider, useProfileContext } from './state/profile';
 // After a container update the old chunks are gone: reload once to get the new build.
 const DestinationsPage = lazy(reloadingImport(() => import('./pages/DestinationsPage')));
 const AccountsPage = lazy(reloadingImport(() => import('./pages/AccountsPage')));
+const AssetsPage = lazy(reloadingImport(() => import('./pages/AssetsPage')));
 const SettingsPage = lazy(reloadingImport(() => import('./pages/SettingsPage')));
 const ProfilesPage = lazy(reloadingImport(() => import('./pages/ProfilesPage')));
 
@@ -29,6 +30,7 @@ const PAGES: Record<Exclude<RouteName, 'login' | 'setup'>, ComponentType> = {
   chat: ChatPage,
   destinations: DestinationsPage,
   accounts: AccountsPage,
+  assets: AssetsPage,
   settings: SettingsPage,
   profiles: ProfilesPage,
   profile: ProfilePage,

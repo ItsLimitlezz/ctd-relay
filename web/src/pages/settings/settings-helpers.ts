@@ -302,6 +302,18 @@ export const API_SCOPE_INFO: Readonly<Record<ApiScope, { label: string; help: st
     label: 'Control OBS',
     help: 'Full control of OBS through CTD Relay, from anywhere: scenes, previews, start/stop stream and recording (CTD Live mobile). OBS’s own password stays on this server.',
   },
+  'show:read': {
+    label: 'Load show profiles',
+    help: "The profile's saved OBS set-ups (scenes, OBS settings, vertical canvas) and their assets such as LUTs, so CTD OBS can load them on this machine.",
+  },
+  'show:write': {
+    label: 'Save show profiles',
+    help: "Save new versions of the profile's OBS set-up and upload its assets (LUTs, images, media) from CTD OBS.",
+  },
+  'show:secrets': {
+    label: 'Read show-profile secrets',
+    help: 'Keys and passwords found in saved OBS sources (e.g. a key in a browser-source URL), held encrypted on this server. Only for machines you trust; without it they must be re-entered.',
+  },
 };
 
 /** Permissions a new token starts with (read-only basics; the others are opt-in). */

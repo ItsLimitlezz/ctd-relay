@@ -240,6 +240,29 @@ describe('DELETE /api/profiles/:id', () => {
     return { club, acc, dest, clubToken, everyToken, mainAcc, mainDest };
   }
 
+  it('removes its show profile and library entries, and keeps the others', async () => {
+    const t = await build();
+    const { app, repos } = t;
+    const s = await seedClub(t);
+    const sha = (n: string) => crypto.createHash('sha256').update(n).digest('hex');
+    repos.blobs.upsert({ sha256: sha('a'), size: 1, kind: 'image' });
+    const save = (profileId: string) =>
+      repos.showProfiles.addRevision({
+        profileId, name: 'S', parentRevision: 0, manifest: '{}', bundleSha256: sha(profileId), size: 1,
+        blobs: [sha('a')], savedByApp: null, savedByToken: null, note: null,
+      });
+    save(s.club.id);
+    save('default');
+    repos.assetLibrary.create({ sha256: sha('a'), name: 'club', kind: 'image', profileId: s.club.id, uploadedBy: null });
+    const shared = repos.assetLibrary.create({ sha256: sha('a'), name: 'shared', kind: 'image', profileId: null, uploadedBy: null });
+
+    const res = await app.inject({ method: 'DELETE', url: `/api/profiles/${s.club.id}` });
+    expect(res.statusCode).toBe(200);
+    expect(repos.showProfiles.getByProfile(s.club.id)).toBeNull();
+    expect(repos.showProfiles.getByProfile('default')).not.toBeNull();
+    expect(repos.assetLibrary.list().map((a) => a.id)).toEqual([shared.id]);
+  });
+
   it("deletes the profile with everything that belonged to it, and nothing else", async () => {
     const t = await build();
     const { app, repos, calls, events, audits } = t;

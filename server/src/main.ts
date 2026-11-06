@@ -26,6 +26,7 @@ import type { DriverContext } from './platforms/types.js';
 import { createSecretBox, loadMasterKey } from './security/secretbox.js';
 import { announceSetupCodeIfNeeded } from './security/setup-code.js';
 import type { AppServices } from './services.js';
+import { createBlobStore, resolveBlobLimits, type BlobLimits } from './storage/blob-store.js';
 import { createTlsManager } from './tls/tls-manager.js';
 
 export const DEFAULT_APP_SETTINGS: AppSettings = {
@@ -143,6 +144,15 @@ export async function createServices(config: AppConfig): Promise<AppServices> {
   const apps = createAppRegistry({ repos, bus, log: log.child({ mod: 'apps' }) });
   const pairings = createPairingService({ repos, bus, log: log.child({ mod: 'pairing' }), config });
 
+  // Show-profile assets and bundles under DATA_DIR/blobs. Limits: defaults < ASSETS_QUOTA_BYTES < the
+  // 'assets.limits' setting (Partial<BlobLimits>), read on every upload so a change applies at once.
+  const blobStore = createBlobStore({
+    dataDir: config.dataDir,
+    repo: repos.blobs,
+    limits: () => resolveBlobLimits(config.assetLimits, repos.settings.get<Partial<BlobLimits> | null>('assets.limits', null)),
+    log: log.child({ mod: 'blobs' }),
+  });
+
   const appSettings = (): AppSettings => ({ ...DEFAULT_APP_SETTINGS, ...repos.settings.get<Partial<AppSettings>>('app', {}) });
 
   const publicBaseUrl = (): string => {
@@ -168,6 +178,7 @@ export async function createServices(config: AppConfig): Promise<AppServices> {
     apps,
     pairings,
     tls,
+    blobStore,
     appSettings,
     publicBaseUrl,
   } as Omit<AppServices, 'orchestrators' | 'driverContext'> as AppServices;
@@ -211,6 +222,8 @@ export async function main(): Promise<void> {
   // Spotify now playing + chat song requests (listens to chat, polls connected profiles).
   const music = musicFor(services);
   music.start();
+  // Daily: drop blobs no show-profile revision or library entry has referenced for 7 days.
+  const stopBlobGc = services.blobStore.startGc();
 
   await services.media.start();
   await services.orchestrators.init();
@@ -255,6 +268,7 @@ export async function main(): Promise<void> {
       await services.tls.stop();
       await app.close();
       music.close();
+      stopBlobGc();
       apiEvents.close();
       closeHub(services);
     } catch (err) {
