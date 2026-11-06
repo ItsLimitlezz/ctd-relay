@@ -94,8 +94,9 @@ const assetRoutes: FastifyPluginAsync<RouteOptions> = async (app, { services }) 
       } catch (err) {
         if (!(err instanceof BlobError)) throw err;
         if (err.code === 'aborted') {
+          // The client is gone; answer anyway so Fastify can finish the request.
           req.log.debug({ sha256: sha }, 'asset upload aborted');
-          return;
+          return sendError(reply, 400, err.message, 'aborted');
         }
         // The rest of the body is unread: close the connection rather than drain gigabytes.
         if (!req.raw.readableEnded) reply.header('connection', 'close');
