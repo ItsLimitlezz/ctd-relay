@@ -252,6 +252,10 @@ export class EventHub {
       bus.on('obs-event', (e) => this.guard(() => this.onObsEvent(e))),
       // Spotify (music/music-service.ts): what plays, and chat song requests.
       bus.on('music', (m) => this.guard(() => this.publish('music.nowplaying', coreSource(m.profileId), m.nowPlaying))),
+      bus.on('show-changed', (c) =>
+        this.guard(() => this.publish('show.changed', coreSource(c.profileId), { profileId: c.profileId, revision: c.revision, parentRevision: c.parentRevision, byAppId: c.byAppId })),
+      ),
+      bus.on('library-changed', (c) => this.guard(() => this.publish('library.changed', coreSource(c.profileId), {}))),
       bus.on('music-request', (r) =>
         this.guard(() => {
           const dest = this.safeDestination(r.destinationId);

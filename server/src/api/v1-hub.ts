@@ -17,6 +17,7 @@ import { CONTROL_RE, jsonBytes } from './json.js';
 import { PAIRING_POLL_INTERVAL_SEC, TOKEN_NAME_MAX } from './pairing.js';
 import { apiProfile, buildApiIngest } from './profiles.js';
 import { createUlidGenerator, parseUlid } from './ulid.js';
+import { showSummary } from './v1-show.js';
 import type { V1Context } from './v1.js';
 
 /** PUT /apps/{id}: 200 resources with URLs and meta fit easily. */
@@ -144,7 +145,7 @@ export function registerHubRoutes(app: FastifyInstance, ctx: V1Context): void {
     const { token } = authOf(req);
     let list = services.orchestrators.summaries();
     if (token.profileId) list = list.filter((s) => s.id === token.profileId);
-    return reply.header('cache-control', 'no-store').send({ items: list.map(apiProfile) });
+    return reply.header('cache-control', 'no-store').send({ items: list.map((s) => ({ ...apiProfile(s), show: showSummary(services, s.id) })) });
   });
 
   app.get('/profiles/:id', { preHandler: requireToken('status:read') }, async (req, reply) => {
@@ -152,7 +153,7 @@ export function registerHubRoutes(app: FastifyInstance, ctx: V1Context): void {
     if (id === null) return reply;
     const summary = services.orchestrators.summaries().find((s) => s.id === id);
     if (!summary) return sendProblem(reply, 404, 'unknown_profile', 'No profile with this id (see GET /api/v1/profiles).');
-    return reply.header('cache-control', 'no-store').send(apiProfile(summary));
+    return reply.header('cache-control', 'no-store').send({ ...apiProfile(summary), show: showSummary(services, summary.id) });
   });
 
   app.get('/profiles/:id/ingest', { preHandler: requireToken('ingest:read') }, async (req, reply) => {

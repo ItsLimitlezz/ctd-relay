@@ -44,7 +44,7 @@ Every route file default-exports `FastifyPluginAsync<RouteOptions>` and receives
 
 ## Storage conventions
 
-- **Settings** (`repos.settings`, JSON): `'app'` → `Partial<AppSettings>`; `'session.title'` → string; `'session.autoGoLive'` → boolean (default `true`); `'session.testMode'` → boolean (default `false`, changeable only while offline); `'tls.acme'` → `{ identifier, failures, nextAttemptAt, lastError }` (Let's Encrypt backoff, survives restarts).
+- **Settings** (`repos.settings`, JSON): `'app'` → `Partial<AppSettings>`; `'session.title'` → string; `'session.autoGoLive'` → boolean (default `true`); `'session.testMode'` → boolean (default `false`, changeable only while offline); `'tls.acme'` → `{ identifier, failures, nextAttemptAt, lastError }` (Let's Encrypt backoff, survives restarts); `'assets.limits'` → `Partial<BlobLimits>` (v1.9: overrides the blob size limits, quota and revision count; read on every upload; defaults < `ASSETS_QUOTA_BYTES` < this setting).
 - **Secrets** (`repos.secrets.scoped(scope)`, AES-256-GCM encrypted):
 
 | Scope | Key | Value |
@@ -57,6 +57,7 @@ Every route file default-exports `FastifyPluginAsync<RouteOptions>` and receives
 | `destination:<id>` | `streamKey` | manual stream key |
 | `ingest` | `landscape`, `vertical`, `internalReader` | OBS stream keys, internal read password |
 | `chat` | `overlayToken` | overlay token |
+| `show:<showProfileId>` | `rev:<n>` | JSON `[{source,key,value}]`: the third-party secrets of revision `n` of a show profile (v1.9) |
 
 Deleting an account must delete scopes `account:<id>` and `browser:<id>`; deleting a destination deletes `destination:<id>`.
 

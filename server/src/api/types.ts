@@ -46,6 +46,8 @@ export type ApiEventType =
   | 'obs.sync.status'
   | 'music.nowplaying'
   | 'music.request'
+  | 'show.changed'
+  | 'library.changed'
   | 'system.reset';
 
 /** Scope each event type needs. system.reset is a control frame every stream may get. */
@@ -82,6 +84,8 @@ export const EVENT_SCOPES: Record<ApiEventType, ApiScope | null> = {
   'obs.sync.status': 'status:read',
   'music.nowplaying': 'status:read',
   'music.request': 'chat:read',
+  'show.changed': 'show:read',
+  'library.changed': 'show:read',
   'system.reset': null,
 };
 
@@ -279,6 +283,69 @@ export interface ApiProfile {
   down: number;
   createdAt: string;
   updatedAt: string;
+  /** v1.9, GET /profiles and /profiles/{id} only: the profile's show profile, null before the first save. */
+  show?: ApiShowSummary | null;
+}
+
+// ---- show profiles (v1.9) ----
+
+/** GET /profiles item `show`. */
+export interface ApiShowSummary {
+  headRevision: number;
+  updatedAt: string;
+  savedBy: { appId: string | null };
+}
+
+/** GET /profiles/{id}/show */
+export interface ApiShowProfile {
+  id: string;
+  profileId: string;
+  name: string;
+  headRevision: number;
+  createdAt: string;
+  updatedAt: string;
+  savedBy: { appId: string | null };
+}
+
+/** GET /profiles/{id}/show/revisions item (and the answer to a save). */
+export interface ApiShowRevision {
+  profileId: string;
+  revision: number;
+  parentRevision: number | null;
+  bundleSha256: string;
+  /** Bundle plus every asset it references, in bytes. */
+  size: number;
+  savedBy: { appId: string | null };
+  note: string | null;
+  pinned: boolean;
+  savedAt: string;
+}
+
+/** A value the manifest's secrets[] stands for (GET …/secrets, show:secrets). */
+export interface ApiShowSecret {
+  source: string;
+  key: string;
+  value: string;
+}
+
+/** GET /library item. */
+export interface ApiLibraryAsset {
+  id: string;
+  sha256: string;
+  name: string;
+  kind: string;
+  /** null = every profile. */
+  profileId: string | null;
+  size: number;
+  createdAt: string;
+}
+
+/** show.changed data. */
+export interface ApiShowChanged {
+  profileId: string;
+  revision: number;
+  parentRevision: number | null;
+  byAppId: string | null;
 }
 
 /** GET /profiles/{id}/ingest */

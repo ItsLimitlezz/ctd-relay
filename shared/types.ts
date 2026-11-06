@@ -375,9 +375,33 @@ export interface AuditEntry {
  * apps:write  = register this app + its resources, send messages to other apps
  * obs:write   = send OBS events (feed/output/scene state) into the hub (the CTD OBS plugin; v1.4)
  * obs:control = control OBS through Relay's OBS WebSocket relay, /obs/socket (CTD Live mobile; v1.6)
+ * show:read    = show profiles (manifests, bundles), their assets and the asset library (CTD OBS plugin; v1.9)
+ * show:write   = save show-profile revisions and upload blobs (v1.9)
+ * show:secrets = the encrypted third-party secrets of a show profile, e.g. browser-source URL keys (v1.9)
  */
-export type ApiScope = 'chat:read' | 'status:read' | 'ingest:read' | 'apps:read' | 'apps:write' | 'obs:write' | 'obs:control';
-export const API_SCOPES: readonly ApiScope[] = ['chat:read', 'status:read', 'ingest:read', 'apps:read', 'apps:write', 'obs:write', 'obs:control'];
+export type ApiScope =
+  | 'chat:read'
+  | 'status:read'
+  | 'ingest:read'
+  | 'apps:read'
+  | 'apps:write'
+  | 'obs:write'
+  | 'obs:control'
+  | 'show:read'
+  | 'show:write'
+  | 'show:secrets';
+export const API_SCOPES: readonly ApiScope[] = [
+  'chat:read',
+  'status:read',
+  'ingest:read',
+  'apps:read',
+  'apps:write',
+  'obs:write',
+  'obs:control',
+  'show:read',
+  'show:write',
+  'show:secrets',
+];
 
 // ---------------------------------------------------------------------------
 // Connected apps (the hub): other apps register themselves and what they offer, so apps can

@@ -696,9 +696,14 @@ export function NewTokenForm({
         <Select options={options} value={profileValue} onValueChange={setProfileValue} />
       </Field>
       <ScopeChecklist scopes={scopes} onChange={setScopes} error={errors.scopes} />
-      {scopes.some((s) => SECRET_SCOPES.includes(s)) && (
+      {scopes.includes('ingest:read') && (
         <div className="alert alert-warn">
           {API_SCOPE_INFO['ingest:read'].label} hands out stream keys: give it only to an app that sets up OBS.
+        </div>
+      )}
+      {scopes.includes('show:secrets') && (
+        <div className="alert alert-warn">
+          {API_SCOPE_INFO['show:secrets'].label} hands out keys saved in OBS sources: give it only to machines you trust.
         </div>
       )}
       {formError && (
