@@ -64,6 +64,12 @@ Authorization: Bearer ctd_pat_3fK9wQ1v…
 | `apps:write` | `PUT`/`DELETE /apps/{id}`, `POST /apps/{id}/heartbeat`, `POST /messages` |
 | `obs:write` | `POST /apps/{id}/events`: OBS events into the hub (the CTD OBS plugin; v1.4, §10) |
 | `obs:control` | `GET /obs/socket`: control OBS through Relay's OBS socket relay (CTD Live mobile; v1.6, §12) |
+| `show:read` | Show profiles (§14): `GET /profiles/{id}/show…` (manifests, bundles), `GET /blobs/{sha256}`, `GET /library`, `show.changed` and `library.changed` events (v1.9) |
+| `show:write` | `POST /profiles/{id}/show/revisions`, `POST /blobs/check`, `PUT /blobs/{sha256}`: save revisions and upload files (v1.9) |
+| `show:secrets` | `GET /profiles/{id}/show/revisions/{rev}/secrets`: third-party secrets (URL keys, passwords) saved with a show profile. Grant it per trusted machine only (v1.9) |
+| `show:read` | Show profiles (§14): `GET /profiles/{id}/show…` (manifests, bundles), `GET /blobs/{sha256}`, `GET /library`, `show.changed` and `library.changed` events (v1.9) |
+| `show:write` | `POST /profiles/{id}/show/revisions`, `POST /blobs/check`, `PUT /blobs/{sha256}`: save revisions and upload files (v1.9) |
+| `show:secrets` | `GET /profiles/{id}/show/revisions/{rev}/secrets`: third-party secrets (URL keys, passwords) saved with a show profile. Grant it per trusted machine only (v1.9) |
 
 A token may also be **limited to one profile** (§9.1). `/`, `/events` and `/events/poll` return
 whatever the token's scopes allow. Browser-only fallback: `GET /events` also accepts
@@ -106,6 +112,14 @@ counts as none).
 | 409 | `app_owned` | The app id was registered by another token (that token is revoked, or its app is offline and yours is newer and of the same kind: `PUT /apps/{id}` takes the id over, v1.6) |
 | 409 | `limit` | Too many apps registered (100 in all, 20 per token) |
 | 403 / 410 | `denied` / `expired` | Pairing poll: denied by the admin / expired, collected or unknown (§9.3) |
+| 409 | `revision_conflict` | Saving a show-profile revision on a `parentRevision` that is no longer the head; carries `head` (v1.9, §14) |
+| 400 | `missing_blobs` | A save names files that are not uploaded yet; carries `missing` (v1.9, §14) |
+| 400 | `hash_mismatch` | The uploaded bytes do not hash to the SHA-256 in the path (v1.9, §14) |
+| 413 | `quota_exceeded` | The upload would take the blob storage over its total quota (v1.9, §14). A file over its kind's size limit is `413 limit` |
+| 409 | `revision_conflict` | Saving a show-profile revision on a `parentRevision` that is no longer the head; carries `head` (v1.9, §14) |
+| 400 | `missing_blobs` | A save names files that are not uploaded yet; carries `missing` (v1.9, §14) |
+| 400 | `hash_mismatch` | The uploaded bytes do not hash to the SHA-256 in the path (v1.9, §14) |
+| 413 | `quota_exceeded` | The upload would take blob storage over its total quota (v1.9, §14). A file over its kind's size limit is `413 limit` |
 | 429 | `rate_limited` | Over the limit (`Retry-After` seconds) |
 
 Treat a `code` you don't know by its HTTP status.
@@ -504,6 +518,14 @@ What the profile's Spotify plays changed: another song, play/pause or a seek (§
 
 ### `music.request` — `chat:read` (v1.8)
 A chat song request (`!sr`) was queued or refused (§13).
+
+### `show.changed` — `show:read` (v1.9)
+A revision of a profile's show profile was saved (§14). `src.profile` is that profile.
+`data: { "profileId", "revision", "parentRevision", "byAppId" }` (`byAppId` is the saving app, or `null`).
+
+### `library.changed` — `show:read` (v1.9)
+An entry of the asset library was added, renamed, reassigned or removed (§14.7).
+`data: {}` — refetch `GET /library`. `src.profile` is the entry's profile, or `null` for an entry shared by every profile.
 
 ### `system.reset`
 `data: {}` — events you would have received after your cursor are no longer buffered (or the
@@ -1051,11 +1073,261 @@ to the viewer. Relay can't post in the platforms' own chats. Settings per profil
 request (everyone / subscribers / VIPs / moderators; moderators always may and have no cooldown),
 cooldown per viewer, longest song, explicit songs.
 
+## 14. Show profiles (v1.9)
+
+A **show profile** is a profile's OBS set-up (scene collection, OBS profile, vertical canvas,
+LUTs, images, media), saved by the CTD OBS plugin so another machine can load it. Relay stores it
+and never reads OBS files itself.
+
+- Each Relay profile has **at most one** show profile, so the routes hang off the profile
+  (`/profiles/{id}/show`). The first save creates it.
+- Every save is a numbered **revision** (1, 2, 3, …). Revisions are immutable. A save names the
+  `parentRevision` it was built on, so two machines can't overwrite each other silently.
+- A revision is a **bundle** (one tar of small JSON files: scene collection, OBS profile, canvases)
+  plus **assets** (big files). Both are **blobs**: files addressed by their SHA-256, stored once
+  and shared by every revision and profile that uses them.
+- Stream keys never go into a bundle. Overlay URLs are replaced by `{slot, canvas}` references.
+
+The examples use `http://192.168.1.20:30080/api/v1` and a token with `show:read` and `show:write`
+(add `show:secrets` for §14.5).
+
+### 14.1 Manifest (schema 1)
+
+The manifest describes a revision. Relay stores it as sent and checks only what it relies on
+(below); the rest is the plugin's business. Abridged:
+
+```json
+{
+  "schema": 1,
+  "name": "DPRTMNT",
+  "savedBy": { "appId": "ctd-obs-plugin-studio", "os": "windows" },
+  "versions": { "obs": "33.0.1", "ctdObs": "x.y.z" },
+  "files": { "collection": "collection.json", "profile": ["profile/basic.ini"],
+             "canvases": { "vertical": { "adapter": "ctd-vertical-canvas", "file": "canvases/vertical.json" } },
+             "plugins": { "ctd-live-source": "plugins/ctd-live-source.json" } },
+  "assets":   [ { "sha256": "9f2c…", "size": 1234, "kind": "lut", "name": "warm.cube",
+                  "refs": [ { "source": "uuid", "filter": "uuid|null", "key": "image_path" } ] } ],
+  "devices":  [ { "slot": "<source uuid>", "sourceType": "dshow_input", "class": "video", "label": "Club cam" } ],
+  "overlays": [ { "source": "uuid", "slot": "chat-box", "canvas": "landscape" } ],
+  "secrets":  [ { "source": "uuid", "key": "url" } ]
+}
+```
+
+In the bundle's JSON files, placeholders stand for values that are not stored in the bundle:
+
+| Placeholder | Meaning |
+|---|---|
+| `"${ctd-asset:<sha256>}"` | A file path: the asset with that hash (`assets[]`), downloaded with `GET /blobs/{sha256}` and placed on this machine |
+| `"${ctd-secret}"` | A value held encrypted on Relay: the entry of `secrets[]` with the same `source` and `key` (§14.5) |
+
+What Relay checks on a save: `schema` is a number this server reads (`1`; another gets `400 invalid`
+telling the user to update CTD Relay), `name` is 1–100 characters, every path in `files` is relative
+(no `..`, no leading `/`, no `\`, no drive letter), `assets` has at most 2000 entries, each with a
+lowercase hex `sha256`. `savedBy.appId` is recorded as the revision's `savedBy`.
+
+**Secrets are not in the bundle.** The values travel in the save body's `secrets` and come back from a
+separate route (§14.5), so the bundle stays byte-identical to its `bundleSha256`. A reader without
+`show:secrets` gets the placeholders and lists those sources as "needs re-entry".
+
+### 14.2 Save flow
+
+1. Build the bundle and hash it and every asset file (SHA-256, lowercase hex).
+2. `POST /blobs/check` with all the hashes. The answer lists the ones Relay still needs.
+3. `PUT /blobs/{sha256}?kind=<kind>` for each missing blob (at most 2 at a time).
+4. `POST /profiles/{id}/show/revisions` with the manifest, `bundleSha256` and the `parentRevision`
+   you loaded (`0` for the first save).
+
+Two answers to handle on step 4:
+
+- `409 revision_conflict` with `head`: someone saved meanwhile. Nothing was stored. Load revision
+  `head` (§14.3), merge, and save again with `parentRevision: head`.
+- `400 missing_blobs` with `missing: [sha256…]`: those blobs are not stored (or not visible to the
+  token, §14.6). Upload them and repeat step 4.
+
+### 14.3 Load flow
+
+1. `GET /profiles` (`status:read`): each item has `show`, `{ "headRevision", "updatedAt", "savedBy": { "appId" } }`,
+   or `null` before the first save. One call lists the profiles and their show state.
+2. `GET /profiles/{id}/show`: name and head. `GET /profiles/{id}/show/revisions` for the history.
+3. `GET /profiles/{id}/show/revisions/{rev}`: the revision with its manifest.
+4. `GET …/revisions/{rev}/bundle`: the tar.
+5. `GET /blobs/{sha256}` for every `assets[]` entry you don't have yet. Cache by hash: a hash never changes.
+6. `GET …/revisions/{rev}/secrets` with `show:secrets` (§14.5).
+
+### 14.4 Routes
+
+#### `GET /api/v1/profiles/{id}/show` — `show:read`
+```json
+{ "id": "5c0e…", "profileId": "default", "name": "DPRTMNT", "headRevision": 7,
+  "createdAt": "2026-11-05T20:00:00Z", "updatedAt": "2026-11-12T19:40:00Z", "savedBy": { "appId": "ctd-obs-plugin-studio" } }
+```
+`404 not_found` before the first save. `404 unknown_profile` / `403 profile_forbidden` as in §9.1:
+a profile-limited token reads its own profile only.
+
+#### `GET /api/v1/profiles/{id}/show/revisions` — `show:read`
+Newest first. Revisions beyond the retention limit (§14.8) are gone; a pinned one stays.
+```json
+{ "head": 7, "items": [
+  { "profileId": "default", "revision": 7, "parentRevision": 6, "bundleSha256": "4b1d…",
+    "size": 48211093, "savedBy": { "appId": "ctd-obs-plugin-studio" }, "note": "new lower third",
+    "pinned": false, "savedAt": "2026-11-12T19:40:00Z" }
+] }
+```
+`size` is the bundle plus every asset it references, in bytes. `parentRevision` is `null` for the first.
+
+#### `GET /api/v1/profiles/{id}/show/revisions/{rev}` — `show:read`
+One item as above plus `"manifest": { … }` exactly as saved. `404 not_found` for a revision that
+doesn't exist or was pruned.
+
+#### `GET /api/v1/profiles/{id}/show/revisions/{rev}/bundle` — `show:read`
+The bundle (a tar of JSON files), downloaded as in §14.6. Byte-identical to `bundleSha256`.
+
+#### `GET /api/v1/profiles/{id}/show/revisions/{rev}/secrets` — `show:secrets`
+```json
+{ "items": [ { "source": "8a1f…", "key": "url", "value": "https://example.invalid/widget?key=…" } ] }
+```
+The values the manifest's `secrets[]` stand for, `Cache-Control: no-store`. `items` is empty when the
+revision saved none. Every read is written to the audit log (`show.secrets.read`).
+
+#### `POST /api/v1/profiles/{id}/show/revisions` — `show:write`
+```json
+{ "parentRevision": 7, "bundleSha256": "4b1d…", "note": "new lower third",
+  "manifest": { "schema": 1, "name": "DPRTMNT", "files": { }, "assets": [ ] },
+  "secrets": [ { "source": "8a1f…", "key": "url", "value": "…" } ] }
+```
+- `parentRevision`: the head you built on; `0` creates the show profile.
+- `note`: optional, up to 500 characters. `secrets`: optional, up to 200 entries
+  (`source` ≤ 64, `key` ≤ 128, `value` ≤ 8 KB), stored encrypted (see [SECURITY.md](SECURITY.md)).
+- The bundle and every `assets[].sha256` must be stored already and usable by the token (§14.6).
+- `201` with the new revision (same shape as in the list). Relay numbers it.
+
+| Status | `code` | When |
+|---|---|---|
+| 400 | `invalid` | Bad body or manifest (§14.1) |
+| 400 | `missing_blobs` | Not uploaded yet: `{ …, "missing": ["<sha256>", …] }` |
+| 409 | `revision_conflict` | `parentRevision` is not the head: `{ …, "head": 8 }` |
+| 413 | `limit` | Manifest over 1 MB, bundle over 16 MB, or `secrets` too large (the whole body is limited to about 3 MB) |
+
+#### `POST /api/v1/blobs/check` — `show:write`
+```json
+{ "items": [ { "sha256": "4b1d…", "size": 18320 }, { "sha256": "9f2c…", "size": 1234 } ] }
+```
+→ `{ "missing": ["9f2c…"] }`. Up to 1000 items. A token limited to a profile is told `missing` for
+every blob it can't see (§14.6), so the answer never reveals what other profiles hold.
+
+#### `PUT /api/v1/blobs/{sha256}?kind=<kind>` — `show:write`
+Body: the raw file (`Content-Type: application/octet-stream`), streamed to disk. The 1 MB JSON limit
+of other routes doesn't apply; the kind's limit (§14.8) does. `{sha256}` is the lowercase hex SHA-256
+of the body: Relay hashes while it receives and keeps the file only if they match. Send
+`Content-Length` so a too-large file is refused before it is sent.
+
+`kind` is one of `lut`, `image`, `video`, `audio`, `font`, `html`, `bundle`, `other` (default `other`).
+It selects the size limit and the content check: a `lut` is a text `.cube` file (with a
+`LUT_3D_SIZE` or `LUT_1D_SIZE` line) or a PNG (HaldCLUT). Native executables (Windows PE, ELF,
+Mach-O) and `#!` scripts are refused for every kind.
+
+```json
+{ "sha256": "9f2c…", "size": 1234, "kind": "lut", "created": true }
+```
+`201` when stored; `200` with `created: false` when Relay already had the blob (the upload was
+still checked against the hash, which proves you hold the bytes). At most **2 uploads at once per
+token**; a third gets `429 rate_limited` with `Retry-After: 5`. After a refused upload the server may
+close the connection instead of reading the rest of the body.
+
+| Status | `code` | When |
+|---|---|---|
+| 400 | `invalid` | Not a lowercase hex hash, unknown `kind`, or the upload broke off |
+| 400 | `hash_mismatch` | The body doesn't hash to `{sha256}` |
+| 413 | `limit` | Over the kind's size limit |
+| 413 | `quota_exceeded` | Over the total storage quota |
+| 415 | `invalid` | The content doesn't fit the kind, or is an executable |
+
+#### `GET /api/v1/blobs/{sha256}` — `show:read`
+The file, downloaded as in §14.6. `404 not_found` when no revision or library entry visible to the
+token references the blob and the token didn't upload it recently, and also when the hash doesn't
+exist at all: the two cases look the same.
+
+#### `GET /api/v1/library?profile=<id>&kind=<kind>` — `show:read`
+The **asset library**: files an admin uploaded on the web UI's Assets page (LUTs, images) to share
+between machines.
+```json
+{ "items": [ { "id": "c3d4…", "sha256": "9f2c…", "name": "warm.cube", "kind": "lut",
+               "profileId": null, "size": 1234, "createdAt": "2026-11-05T20:00:00Z" } ] }
+```
+`profileId: null` means the entry is shared by every profile. With `?profile=` you get the shared
+entries plus those assigned to that profile; a token limited to a profile always gets its own
+profile's view. Without `?profile=`, a token for every profile gets every entry. `kind` filters by
+kind (`400 invalid` for an unknown one). Download an entry with `GET /blobs/{sha256}`.
+
+### 14.5 Secrets
+
+Third-party secrets found in a profile (a key in a browser-source URL, a plugin password) are not
+stored in the bundle or the manifest. The plugin sends them in the save as `secrets[]`, one entry
+per `{source, key}` named in the manifest's `secrets[]`, and the bundle holds `"${ctd-secret}"`
+instead. Relay keeps them encrypted per revision. Only a token with `show:secrets` can read them,
+with `GET …/revisions/{rev}/secrets`, and fills the placeholders in. A machine without the scope
+still loads everything else. Stream keys are not secrets of this kind: they come from
+`GET /profiles/{id}/ingest` (`ingest:read`).
+
+### 14.6 Downloads and who sees which blob
+
+Bundle and blob downloads send `Content-Type: application/octet-stream`,
+`Content-Disposition: attachment`, `X-Content-Type-Options: nosniff`, `ETag: "<sha256>"`,
+`Accept-Ranges: bytes` and `Cache-Control: private, max-age=31536000, immutable` (the content never
+changes). They support one `Range: bytes=…` range (`206`; `416` when it can't be satisfied; a
+malformed or multi-range header gets the whole file) and `If-None-Match` (`304`), so a big file can
+resume. Verify the hash after downloading.
+
+Blobs are shared by hash across profiles, so access is checked per token:
+
+- A token for every profile may read any blob that a revision or library entry references and
+  build a save on any stored blob.
+- A token limited to a profile sees a blob only when a revision of its profile, or a library entry
+  visible to it, references it, or when it uploaded the blob itself within the last 24 hours.
+  For anything else `POST /blobs/check` says `missing` and `GET /blobs/{sha256}` says `404`.
+  Uploading then proves possession and makes the blob usable for that token. Nothing tells a token
+  whether another profile has a file.
+
+### 14.7 Events
+
+`show.changed` (`show:read`, `src.profile` = the profile) after every saved revision, with
+`{ profileId, revision, parentRevision, byAppId }`. Compare `revision` with the one you have loaded
+and offer the update. `library.changed` (`show:read`, `data: {}`) when the asset library changes:
+refetch `GET /library`. Both are in §5.
+
+### 14.8 Limits
+
+| What | Limit |
+|---|---|
+| LUT (`kind=lut`) | 64 MB |
+| Image | 50 MB |
+| Video, audio | 2 GB each |
+| Font, HTML, bundle kind, other | 200 MB |
+| Bundle of a revision | 16 MB |
+| Manifest | 1 MB; at most 2000 assets |
+| Check request | 1000 items |
+| Total blob storage | 20 GB. Set `ASSETS_QUOTA_BYTES` to change it; the `assets.limits` setting can override any limit above |
+| Revisions kept per show profile | 50, plus pinned ones; a save beyond that removes the oldest unpinned revision (and its secrets) |
+| Concurrent uploads | 2 per token |
+
+A daily clean-up deletes blobs that no revision or library entry references once they are 7 days
+old (an upload never followed by a save, a pruned revision's files). The rate limit in §2 applies
+as usual.
+
 ## Changelog
 
 `apiVersion` stays `1`: every change below is additive, so clients written for an earlier v1
 keep working (ignore event types and fields you don't know). `GET /api/v1/openapi.json` reports
 the revision in `info.version`.
+
+### v1.9
+
+- **Show profiles (§14):** a profile's OBS set-up saved as numbered revisions with content-addressed
+  bundles and assets. New scopes `show:read`, `show:write`, `show:secrets`. New routes
+  `GET /profiles/{id}/show`, `…/show/revisions`, `…/show/revisions/{rev}` (+ `/bundle`, `/secrets`),
+  `POST …/show/revisions`, `POST /blobs/check`, `PUT`/`GET /blobs/{sha256}` and `GET /library`.
+  `GET /profiles` items gain `show`. New events `show.changed` and `library.changed`. New problem
+  codes `revision_conflict`, `missing_blobs`, `hash_mismatch`, `quota_exceeded`.
 
 ### v1.8
 
