@@ -112,7 +112,7 @@ Destinations fail independently. One platform failing never blocks the others. T
 | Landscape | 1920×1080 or 1280×720 | 60 or 30 | H.264 CBR ≤ 6 Mbps | 2 s | AAC 160 kbps, 48 kHz |
 | Vertical | 1080×1920 or 720×1280 | 30 | H.264 CBR ~4 Mbps | 2 s | AAC 160 kbps, 48 kHz |
 
-- Later: optional per-destination transcoding with GPU (Intel Quick Sync / NVIDIA NVENC).
+- Later: optional per-destination transcoding, hardware-gated (design: [TRANSCODING.md](TRANSCODING.md)).
 
 ### 5.3 Twitch Dual Format
 Twitch Dual Format uses **Enhanced Broadcasting**: several video tracks (landscape and vertical) inside one Enhanced-RTMP connection, negotiated through Twitch's client configuration endpoint. Restream does not appear to support it, so supporting it would set this project apart.
