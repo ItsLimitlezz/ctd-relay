@@ -53,6 +53,7 @@ import {
 } from '../platforms/types.js';
 import type { AppServices } from '../services.js';
 import { awaitBounded, errorMessage, redactText, SerialQueue, sleep, TimeoutError } from './async-utils.js';
+import { waitingForFeedMessage } from './feeds.js';
 import { hasChannelTitle, supportsTestMode, TEST_MODE_CHANNEL_TITLE, testModeSkipMessage } from './test-mode.js';
 
 export interface OrchestratorTimings {
@@ -368,7 +369,7 @@ export class DestinationRunner {
       this.retryTimer = null;
     }
     if (this.prepared) await this.pause();
-    else if (!this.preparing) this.set({ phase: 'waiting-for-feed', message: this.waitingMessage(), stats: null });
+    else if (!this.preparing) this.set({ phase: 'waiting-for-feed', message: this.waitingMessage(), waitingFor: this.missingFeeds(), stats: null });
   }
 
   /** Feed(s) online with a prepared live: (re)start the push, or go live when there is none. */
@@ -392,7 +393,8 @@ export class DestinationRunner {
     }
     this.set({
       phase: 'waiting-for-feed',
-      message: `Feed offline: waiting up to ${secs(graceMs)} for it to return`,
+      message: `${this.waitingMessage()}: waiting up to ${secs(graceMs)} for it to return`,
+      waitingFor: this.missingFeeds(),
       stats: null,
     });
   }
@@ -410,6 +412,7 @@ export class DestinationRunner {
     this.set({
       phase: 'waiting-for-feed',
       message: `${this.waitingMessage()}; a new live will be prepared when it returns`,
+      waitingFor: this.missingFeeds(),
       watchUrl: null,
       stats: null,
     });
@@ -968,10 +971,14 @@ export class DestinationRunner {
     return this.required.every((f) => this.host.feedOnline(f));
   }
 
-  private waitingMessage(): string {
+  /** Required feeds that are offline (all required ones when none is, e.g. a feed just came back). */
+  private missingFeeds(): Feed[] {
     const missing = this.required.filter((f) => !this.host.feedOnline(f));
-    const feeds = (missing.length > 0 ? missing : this.required).join(' + ');
-    return `Waiting for the ${feeds} feed from OBS`;
+    return missing.length > 0 ? missing : [...this.required];
+  }
+
+  private waitingMessage(): string {
+    return waitingForFeedMessage(this.missingFeeds());
   }
 
   private clearGrace(): void {
@@ -1000,6 +1007,8 @@ export class DestinationRunner {
   private set(patch: StatePatch): void {
     if (this.finished) return;
     if (patch.phase) this.phase = patch.phase;
+    // waitingFor only means something in the waiting phase: clear it whenever the phase moves on.
+    if (patch.phase && patch.phase !== 'waiting-for-feed' && patch.waitingFor === undefined) patch = { ...patch, waitingFor: [] };
     this.host.update(this.id, patch);
   }
 }

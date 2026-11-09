@@ -34,6 +34,47 @@ describe('down', () => {
   });
 });
 
+describe('waiting for a feed', () => {
+  const running = (online: { landscape: boolean; vertical: boolean }) =>
+    session({
+      feeds: [
+        { feed: 'landscape', online: online.landscape, since: null, video: null, audio: null, bitrateKbps: null },
+        { feed: 'vertical', online: online.vertical, since: null, video: null, audio: null, bitrateKbps: null },
+      ],
+    });
+
+  it('passes the runner\'s waitingFor through and is down', () => {
+    const st = dstate('tw', 'waiting-for-feed', { message: 'Waiting for vertical feed', waitingFor: ['vertical'] });
+    const out = apiDestination(dest('tw'), st, running({ landscape: true, vertical: false }), null);
+    expect(out).toMatchObject({ phase: 'waiting-for-feed', waitingFor: ['vertical'], message: 'Waiting for vertical feed', down: true });
+    expect(apiDestination(dest('tw'), dstate('tw', 'live'), running({ landscape: true, vertical: true }), null).waitingFor).toEqual([]);
+  });
+
+  it('never shows an enabled destination of a running session as idle while its feed is offline', () => {
+    const vertical = dest('ig', { platform: 'instagram', feed: 'vertical' });
+    const out = apiDestination(vertical, dstate('ig', 'idle'), running({ landscape: true, vertical: false }), null);
+    expect(out).toMatchObject({ phase: 'waiting-for-feed', waitingFor: ['vertical'], message: 'Waiting for vertical feed', down: true });
+    const dual = dest('tw', { options: { dualFormat: 'relay-multitrack' } });
+    expect(apiDestination(dual, dstate('tw', 'idle'), running({ landscape: true, vertical: false }), null)).toMatchObject({
+      phase: 'waiting-for-feed',
+      waitingFor: ['vertical'],
+    });
+    expect(apiDestination(dual, undefined, running({ landscape: false, vertical: false }), null)).toMatchObject({
+      waitingFor: ['landscape', 'vertical'],
+      message: 'Waiting for both feeds',
+    });
+  });
+
+  it('stays idle when offline, disabled, skipped by test mode, or when its feeds are online', () => {
+    const vertical = dest('ig', { platform: 'instagram', feed: 'vertical' });
+    const idle = dstate('ig', 'idle');
+    expect(apiDestination(vertical, idle, { ...running({ landscape: true, vertical: false }), status: 'offline' }, null).phase).toBe('idle');
+    expect(apiDestination({ ...vertical, enabled: false }, idle, running({ landscape: true, vertical: false }), null).phase).toBe('idle');
+    expect(apiDestination(vertical, idle, { ...running({ landscape: true, vertical: false }), testMode: true }, info(false)).phase).toBe('idle');
+    expect(apiDestination(vertical, idle, running({ landscape: true, vertical: true }), null).phase).toBe('idle');
+  });
+});
+
 describe('totalViewers', () => {
   it('adds up the known counts; null when none is known', () => {
     expect(totalViewers([{ viewers: 3 }, { viewers: null }, {}, { viewers: 0 }, { viewers: 40 }])).toBe(43);
@@ -86,6 +127,7 @@ describe('status builder', () => {
       phase: 'live',
       live: true,
       down: false,
+      waitingFor: [],
       message: null,
       stats: { bitrateKbps: 6010, fps: 60, speed: 1, uptimeSec: 3605 },
       viewers: 214,

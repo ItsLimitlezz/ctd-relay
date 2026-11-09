@@ -99,6 +99,17 @@ describe('dashboard status', () => {
     expect(statusSubtitle(session({ status: 'live', destinations: [dest('a', 'live'), dest('b', 'live')] }))).toBe('2 of 2 destinations live');
   });
 
+  it('counts enabled destinations that are idle or waiting for a feed ("0 of 3", not "0 of 1")', () => {
+    // Regression: idle / waiting destinations were left out of the total, so three enabled
+    // destinations with one preparing read "0 of 1 destinations live".
+    const s = session({
+      status: 'live',
+      destinations: [dest('yt', 'preparing'), dest('tw', 'idle'), dest('ig', 'waiting-for-feed'), dest('off', 'disabled')],
+    });
+    expect(statusSubtitle(s)).toBe('0 of 3 destinations live');
+    expect(statusSubtitle({ ...s, status: 'starting' })).toBe('Preparing destinations… 0 of 3 live');
+  });
+
   it("the auto toggle's REST snapshot doesn't undo a newer WebSocket 'live'", () => {
     const store = new LiveStore();
     store.dispatch({ type: 'hello', session: session({ autoGoLive: false }), chat: [], profiles: [] } as WsServerMessage);

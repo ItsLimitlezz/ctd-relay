@@ -182,7 +182,7 @@ describe('down/up edges', () => {
     current = { ...current, status: 'live', destinations: [dstate('t1', 'error', { message: 'boom' }), dstate('i1', 'live')] };
     bus.emit('session', current);
     expect(types().filter((t) => t === 'destination.down')).toHaveLength(1);
-    current = { ...current, status: 'offline', destinations: [dstate('t1', 'error', { message: 'boom' }), dstate('i1', 'idle')] };
+    current = { ...current, status: 'offline', destinations: [dstate('t1', 'error', { message: 'boom' }), dstate('i1', 'live')] };
     bus.emit('session', current);
     expect(types().filter((t) => t === 'destination.up')).toHaveLength(1);
 

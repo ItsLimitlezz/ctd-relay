@@ -4,10 +4,12 @@ import type {
   Destination,
   DestinationPhase,
   DestinationState,
+  Feed,
   FeedState,
   PlatformInfo,
   SessionState,
 } from '../../../shared/types.js';
+import { requiredFeedsOf, waitingForFeedMessage } from '../orchestrator/feeds.js';
 import type { ApiDestination, ApiFeed, ApiPlatform, ApiSession, ApiStatus } from './types.js';
 
 /** Phases in which an enabled destination of a running session isn't reaching its platform. */
@@ -89,10 +91,22 @@ export function isDown(
 export function apiDestination(
   dest: Destination,
   st: DestinationState | undefined,
-  session: Pick<SessionState, 'status' | 'testMode'>,
+  session: Pick<SessionState, 'status' | 'testMode'> & Partial<Pick<SessionState, 'feeds'>>,
   info: PlatformInfo | null,
 ): ApiDestination {
-  const phase: DestinationPhase = st?.phase ?? (dest.enabled ? 'idle' : 'disabled');
+  let phase: DestinationPhase = st?.phase ?? (dest.enabled ? 'idle' : 'disabled');
+  let waitingFor: Feed[] = phase === 'waiting-for-feed' ? [...(st?.waitingFor ?? [])] : [];
+  let message = st?.message ?? null;
+  // An enabled destination of a running session is never "idle": if its runner has not reported yet
+  // (or reports a resting phase) while a feed it needs is offline, say so instead.
+  if (phase === 'idle' && sessionRunning(session) && dest.enabled && !skippedByTestMode(session, info) && session.feeds) {
+    const missing = requiredFeedsOf(dest).filter((f) => session.feeds?.find((x) => x.feed === f)?.online !== true);
+    if (missing.length > 0) {
+      phase = 'waiting-for-feed';
+      waitingFor = missing;
+      message = waitingForFeedMessage(missing);
+    }
+  }
   const viewers = viewerCount(st?.viewers);
   return {
     id: dest.id,
@@ -103,7 +117,8 @@ export function apiDestination(
     phase,
     live: phase === 'live',
     down: isDown(session, dest, phase, info, st?.retries ?? 0),
-    message: st?.message ?? null,
+    waitingFor,
+    message,
     stats: st?.stats ?? null,
     viewers,
     watchUrl: st?.watchUrl ?? null,

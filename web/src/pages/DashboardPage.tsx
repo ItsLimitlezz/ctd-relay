@@ -64,16 +64,9 @@ export function feedBadge(dest: Pick<Destination, 'platform' | 'feed' | 'options
 }
 const BANDWIDTH_TEST_TITLE =
   'This destination has "Bandwidth test" on: Twitch receives the video but nobody sees it and the channel stays offline. Turn it off in Destinations for a real stream.';
-const ACTIVE_PHASES: ReadonlySet<DestinationPhase> = new Set([
-  'waiting-for-feed',
-  'preparing',
-  'connecting',
-  'confirming',
-  'live',
-  'retrying',
-  'recovering',
-  'error',
-]);
+// Every phase except these counts towards "N of M": 'idle' and 'waiting-for-feed' are enabled
+// destinations that are not sending yet, 'disabled' is off or skipped by test mode.
+const INACTIVE_PHASES: ReadonlySet<DestinationPhase> = new Set(['disabled']);
 
 export default function DashboardPage() {
   const session = useSession();
@@ -211,7 +204,7 @@ const STATUS_TEXT: Record<SessionState['status'], { label: string; tone: Tone; p
 };
 
 export function statusSubtitle(session: SessionState): string {
-  const active = session.destinations.filter((d) => ACTIVE_PHASES.has(d.phase));
+  const active = session.destinations.filter((d) => !INACTIVE_PHASES.has(d.phase));
   const live = active.filter((d) => d.phase === 'live').length;
   // A destination being recovered after a takedown is active but not live yet.
   const recovering = active.filter((d) => d.phase === 'recovering').length;
