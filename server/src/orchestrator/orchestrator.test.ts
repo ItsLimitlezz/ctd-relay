@@ -116,6 +116,55 @@ describe('go live', () => {
     expect(h.phase('t1')).toBe('connecting');
   });
 
+  it('Dual Format with only landscape online waits for the vertical feed', async () => {
+    const prepare = vi.fn(async () => prepared());
+    const h = harness({
+      dests: [dest('t1', { platform: 'twitch', options: { dualFormat: 'relay-multitrack' } })],
+      drivers: [driver('twitch', { prepare, requiredFeeds: () => ['landscape', 'vertical'] })],
+    });
+    await h.orch.init();
+    h.media.set('landscape', true);
+    await flush();
+    expect(h.destState('t1')).toMatchObject({ phase: 'waiting-for-feed', waitingFor: ['vertical'], message: 'Waiting for vertical feed' });
+    expect(prepare).not.toHaveBeenCalled();
+    h.media.set('landscape', false);
+    await flush();
+    expect(h.destState('t1')).toMatchObject({ waitingFor: ['landscape', 'vertical'], message: 'Waiting for both feeds' });
+    h.media.set('vertical', true);
+    await flush();
+    expect(h.destState('t1')).toMatchObject({ waitingFor: ['landscape'], message: 'Waiting for landscape feed' });
+    expect(prepare).not.toHaveBeenCalled();
+  });
+
+  it('a vertical-only platform with the vertical feed offline waits for vertical, then clears waitingFor', async () => {
+    const prepare = vi.fn(async () => prepared());
+    const h = harness({
+      dests: [dest('l1'), dest('i1', { platform: 'instagram', feed: 'vertical' })],
+      drivers: [driver('custom', { prepare }), driver('instagram', { prepare })],
+    });
+    await h.orch.init();
+    h.media.set('landscape', true);
+    await flush();
+    expect(h.destState('i1')).toMatchObject({ phase: 'waiting-for-feed', waitingFor: ['vertical'], message: 'Waiting for vertical feed' });
+    expect(h.destState('l1').waitingFor ?? []).toEqual([]);
+    h.media.set('vertical', true);
+    await flush();
+    expect(h.destState('i1').phase).toBe('connecting');
+    expect(h.destState('i1').waitingFor).toEqual([]);
+  });
+
+  it('reports both feeds when neither is online (manual start)', async () => {
+    const h = harness({
+      dests: [dest('t1', { platform: 'twitch' })],
+      drivers: [driver('twitch', { prepare: async () => prepared(), requiredFeeds: () => ['landscape', 'vertical'] })],
+      settings: { 'session.autoGoLive': false },
+    });
+    await h.orch.init();
+    await h.orch.start('manual');
+    await flush();
+    expect(h.destState('t1')).toMatchObject({ waitingFor: ['landscape', 'vertical'], message: 'Waiting for both feeds' });
+  });
+
   it('skips disabled destinations and marks them disabled', async () => {
     const prepare = vi.fn(async () => prepared());
     const h = harness({

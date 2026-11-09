@@ -232,6 +232,8 @@ export interface DestinationState {
   lastRecovery: { at: string; reason: string } | null;
   /** Current viewers on the platform, when the driver can read them (null = unknown). */
   viewers?: number | null;
+  /** Feeds this destination needs that are offline now. Non-empty only while the phase is `waiting-for-feed`. */
+  waitingFor?: Feed[];
 }
 
 export type SessionStatus = 'offline' | 'starting' | 'live' | 'stopping';

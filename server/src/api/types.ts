@@ -135,6 +135,8 @@ export interface ApiDestination {
   phase: DestinationPhase;
   live: boolean;
   down: boolean;
+  /** Feeds this destination is waiting for (phase `waiting-for-feed`); empty otherwise. */
+  waitingFor: Feed[];
   message: string | null;
   stats: PushStats | null;
   viewers: number | null;

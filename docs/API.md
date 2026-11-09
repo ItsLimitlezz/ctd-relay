@@ -211,6 +211,11 @@ event stream.
   Per platform: `platforms[].viewers`; per destination: `destinations[].viewers`.
 - `phase`: `idle`, `disabled`, `waiting-for-feed`, `preparing`, `connecting`, `confirming`, `live`,
   `retrying`, `recovering`, `ending`, `error`. `live` = phase is `live`.
+- `waiting-for-feed` (an enabled destination of a running session whose OBS feed is offline) is
+  never reported as `idle`. `waitingFor` (additive) lists the missing feeds (`["vertical"]`,
+  `["landscape"]` or both); it is `[]` in every other phase. `message` reads "Waiting for vertical
+  feed", "Waiting for landscape feed" or "Waiting for both feeds". Twitch Dual Format (relay) needs
+  both feeds; a vertical-only platform needs only the vertical one.
 - `down` = the session is running, the destination is enabled (and not skipped by test mode), and
   it isn't reaching the platform right now (`error`, `retrying`, `recovering`, or `waiting-for-feed`,
   and also `preparing` / `connecting` / `confirming` while a retry works its way back — it stays down
