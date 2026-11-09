@@ -261,6 +261,42 @@ videos on different machines — on the LAN or across the internet — land on t
 - To compute them yourself from server time `s`: run = `s − session.startedAt`; frames =
   `floor((ms mod 1000) × fps / 1000)`.
 
+### `GET /api/v1/system/transcode-capabilities` — `status:read` (v1.10)
+
+Which video encoders work on the machine Relay runs on (server-wide, no `profile`). Relay probes this
+once in the background at startup: FFmpeg's hwaccels, encoders and decoders, then a short test encode
+(30 frames of 1280×720) per candidate encoder. Until that ends, `state` is `probing`. Read-only:
+Relay doesn't transcode yet; this is the first step of per-destination transcoding
+([TRANSCODING.md](TRANSCODING.md)).
+
+```json
+{
+  "state": "ready",
+  "probedAt": "2026-11-09T12:00:03.120Z",
+  "durationMs": 2840,
+  "ffmpegVersion": "ffmpeg version n8.1.3-9-g29e619e767-20260930 Copyright (c) 2000-2026 the FFmpeg developers",
+  "hwaccels": ["cuda", "vaapi", "qsv", "drm", "opencl", "vulkan", "amf"],
+  "decoders": { "h264": ["h264", "h264_qsv", "h264_cuvid"], "hevc": ["hevc", "hevc_cuvid"], "av1": ["libdav1d", "av1", "av1_cuvid"] },
+  "encoders": [
+    { "encoder": "h264_nvenc", "codec": "h264", "backend": "nvenc", "ok": false, "speed": null, "device": null, "error": "Cannot load libcuda.so.1" },
+    { "encoder": "h264_vaapi", "codec": "h264", "backend": "vaapi", "ok": true, "speed": 7.5, "device": "/dev/dri/renderD128", "error": null },
+    { "encoder": "libx264", "codec": "h264", "backend": "software", "ok": true, "speed": 2.2, "device": null, "error": null }
+  ],
+  "supported": { "h264": true, "hevc": false, "av1": false },
+  "cpu": { "cores": 4, "model": "…" },
+  "devices": { "renderNodes": ["/dev/dri/renderD128"], "nvidia": false },
+  "error": null
+}
+```
+
+- `encoders`: every candidate the FFmpeg build has (hardware first: NVENC, QSV, VAAPI, AMF; then
+  `libx264`, `libx265`, `libsvtav1`), with `ok` from the test encode. `speed` is a rough multiple of
+  real time at 720p30; `error` is the first FFmpeg error line when the test failed.
+- `supported`: at least one encoder of that codec passed.
+- `state: "unavailable"`: FFmpeg couldn't run; `error` says why.
+
+The web UI shows the same as Settings → About → Transcoding (`GET /api/system/transcode-capabilities`, any signed-in user).
+
 ### `GET /api/v1/chat?limit=200&after=<id>&profile=<id>` — `chat:read`
 Recent chat of one profile (chosen like `/status`) still visible after moderation, **oldest
 first**, as `chat.message` envelopes. `limit` 1–500 (default 200). With `after`, only messages
@@ -1324,6 +1360,12 @@ as usual.
 `apiVersion` stays `1`: every change below is additive, so clients written for an earlier v1
 keep working (ignore event types and fields you don't know). `GET /api/v1/openapi.json` reports
 the revision in `info.version`.
+
+### v1.10
+
+- **Transcoding capabilities:** `GET /system/transcode-capabilities` (`status:read`): which video
+  encoders (H.264, HEVC, AV1; hardware and software) work on the Relay machine, from a test encode
+  at startup. Read-only groundwork for per-destination transcoding (docs/TRANSCODING.md).
 
 ### v1.9
 

@@ -43,6 +43,7 @@ import type {
   TitleResponse,
   UpdateAssetRequest,
   TotpSetupResponse,
+  TranscodeCapabilities,
   UpdateAccountRequest,
   UpdateDestinationRequest,
   UpdateObsRelayRequest,
@@ -280,6 +281,8 @@ export const api = {
   // settings + audit
   settings: () => get<SettingsResponse>('/api/settings'),
   version: () => get<VersionResponse>('/api/version'),
+  /** What this machine's FFmpeg can encode (read-only; state 'probing' right after startup). */
+  transcodeCapabilities: () => get<TranscodeCapabilities>('/api/system/transcode-capabilities'),
   putSettings: (body: Partial<AppSettings>) => put<SettingsResponse>('/api/settings', body),
   audit: (limit = 100, before?: number) =>
     get<AuditResponse>(`/api/audit?limit=${limit}${before !== undefined ? `&before=${before}` : ''}`),

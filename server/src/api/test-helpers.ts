@@ -32,6 +32,7 @@ import { EventBus } from '../events.js';
 import authPlugin from '../http/auth-plugin.js';
 import { sendError } from '../http/guards.js';
 import assetRoutes from '../http/routes/assets.js';
+import systemRoutes from '../http/routes/system.js';
 import tokenRoutes from '../http/routes/tokens.js';
 import { createSecretBox } from '../security/secretbox.js';
 import type { AppServices, ConnectedAppsRepo, MediaServer, Orchestrator, OrchestratorRegistry, ProfilesRepo, Repos, TlsManager } from '../services.js';
@@ -309,6 +310,7 @@ export async function createTestApi(
   await app.register(authPlugin, { services });
   await app.register(tokenRoutes, { services });
   await app.register(assetRoutes, { services });
+  await app.register(systemRoutes, { services });
   await app.register(v1Routes, {
     services,
     hub,
