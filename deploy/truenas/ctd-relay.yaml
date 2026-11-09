@@ -15,7 +15,7 @@
 
 services:
   ctd-relay:
-    # latest = newest release. Pin a version (e.g. :0.1.0) to control upgrades.
+    # latest = newest release. Pin a version (e.g. :0.2.0) to control upgrades.
     image: ghcr.io/itslimitlezz/ctd-relay:latest
     # TrueNAS "apps" user. Must be able to write the dataset below.
     user: "568:568"
