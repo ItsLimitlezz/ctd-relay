@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import type { TranscodeCapabilities } from '@shared/api';
 import type { AuditEntry, FieldSpec } from '@shared/types';
 import {
   apiSiteRoot,
@@ -10,6 +11,7 @@ import {
   dockUrlFor,
   expiryTone,
   orderedScopes,
+  transcodeSummary,
   validateTokenForm,
   fieldForMessage,
   generalChanges,
@@ -195,5 +197,37 @@ describe('settings helpers', () => {
     expect(fieldForMessage('Something else', labels)).toBeNull();
     expect(hasErrors({ a: undefined })).toBe(false);
     expect(hasErrors({ a: 'x' })).toBe(true);
+  });
+});
+
+describe('transcodeSummary', () => {
+  const base: TranscodeCapabilities = {
+    state: 'ready',
+    probedAt: '2026-11-09T12:00:00.000Z',
+    durationMs: 2100,
+    ffmpegVersion: 'ffmpeg version n8.1.3',
+    hwaccels: ['vaapi'],
+    decoders: { h264: ['h264'], hevc: ['hevc'], av1: ['libdav1d'] },
+    encoders: [
+      { encoder: 'h264_vaapi', codec: 'h264', backend: 'vaapi', ok: true, speed: 7.5, device: '/dev/dri/renderD128', error: null },
+      { encoder: 'hevc_vaapi', codec: 'hevc', backend: 'vaapi', ok: false, speed: null, device: null, error: 'No usable encoding profile found.' },
+      { encoder: 'libx264', codec: 'h264', backend: 'software', ok: true, speed: 2.2, device: null, error: null },
+      { encoder: 'libx265', codec: 'hevc', backend: 'software', ok: true, speed: null, device: null, error: null },
+    ],
+    supported: { h264: true, hevc: true, av1: false },
+    cpu: { cores: 4, model: null },
+    devices: { renderNodes: ['/dev/dri/renderD128'], nvidia: false },
+    error: null,
+  };
+
+  it('lists the working encoders per codec, GPU first', () => {
+    expect(transcodeSummary(base)).toBe('H.264: h264_vaapi (GPU), libx264 (CPU, 2.2×) · HEVC: libx265 (CPU) · AV1: none');
+  });
+
+  it('probing and unavailable', () => {
+    expect(transcodeSummary({ ...base, state: 'probing', encoders: [] })).toBe('Checking which encoders work…');
+    expect(transcodeSummary({ ...base, state: 'unavailable', error: "FFmpeg can't run: spawn ffmpeg ENOENT" })).toBe(
+      "Unavailable: FFmpeg can't run: spawn ffmpeg ENOENT",
+    );
   });
 });

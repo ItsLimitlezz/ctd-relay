@@ -1,6 +1,6 @@
 // Pure helpers for the settings tabs (and a few shared with the accounts/destinations pages).
 
-import type { ApiAccessInfo, AppSettings, PlatformAppStatus } from '@shared/api';
+import type { ApiAccessInfo, AppSettings, PlatformAppStatus, TranscodeCapabilities, TranscodeEncoderResult, TranscodeVideoCodec } from '@shared/api';
 import type { ApiScope, AuditEntry, FieldSpec, TlsMode, TlsStatus } from '@shared/types';
 import { API_SCOPES } from '@shared/types';
 import { cleanValues, type FormErrors, type FormValues } from '../../components/dynamic-form';
@@ -444,4 +444,32 @@ export function fieldForMessage(message: string, labels: Readonly<Record<string,
 /** Errors object -> true when it has any message. */
 export function hasErrors(errors: Readonly<Record<string, string | undefined>> | FormErrors): boolean {
   return Object.values(errors).some((v) => !!v);
+}
+
+// ---------------------------------------------------------------------------
+// Transcoding capabilities (About → "Transcoding")
+// ---------------------------------------------------------------------------
+
+const CODEC_LABELS: Record<TranscodeVideoCodec, string> = { h264: 'H.264', hevc: 'HEVC', av1: 'AV1' };
+
+/** "h264_nvenc (GPU)" / "libx264 (CPU, 2.2×)" for one working encoder. */
+function encoderLabel(e: TranscodeEncoderResult): string {
+  if (e.backend !== 'software') return `${e.encoder} (GPU)`;
+  return e.speed !== null ? `${e.encoder} (CPU, ${e.speed}×)` : `${e.encoder} (CPU)`;
+}
+
+/**
+ * The "Transcoding: supported encoders" line: per codec, the encoders whose test encode worked,
+ * e.g. "H.264: h264_vaapi (GPU), libx264 (CPU, 2.2×) · HEVC: none · AV1: none".
+ */
+export function transcodeSummary(caps: TranscodeCapabilities): string {
+  if (caps.state === 'probing') return 'Checking which encoders work…';
+  if (caps.state === 'unavailable') return `Unavailable${caps.error ? `: ${caps.error}` : ''}`;
+  const order: TranscodeVideoCodec[] = ['h264', 'hevc', 'av1'];
+  return order
+    .map((codec) => {
+      const ok = caps.encoders.filter((e) => e.codec === codec && e.ok);
+      return `${CODEC_LABELS[codec]}: ${ok.length ? ok.map(encoderLabel).join(', ') : 'none'}`;
+    })
+    .join(' · ');
 }

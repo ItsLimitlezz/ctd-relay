@@ -15,7 +15,7 @@ import { MAX_SOCKETS_PER_TOKEN, OBS_SUBPROTOCOL } from './obs-relay.js';
 import { showPaths, showSchemas } from './openapi-show.js';
 
 /** Minor revision of the v1 contract (additive changes only; see the changelog in docs/API.md). */
-export const API_REVISION = '1.9';
+export const API_REVISION = '1.10';
 
 const ref = (name: string) => ({ $ref: `#/components/schemas/${name}` });
 const nullable = (schema: object) => ({ oneOf: [schema, { type: 'null' }] });
@@ -147,6 +147,16 @@ export function openApiDocument(version: string): Record<string, unknown> {
             ...errors,
             ...profileErrors,
           },
+        },
+      },
+      '/system/transcode-capabilities': {
+        get: {
+          summary: 'Which video encoders work on this machine (v1.10)',
+          operationId: 'getTranscodeCapabilities',
+          tags: ['status'],
+          description:
+            'Needs `status:read`. Server-wide (no profile). Probed in the background at startup: FFmpeg hwaccels, encoders and decoders, plus a short test encode (1280×720, 30 frames) per candidate encoder; `state` is `probing` until that ends. Read-only: Relay does not transcode yet (docs/TRANSCODING.md).',
+          responses: { '200': { description: 'Cached probe result', content: json(ref('TranscodeCapabilities')) }, ...errors },
         },
       },
       '/chat': {
@@ -488,6 +498,7 @@ export function openApiDocument(version: string): Record<string, unknown> {
       securitySchemes: { bearer: { type: 'http', scheme: 'bearer', description: 'ctd_pat_ token from Settings → API (or pairing)' } },
       schemas: {
         ...showSchemas(),
+        TranscodeCapabilities: transcodeCapabilitiesSchema(),
         Ulid: { type: 'string', pattern: '^[0-7][0-9A-HJKMNP-TV-Z]{25}$', description: 'ULID: unique, sortable by time' },
         Problem: {
           type: 'object',
@@ -1042,6 +1053,50 @@ export function openApiDocument(version: string): Record<string, unknown> {
           },
         },
       },
+    },
+  };
+}
+
+/** v1.10: GET /system/transcode-capabilities (shared/api.ts TranscodeCapabilities). */
+function transcodeCapabilitiesSchema(): object {
+  const strings = { type: 'array', items: { type: 'string' } };
+  const codec = { enum: ['h264', 'hevc', 'av1'] };
+  const perCodec = (schema: object) => ({ type: 'object', required: ['h264', 'hevc', 'av1'], properties: { h264: schema, hevc: schema, av1: schema } });
+  return {
+    type: 'object',
+    required: ['state', 'probedAt', 'durationMs', 'ffmpegVersion', 'hwaccels', 'decoders', 'encoders', 'supported', 'cpu', 'devices', 'error'],
+    properties: {
+      state: { enum: ['probing', 'ready', 'unavailable'] },
+      probedAt: nullable({ type: 'string', format: 'date-time' }),
+      durationMs: nullable({ type: 'integer' }),
+      ffmpegVersion: nullable({ type: 'string' }),
+      hwaccels: strings,
+      decoders: { ...perCodec(strings), description: 'Decoders compiled in per codec (not tested)' },
+      encoders: {
+        type: 'array',
+        description: 'Every candidate encoder the FFmpeg build has, hardware first, with its test result',
+        items: {
+          type: 'object',
+          required: ['encoder', 'codec', 'backend', 'ok', 'speed', 'device', 'error'],
+          properties: {
+            encoder: { type: 'string', description: 'FFmpeg encoder name, e.g. h264_nvenc' },
+            codec,
+            backend: { enum: ['software', 'nvenc', 'qsv', 'vaapi', 'amf'] },
+            ok: { type: 'boolean' },
+            speed: nullable({ type: 'number', description: 'Rough multiple of real time at 720p30' }),
+            device: nullable({ type: 'string', description: 'VAAPI render node that worked' }),
+            error: nullable({ type: 'string', description: 'First FFmpeg error line when the test failed' }),
+          },
+        },
+      },
+      supported: { ...perCodec({ type: 'boolean' }), description: 'At least one encoder of the codec passed' },
+      cpu: { type: 'object', required: ['cores', 'model'], properties: { cores: { type: 'integer' }, model: nullable({ type: 'string' }) } },
+      devices: {
+        type: 'object',
+        required: ['renderNodes', 'nvidia'],
+        properties: { renderNodes: strings, nvidia: { type: 'boolean' } },
+      },
+      error: nullable({ type: 'string' }),
     },
   };
 }
