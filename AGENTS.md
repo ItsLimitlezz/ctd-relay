@@ -2,7 +2,7 @@
 > Team rules live in the hub: github.com/ItsLimitlezz/CTD-Software-Suite → AGENTS.md (read it first). This file is repo-specific.
 
 ## What this is
-**CTD Relay** (package `ctd-relay` v0.1.0, status "early"): self-hosted multistreaming server. OBS sends a landscape and a vertical RTMP feed; Relay copies each (no re-encode) to Twitch, YouTube, Kick, Facebook, X, Instagram, TikTok and custom RTMP, keeps one title, merges chat, and is the API hub the other CTD apps (OBS plugin, Overlay, Live mobile) connect through.
+**CTD Relay** (package `ctd-relay` v0.2.0, status "early"): self-hosted multistreaming server. OBS sends a landscape and a vertical RTMP feed; Relay copies each (no re-encode) to Twitch, YouTube, Kick, Facebook, X, Instagram, TikTok and custom RTMP, keeps one title, merges chat, and is the API hub the other CTD apps (OBS plugin, Overlay, Live mobile) connect through.
 Runs as one multi-arch Docker image (amd64/arm64; TrueNAS or Docker Compose) or from source on Windows/Linux. Public repo, AGPL-3.0 (open-source).
 
 ## Layout

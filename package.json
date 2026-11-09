@@ -1,6 +1,6 @@
 {
   "name": "ctd-relay",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Self-hosted multistreaming: landscape + vertical from OBS to every platform, one title, one chat.",
   "license": "AGPL-3.0-only",
   "private": true,
