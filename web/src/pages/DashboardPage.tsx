@@ -362,7 +362,7 @@ export function StatusCard({ session }: { session: SessionState | null }) {
 
 const FEED_HINT: Record<Feed, string> = {
   landscape: 'Start streaming in OBS (main output).',
-  vertical: 'Start the vertical output in OBS (Aitum Vertical).',
+  vertical: 'Start the vertical stream in CTD OBS.',
 };
 
 function FeedsRow({ feeds }: { feeds: FeedState[] | null }) {

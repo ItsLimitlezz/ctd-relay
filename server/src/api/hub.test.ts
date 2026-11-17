@@ -332,6 +332,106 @@ describe('register', () => {
       expect(problem(() => registry.register(fresh, { ...plugin(), kind: 'custom' }))).toMatchObject({ code: 'app_owned' });
       expect(ids()).toEqual(['ctd-obs-plugin-studio:a']);
     });
+
+    it('a restart during the grace period keeps the old token (the pending revoke lives in memory)', () => {
+      const apps = memoryConnectedAppsRepo(now);
+      const deps = () => ({
+        repos: {
+          profiles,
+          connectedApps: apps,
+          apiTokens: { list: () => tokens, delete: (id: string) => tokens.splice(tokens.findIndex((t) => t.id === id) >>> 0, 1) } as never,
+          audit: { log: (e: { action: string }) => audits.push(e) } as never,
+        },
+        bus,
+        log: silentLog,
+        now,
+      });
+      const before = createAppRegistry(deps());
+      const a = tk('a', '2026-10-01T00:00:00.000Z');
+      before.register(a, plugin());
+      clock += 5_000;
+      const b = tk('b', new Date(clock).toISOString());
+      before.register(b, plugin());
+      before.close();
+
+      // Relay restarts: presence comes back from the repo, the pending revoke doesn't.
+      const after = createAppRegistry(deps());
+      try {
+        expect(after.get('ctd-obs-plugin-studio')).toMatchObject({ tokenId: 'b', online: true });
+        clock += 30_000;
+        after.register(b, plugin()); // the next heartbeat supersedes nothing new
+        clock += SUPERSEDED_GRACE_MS;
+        after.checkSuperseded();
+        expect(live('a')).toBe(true);
+        expect(audits).toEqual([]);
+      } finally {
+        after.close();
+      }
+    });
+
+    it('the presence timer revokes the superseded token on its own', async () => {
+      registry.close();
+      registry = createAppRegistry({
+        repos: {
+          profiles,
+          connectedApps: memoryConnectedAppsRepo(now),
+          apiTokens: { list: () => tokens, delete: (id: string) => tokens.splice(tokens.findIndex((t) => t.id === id) >>> 0, 1) } as never,
+          audit: { log: (e: { action: string }) => audits.push(e) } as never,
+        },
+        bus,
+        log: silentLog,
+        now,
+        presenceCheckMs: 5,
+      });
+      const a = tk('a', '2026-10-01T00:00:00.000Z');
+      registry.register(a, plugin());
+      clock += 5_000;
+      registry.register(tk('b', new Date(clock).toISOString()), plugin());
+      await new Promise((r) => setTimeout(r, 30));
+      expect(live('a')).toBe(true);
+      clock += SUPERSEDED_GRACE_MS;
+      await expect.poll(() => live('a'), { timeout: 2_000, interval: 10 }).toBe(false);
+      expect(audits).toEqual([expect.objectContaining({ action: 'api_token.superseded' })]);
+    });
+    it('a token limited to one profile never pushes out (or gets revoked) a connection for every profile or another profile', () => {
+      const a = tk('a', '2026-10-01T00:00:00.000Z');
+      registry.register(a, plugin());
+      // Newer, same kind and name, but limited to one profile: refused while the app is online.
+      const narrow = tk('narrow', '2026-10-10T00:00:00.000Z', dprtmnt);
+      expect(problem(() => registry.register(narrow, plugin()))).toMatchObject({ code: 'app_owned' });
+      expect(ids()).toEqual(['ctd-obs-plugin-studio:a']);
+
+      // Offline, the v1.6 rule still lets it take the id, but the old token is not superseded.
+      clock += ONLINE_WINDOW_MS + 1;
+      expect(registry.register(narrow, plugin())).toMatchObject({ tokenId: 'narrow' });
+      clock += SUPERSEDED_GRACE_MS;
+      registry.checkSuperseded();
+      expect(live('a')).toBe(true);
+      expect(audits).toEqual([]);
+
+      // Another profile's token can't push out a profile-limited connection either.
+      const p2 = profiles.create({ name: 'Second', color: null }).id;
+      const own = tk('own', '2026-10-11T00:00:00.000Z', dprtmnt);
+      registry.register(own, plugin('ctd-obs-plugin-lab'));
+      const other = tk('other', '2026-10-12T00:00:00.000Z', p2);
+      expect(problem(() => registry.register(other, plugin('ctd-obs-plugin-lab')))).toMatchObject({ code: 'app_owned' });
+    });
+
+    it('a re-pair for the same profile, or one widened to every profile, still replaces the old connection', () => {
+      const a = tk('a', '2026-10-01T00:00:00.000Z', dprtmnt);
+      registry.register(a, plugin());
+      clock += 5_000;
+      const same = tk('same', new Date(clock).toISOString(), dprtmnt);
+      expect(registry.register(same, plugin())).toMatchObject({ tokenId: 'same', online: true });
+      clock += 5_000;
+      const wide = tk('wide', new Date(clock).toISOString());
+      expect(registry.register(wide, plugin())).toMatchObject({ tokenId: 'wide', profileId: null, online: true });
+      clock += SUPERSEDED_GRACE_MS;
+      registry.checkSuperseded();
+      expect(live('a')).toBe(false);
+      expect(live('same')).toBe(false);
+      expect(ids()).toEqual(['ctd-obs-plugin-studio:wide']);
+    });
   });
 
   it('sameAppIdFamily: an id and its renewals', () => {

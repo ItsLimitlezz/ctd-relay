@@ -271,24 +271,32 @@ export function createAppRegistry(deps: AppRegistryDeps): AppRegistryHandle {
 
   const tokenById = (id: string): ApiTokenInfo | null => repos.apiTokens?.list().find((t) => t.id === id) ?? null;
   const newer = (a: ApiTokenInfo, b: ApiTokenInfo) => Date.parse(a.createdAt) > Date.parse(b.createdAt);
+  /**
+   * Does `a` reach everything `b` reaches (every profile, or the same profile)? Only then can `a` be
+   * the same app paired again: a token limited to one profile never pushes out, or gets revoked, a
+   * connection made for every profile or for another profile.
+   */
+  const covers = (a: ApiTokenInfo, b: ApiTokenInfo) => (a.profileId ?? null) === null || (a.profileId ?? null) === (b.profileId ?? null);
 
   /**
    * May `token` take over `existing`, registered by another token? Yes when that token was revoked,
    * or when `token` is newer than its owner and the app is of the same kind and either offline or
-   * the same app by name (the name carries the machine: "CTD OBS plugin (<machine>)"): the same app
-   * paired again, which keeps its app id. A live app of another name never moves.
+   * the same app by name (the name carries the machine: "CTD OBS plugin (<machine>)") with a token
+   * that covers its owner's profile: the same app paired again, which keeps its app id. A live app
+   * of another name, or one a narrower token asks for, never moves.
    */
   const canTakeOver = (token: ApiTokenInfo, existing: ConnectedApp, reg: AppRegistration): boolean => {
     if (!repos.apiTokens) return false;
     const owner = tokenById(existing.tokenId);
     if (!owner) return true;
     if (existing.kind !== reg.kind || !newer(token, owner)) return false;
-    return !isOnline(existing.id) || existing.name === reg.name;
+    return !isOnline(existing.id) || (existing.name === reg.name && covers(token, owner));
   };
 
   /** `oldTokenId` was superseded by `token` (a newer pairing of the same app): revoke it after the grace period. */
   const supersede = (oldTokenId: string, token: ApiTokenInfo, appId: string) => {
-    if (oldTokenId === token.id || !tokenById(oldTokenId)) return;
+    const old = tokenById(oldTokenId);
+    if (!old || oldTokenId === token.id || !covers(token, old)) return;
     if (!superseded.has(oldTokenId)) superseded.set(oldTokenId, { by: token.id, at: now(), appId });
   };
 
