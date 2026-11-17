@@ -4,7 +4,9 @@
 
 import type { LightMyRequestResponse } from 'fastify';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { SUPERSEDED_GRACE_MS } from './hub.js';
+import { CSRF_HEADER, SESSION_COOKIE } from '../../../shared/api.js';
+import { API_TOKEN_PREFIX_LENGTH } from '../db/api-tokens-repo.js';
+import { ONLINE_WINDOW_MS, SUPERSEDED_GRACE_MS } from './hub.js';
 import { createTestApi, type TestApi } from './test-helpers.js';
 
 let t: TestApi;
@@ -49,6 +51,14 @@ const register = (token: string, id = APP_ID) => call('PUT', `/api/v1/apps/${id}
 const appIds = async (token: string) => ((await call('GET', '/api/v1/apps', token)).json().items as { id: string }[]).map((a) => a.id);
 const advance = (ms: number) => vi.setSystemTime(Date.now() + ms);
 const ok = (res: LightMyRequestResponse) => expect(res.statusCode, res.body).toBe(200);
+const auditActions = () => t.repos.audit.list({ limit: 50 }).map((e) => e.action);
+
+/** An admin in the web UI (Settings → API), e.g. revoking a token. */
+function adminCall(method: 'DELETE', url: string) {
+  const user = t.repos.users.create({ username: 'admin', passwordHash: 'x', role: 'admin' });
+  const { record, token } = t.repos.authSessions.create(user.id, { ip: null, userAgent: null });
+  return t.app.inject({ method, url, headers: { cookie: `${SESSION_COOKIE}=${token}`, [CSRF_HEADER]: record.csrfToken } });
+}
 
 describe('re-pairing the CTD OBS plugin', () => {
   it('re-registering with the same token (OBS restarted with its saved pairing) keeps one entry', async () => {
@@ -112,5 +122,106 @@ describe('re-pairing the CTD OBS plugin', () => {
     t.apps.checkSuperseded();
     expect((await call('GET', '/api/v1/', a)).statusCode).toBe(401);
     ok(await call('GET', '/api/v1/', b));
+  });
+
+  it('a second OBS with the same machine name keeps its token: it is still used (heartbeats every 30 s)', async () => {
+    const a = await pair(); // machine 1
+    ok(await register(a));
+    advance(5_000);
+    const b = await pair(); // machine 2, same computer name, so the same app id and name
+    ok(await register(b)); // takes the id over
+    // Machine 1's next heartbeat is refused; the plugin moves to a renewed id (once per token).
+    advance(25_000);
+    expect((await register(a)).statusCode).toBe(409);
+    ok(await register(a, `${APP_ID}-1a2b3c`));
+    // Both keep heartbeating every 30 s (HEARTBEAT_EVERY_NS) well past the grace period, with the
+    // real tokens repo (lastUsedAt written at most once a minute).
+    for (let i = 0; i < 9; i++) {
+      advance(30_000);
+      ok(await register(a, `${APP_ID}-1a2b3c`));
+      ok(await register(b));
+      t.apps.checkSuperseded();
+    }
+    ok(await call('GET', '/api/v1/', a));
+    ok(await call('GET', '/api/v1/', b));
+    expect((await appIds(b)).sort()).toEqual([APP_ID, `${APP_ID}-1a2b3c`]);
+    expect(t.repos.apiTokens.list()).toHaveLength(2);
+    expect(auditActions()).not.toContain('api_token.superseded');
+  });
+
+  it('keeps the old token while something still uses it, even if it registers no app (e.g. a script sharing the token)', async () => {
+    const a = await pair();
+    ok(await register(a));
+    advance(10_000);
+    const b = await pair();
+    ok(await register(b));
+    // Only reads with the old token from here on: no app registered with it any more.
+    for (let i = 0; i < 8; i++) {
+      advance(30_000);
+      ok(await call('GET', '/api/v1/status', a));
+      t.apps.checkSuperseded();
+    }
+    expect(t.repos.apiTokens.list()).toHaveLength(2);
+    expect(auditActions()).not.toContain('api_token.superseded');
+    // Once it goes quiet it stays: a token is only checked once per supersede.
+    advance(SUPERSEDED_GRACE_MS * 2);
+    t.apps.checkSuperseded();
+    expect(t.repos.apiTokens.list()).toHaveLength(2);
+  });
+
+  it('the new token revoked in Settings → API during the grace period: the old one is kept and can register again', async () => {
+    const a = await pair();
+    ok(await register(a));
+    advance(10_000);
+    const b = await pair();
+    ok(await register(b));
+    const newId = t.repos.apiTokens.list().at(-1)!.id;
+    advance(60_000);
+    expect((await adminCall('DELETE', `/api/tokens/${newId}`)).statusCode).toBe(200);
+    expect(t.apps.list(null)).toEqual([]); // its apps went with it
+    expect((await register(b)).statusCode).toBe(401);
+    advance(SUPERSEDED_GRACE_MS);
+    t.apps.checkSuperseded();
+    ok(await call('GET', '/api/v1/', a));
+    // The id is free again: the old pairing takes it back.
+    ok(await register(a));
+    expect(t.apps.get(APP_ID)?.tokenId).toBe(t.repos.apiTokens.list()[0]!.id);
+    expect(auditActions()).not.toContain('api_token.superseded');
+  });
+
+  it('other apps are untouched: CTD Overlay (every profile and per profile) and a CTD Live mobile phone', async () => {
+    const overlayBody = { name: 'CTD Overlay', kind: 'ctd-overlay', version: '1.4.0', capabilities: ['overlays'], resources: [] };
+    // "beaded" is six hex letters, so "ctd-overlay-beaded" looks like a renewal of "ctd-overlay":
+    // only the profile keeps the two apart.
+    const beaded = t.addProfile('Beaded');
+    const overlayBeaded = t.token(['apps:read', 'apps:write'], 'CTD Overlay (Beaded)', beaded.id);
+    ok(await call('PUT', '/api/v1/apps/ctd-overlay-beaded', overlayBeaded, overlayBody));
+    const phone = t.token(['chat:read', 'status:read', 'obs:control'], 'CTD Live mobile (iPhone)');
+    ok(await call('GET', '/api/v1/', phone));
+    advance(10_000);
+    const overlay = t.token(['apps:read', 'apps:write'], 'CTD Overlay');
+    ok(await call('PUT', '/api/v1/apps/ctd-overlay', overlay, overlayBody));
+    const a = await pair();
+    ok(await register(a));
+    advance(10_000);
+    const b = await pair();
+    ok(await register(b));
+
+    // Everything but the new pairing and the every-profile Overlay goes quiet, then both register again.
+    advance(ONLINE_WINDOW_MS + 30_000);
+    ok(await register(b));
+    ok(await call('PUT', '/api/v1/apps/ctd-overlay', overlay, overlayBody));
+    advance(SUPERSEDED_GRACE_MS);
+    t.apps.checkSuperseded();
+
+    expect((await appIds(b)).sort()).toEqual([APP_ID, 'ctd-overlay', 'ctd-overlay-beaded']);
+    for (const token of [b, overlay, overlayBeaded, phone]) ok(await call('GET', '/api/v1/', token));
+    expect((await call('GET', '/api/v1/', a)).statusCode).toBe(401);
+    // Only the superseded pairing went, and the audit names it by prefix, never by secret.
+    expect(t.repos.apiTokens.list().map((tk) => tk.name).sort()).toEqual(['CTD OBS plugin (studio)', 'CTD Live mobile (iPhone)', 'CTD Overlay', 'CTD Overlay (Beaded)'].sort());
+    const superseded = t.repos.audit.list({ limit: 20 }).filter((e) => e.action === 'api_token.superseded');
+    expect(superseded).toHaveLength(1);
+    expect(superseded[0]!.detail).toContain(`${a.slice(0, API_TOKEN_PREFIX_LENGTH)}…`);
+    for (const secret of [a, b]) expect(JSON.stringify(t.repos.audit.list({ limit: 50 }))).not.toContain(secret);
   });
 });

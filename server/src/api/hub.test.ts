@@ -332,6 +332,67 @@ describe('register', () => {
       expect(problem(() => registry.register(fresh, { ...plugin(), kind: 'custom' }))).toMatchObject({ code: 'app_owned' });
       expect(ids()).toEqual(['ctd-obs-plugin-studio:a']);
     });
+
+    it('a restart during the grace period keeps the old token (the pending revoke lives in memory)', () => {
+      const apps = memoryConnectedAppsRepo(now);
+      const deps = () => ({
+        repos: {
+          profiles,
+          connectedApps: apps,
+          apiTokens: { list: () => tokens, delete: (id: string) => tokens.splice(tokens.findIndex((t) => t.id === id) >>> 0, 1) } as never,
+          audit: { log: (e: { action: string }) => audits.push(e) } as never,
+        },
+        bus,
+        log: silentLog,
+        now,
+      });
+      const before = createAppRegistry(deps());
+      const a = tk('a', '2026-10-01T00:00:00.000Z');
+      before.register(a, plugin());
+      clock += 5_000;
+      const b = tk('b', new Date(clock).toISOString());
+      before.register(b, plugin());
+      before.close();
+
+      // Relay restarts: presence comes back from the repo, the pending revoke doesn't.
+      const after = createAppRegistry(deps());
+      try {
+        expect(after.get('ctd-obs-plugin-studio')).toMatchObject({ tokenId: 'b', online: true });
+        clock += 30_000;
+        after.register(b, plugin()); // the next heartbeat supersedes nothing new
+        clock += SUPERSEDED_GRACE_MS;
+        after.checkSuperseded();
+        expect(live('a')).toBe(true);
+        expect(audits).toEqual([]);
+      } finally {
+        after.close();
+      }
+    });
+
+    it('the presence timer revokes the superseded token on its own', async () => {
+      registry.close();
+      registry = createAppRegistry({
+        repos: {
+          profiles,
+          connectedApps: memoryConnectedAppsRepo(now),
+          apiTokens: { list: () => tokens, delete: (id: string) => tokens.splice(tokens.findIndex((t) => t.id === id) >>> 0, 1) } as never,
+          audit: { log: (e: { action: string }) => audits.push(e) } as never,
+        },
+        bus,
+        log: silentLog,
+        now,
+        presenceCheckMs: 5,
+      });
+      const a = tk('a', '2026-10-01T00:00:00.000Z');
+      registry.register(a, plugin());
+      clock += 5_000;
+      registry.register(tk('b', new Date(clock).toISOString()), plugin());
+      await new Promise((r) => setTimeout(r, 30));
+      expect(live('a')).toBe(true);
+      clock += SUPERSEDED_GRACE_MS;
+      await expect.poll(() => live('a'), { timeout: 2_000, interval: 10 }).toBe(false);
+      expect(audits).toEqual([expect.objectContaining({ action: 'api_token.superseded' })]);
+    });
   });
 
   it('sameAppIdFamily: an id and its renewals', () => {
