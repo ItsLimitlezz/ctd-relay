@@ -109,7 +109,7 @@ counts as none).
 | 400 | `invalid` | Bad query parameter or body (`413` when the body is too large) |
 | 404 | `not_found` | Unknown `/api/v1` path, or no app registered under that id |
 | 404 | `unknown_profile` | No profile with that id |
-| 409 | `app_owned` | The app id was registered by another token (that token is revoked, or its app is offline and yours is newer and of the same kind: `PUT /apps/{id}` takes the id over, v1.6) |
+| 409 | `app_owned` | The app id was registered by another token (`PUT /apps/{id}` takes the id over when that token is revoked, or when yours is newer, the app is of the same kind and it is offline (v1.6) or has the same `name` and your token covers that token's profile (the same app paired again; see §9.3)) |
 | 409 | `limit` | Too many apps registered (100 in all, 20 per token) |
 | 403 / 410 | `denied` / `expired` | Pairing poll: denied by the admin / expired, collected or unknown (§9.3) |
 | 409 | `revision_conflict` | Saving a show-profile revision on a `parentRevision` that is no longer the head; carries `head` (v1.9, §14) |
@@ -668,7 +668,8 @@ Relay, lists the overlays for its profile and adds them as browser sources.
 #### `PUT /api/v1/apps/{appId}` — `apps:write`
 Register or update this app; call again at least every 60 s as a heartbeat (or
 `POST /api/v1/apps/{appId}/heartbeat`). `appId`: `[a-z0-9-]`, ≤ 40, unique; only the token that
-first registered an id may update or delete it (`409 app_owned`).
+first registered an id may update or delete it (`409 app_owned`), except for the same app paired
+again (§9.3, *Pairing again*).
 ```json
 { "name": "CTD Overlay", "kind": "ctd-overlay", "version": "1.4.0",
   "baseUrl": "http://10.20.30.40:30200",
@@ -808,6 +809,18 @@ UI, the app receives its own token.
    `interval` s: `202 { "status": "pending" }` → `200 { "status": "approved", "token": "ctd_pat_…",
    "profileId": "6f1d…" | null, "scopes": [ … ] }` (returned **once**) | `403 { "code": "denied" }` |
    `410 { "code": "expired" }` (problem documents).
+
+**Pairing again** (e.g. for new scopes) gives the app a new token. When the app then registers
+(`PUT /apps/{id}`) the **same app id** with the same `kind` and `name`, the new registration
+replaces the old one, even while the old one still looks online; entries the same app left under
+renewed ids (its id plus `-<6 hex>`, same `kind`, `name` and profile, offline) are removed. The old
+token is then revoked 3 minutes later (audit `api_token.superseded`), unless it was used in the
+meantime (it then belongs to another live app and is kept) or still has other apps registered.
+This needs a new token that covers the old one's profile (every profile, or the same profile). A
+token limited to one profile never supersedes the token of a connection made for every profile or
+for another profile: while that connection is online its id answers `409 app_owned`, and its token
+is never revoked.
+Apps that pair again should keep their app id and `name` (put the machine in it).
 
 Requests expire after 10 minutes, and an approved token must be collected within 10 minutes of the
 approval (otherwise it is revoked). `410 expired` also answers an unknown `pairingId`, a wrong
@@ -1333,6 +1346,11 @@ the revision in `info.version`.
   `POST …/show/revisions`, `POST /blobs/check`, `PUT`/`GET /blobs/{sha256}` and `GET /library`.
   `GET /profiles` items gain `show`. New events `show.changed` and `library.changed`. New problem
   codes `revision_conflict`, `missing_blobs`, `hash_mismatch`, `quota_exceeded`.
+- **Pairing again (§9.3, no new fields):** a newer token registering the same app id with the same
+  `kind` and `name` (and a token covering the old one's profile) takes the id over even while the
+  old entry looks online (was `409 app_owned`),
+  removes that app's offline entries under renewed ids, and supersedes the old token (revoked after
+  3 minutes unless still used).
 
 ### v1.8
 

@@ -212,9 +212,10 @@ describe('connected apps', () => {
     expect((await get(`/api/v1/profiles/${DEFAULT_PROFILE_ID}/overlays`, reader)).json()).toEqual({ items: [] });
     expectProblem(await get(`/api/v1/profiles/${dprtmnt.id}/overlays`, t.token(['status:read'])), 403, 'missing_scope');
 
-    // Only the registering token may touch it.
+    // Only the registering token may touch it (a newer token with the same kind and name is the same
+    // app paired again and takes it over: see v1-hub-repair.test.ts).
     const other = t.token(['apps:read', 'apps:write'], 'other');
-    expectProblem(await call('PUT', '/api/v1/apps/ctd-overlay', other, overlayBody(null)), 409, 'app_owned');
+    expectProblem(await call('PUT', '/api/v1/apps/ctd-overlay', other, { ...overlayBody(null), name: 'Another app' }), 409, 'app_owned');
     expectProblem(await call('POST', '/api/v1/apps/ctd-overlay/heartbeat', other), 409, 'app_owned');
     expectProblem(await call('DELETE', '/api/v1/apps/ctd-overlay', other), 409, 'app_owned');
     expectProblem(await call('PUT', '/api/v1/apps/ctd-overlay', reader, overlayBody(null)), 403, 'missing_scope');
