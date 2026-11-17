@@ -393,6 +393,45 @@ describe('register', () => {
       await expect.poll(() => live('a'), { timeout: 2_000, interval: 10 }).toBe(false);
       expect(audits).toEqual([expect.objectContaining({ action: 'api_token.superseded' })]);
     });
+    it('a token limited to one profile never pushes out (or gets revoked) a connection for every profile or another profile', () => {
+      const a = tk('a', '2026-10-01T00:00:00.000Z');
+      registry.register(a, plugin());
+      // Newer, same kind and name, but limited to one profile: refused while the app is online.
+      const narrow = tk('narrow', '2026-10-10T00:00:00.000Z', dprtmnt);
+      expect(problem(() => registry.register(narrow, plugin()))).toMatchObject({ code: 'app_owned' });
+      expect(ids()).toEqual(['ctd-obs-plugin-studio:a']);
+
+      // Offline, the v1.6 rule still lets it take the id, but the old token is not superseded.
+      clock += ONLINE_WINDOW_MS + 1;
+      expect(registry.register(narrow, plugin())).toMatchObject({ tokenId: 'narrow' });
+      clock += SUPERSEDED_GRACE_MS;
+      registry.checkSuperseded();
+      expect(live('a')).toBe(true);
+      expect(audits).toEqual([]);
+
+      // Another profile's token can't push out a profile-limited connection either.
+      const p2 = profiles.create({ name: 'Second', color: null }).id;
+      const own = tk('own', '2026-10-11T00:00:00.000Z', dprtmnt);
+      registry.register(own, plugin('ctd-obs-plugin-lab'));
+      const other = tk('other', '2026-10-12T00:00:00.000Z', p2);
+      expect(problem(() => registry.register(other, plugin('ctd-obs-plugin-lab')))).toMatchObject({ code: 'app_owned' });
+    });
+
+    it('a re-pair for the same profile, or one widened to every profile, still replaces the old connection', () => {
+      const a = tk('a', '2026-10-01T00:00:00.000Z', dprtmnt);
+      registry.register(a, plugin());
+      clock += 5_000;
+      const same = tk('same', new Date(clock).toISOString(), dprtmnt);
+      expect(registry.register(same, plugin())).toMatchObject({ tokenId: 'same', online: true });
+      clock += 5_000;
+      const wide = tk('wide', new Date(clock).toISOString());
+      expect(registry.register(wide, plugin())).toMatchObject({ tokenId: 'wide', profileId: null, online: true });
+      clock += SUPERSEDED_GRACE_MS;
+      registry.checkSuperseded();
+      expect(live('a')).toBe(false);
+      expect(live('same')).toBe(false);
+      expect(ids()).toEqual(['ctd-obs-plugin-studio:wide']);
+    });
   });
 
   it('sameAppIdFamily: an id and its renewals', () => {
