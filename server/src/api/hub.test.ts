@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { LAST_USED_WRITE_INTERVAL_MS } from '../db/api-tokens-repo.js';
 import type { ApiTokenInfo, AppResource } from '../../../shared/types.js';
 import { EventBus } from '../events.js';
 import type { ProfilesRepo } from '../services.js';
@@ -8,11 +9,13 @@ import {
   MAX_META_BYTES,
   MAX_RESOURCES,
   ONLINE_WINDOW_MS,
+  SUPERSEDED_GRACE_MS,
   appsForProfile,
   createAppRegistry,
   overlaysFor,
   parseAppRegistration,
   publicApp,
+  sameAppIdFamily,
   type AppRegistration,
   type AppRegistryHandle,
 } from './hub.js';
@@ -124,9 +127,9 @@ describe('register', () => {
     const plugin = reg('ctd-obs-plugin-studio', { kind: 'ctd-obs-plugin', name: 'CTD OBS plugin' });
     registry.register(old, plugin);
 
-    // While the old one is online, a newer token can't take the id.
+    // While the old one is online, a newer token of another app (another name) can't take the id.
     const fresh = tk('fresh', '2026-10-17T00:00:00.000Z');
-    expect(problem(() => registry.register(fresh, plugin))).toMatchObject({ code: 'app_owned' });
+    expect(problem(() => registry.register(fresh, { ...plugin, name: 'CTD OBS plugin (other PC)' }))).toMatchObject({ code: 'app_owned' });
     clock += ONLINE_WINDOW_MS + 1;
     // Offline: an older token, or another kind of app, still can't.
     const older = tk('older', '2026-09-01T00:00:00.000Z');
@@ -139,6 +142,205 @@ describe('register', () => {
     // Owner revoked: any token may register the id at once, even while it looked online.
     tokens.splice(tokens.indexOf(fresh), 1);
     expect(registry.register(older, plugin)).toMatchObject({ tokenId: 'older' });
+  });
+
+  describe('re-pairing the same app (stale connections)', () => {
+    let tokens: ApiTokenInfo[];
+    let audits: { action: string; detail?: string | null }[];
+    const tk = (id: string, createdAt: string, profileId: string | null = null) => {
+      const t = { ...token(id, profileId), createdAt };
+      tokens.push(t);
+      return t;
+    };
+    const live = (id: string) => tokens.some((t) => t.id === id);
+    /** A token's use, as the tokens repo records it on each request (at most once a minute). */
+    const use = (t: ApiTokenInfo) => {
+      t.lastUsedAt = new Date(clock).toISOString();
+    };
+    const plugin = (id = 'ctd-obs-plugin-studio') => reg(id, { kind: 'ctd-obs-plugin', name: 'CTD OBS plugin (studio)', capabilities: ['obs.ingest', 'obs.overlays'] });
+    const ids = () => registry.list().map((a) => `${a.id}:${a.tokenId}`);
+
+    beforeEach(() => {
+      tokens = [];
+      audits = [];
+      registry.close();
+      registry = createAppRegistry({
+        repos: {
+          profiles,
+          connectedApps: memoryConnectedAppsRepo(now),
+          apiTokens: {
+            list: () => tokens,
+            delete: (id: string) => tokens.splice(tokens.findIndex((t) => t.id === id) >>> 0, 1),
+          } as never,
+          audit: { log: (e: { action: string; detail?: string | null }) => audits.push(e) } as never,
+        },
+        bus,
+        log: silentLog,
+        now,
+      });
+    });
+
+    it('re-registering with the same token keeps one entry and supersedes nothing', () => {
+      const a = tk('a', '2026-10-01T00:00:00.000Z');
+      registry.register(a, plugin());
+      for (let i = 0; i < 5; i++) {
+        clock += 30_000;
+        use(a);
+        expect(registry.register(a, plugin())).toMatchObject({ id: 'ctd-obs-plugin-studio', tokenId: 'a', registeredAt: '2026-10-17T03:00:00.000Z' });
+      }
+      // An OBS restart with the saved pairing: the same token, the same id, even within the online window.
+      expect(registry.heartbeat(a, 'ctd-obs-plugin-studio')).toMatchObject({ tokenId: 'a', online: true });
+      clock += SUPERSEDED_GRACE_MS + 1;
+      registry.checkSuperseded();
+      expect(ids()).toEqual(['ctd-obs-plugin-studio:a']);
+      expect(live('a')).toBe(true);
+      expect(audits).toEqual([]);
+    });
+
+    it('re-pairing from the same device while the old entry is online replaces it and revokes the old token', () => {
+      const a = tk('a', '2026-10-01T00:00:00.000Z');
+      use(a);
+      registry.register(a, plugin());
+      changes = 0;
+
+      // The plugin pairs again (new scopes): the new token is newer; it registers the same id at once.
+      clock += 5_000;
+      const b = tk('b', new Date(clock).toISOString());
+      const taken = registry.register(b, plugin());
+      expect(taken).toMatchObject({ id: 'ctd-obs-plugin-studio', tokenId: 'b', online: true });
+      expect(ids()).toEqual(['ctd-obs-plugin-studio:b']);
+      expect(changes).toBe(1);
+      // The old token can't come back to the id.
+      expect(problem(() => registry.heartbeat(a, 'ctd-obs-plugin-studio'))).toMatchObject({ code: 'app_owned' });
+
+      // Within the grace period the old token stays (a request may still be in flight).
+      clock += SUPERSEDED_GRACE_MS - 1;
+      registry.checkSuperseded();
+      expect(live('a')).toBe(true);
+      clock += 2;
+      registry.checkSuperseded();
+      expect(live('a')).toBe(false);
+      expect(live('b')).toBe(true);
+      expect(audits).toEqual([expect.objectContaining({ action: 'api_token.superseded', detail: expect.stringContaining('ctd-obs-plugin-studio paired again') })]);
+      expect(ids()).toEqual(['ctd-obs-plugin-studio:b']);
+    });
+
+    it('re-pairing after OBS was closed (old entry offline) also revokes the old token', () => {
+      const a = tk('a', '2026-10-01T00:00:00.000Z');
+      registry.register(a, plugin());
+      clock += ONLINE_WINDOW_MS + 60_000;
+      const b = tk('b', new Date(clock).toISOString());
+      registry.register(b, plugin());
+      clock += SUPERSEDED_GRACE_MS;
+      registry.checkSuperseded();
+      expect(live('a')).toBe(false);
+      expect(ids()).toEqual(['ctd-obs-plugin-studio:b']);
+    });
+
+    it('cleans up entries an earlier pairing left under suffixed ids', () => {
+      // What production has: the first pairing's entry, then the plugin moved to "-d705a3" after a 409.
+      const a = tk('a', '2026-10-01T00:00:00.000Z');
+      const b = tk('b', '2026-10-05T00:00:00.000Z');
+      registry.register(a, plugin('ctd-obs-plugin-studio'));
+      registry.register(b, plugin('ctd-obs-plugin-studio-d705a3'));
+      clock += ONLINE_WINDOW_MS + 1;
+      // Other apps that must stay: another machine, another kind, another profile's overlay connection.
+      const other = tk('other', '2026-09-01T00:00:00.000Z');
+      registry.register(other, reg('ctd-obs-plugin-studio-2', { kind: 'ctd-obs-plugin', name: 'CTD OBS plugin (studio-2)' }));
+      const ovl = tk('ovl', '2026-09-01T00:00:00.000Z', dprtmnt);
+      registry.register(ovl, reg('ctd-overlay-dprtmnt'));
+      clock += ONLINE_WINDOW_MS + 1;
+
+      // The same OBS pairs a third time and registers its saved id.
+      const c = tk('c', new Date(clock).toISOString());
+      const ovl2 = tk('ovl2', new Date(clock).toISOString());
+      registry.register(ovl2, reg('ctd-overlay'));
+      registry.register(c, plugin('ctd-obs-plugin-studio-d705a3'));
+      expect(ids().sort()).toEqual(['ctd-obs-plugin-studio-2:other', 'ctd-obs-plugin-studio-d705a3:c', 'ctd-overlay-dprtmnt:ovl', 'ctd-overlay:ovl2']);
+      clock += SUPERSEDED_GRACE_MS;
+      registry.checkSuperseded();
+      expect(tokens.map((t) => t.id).sort()).toEqual(['c', 'other', 'ovl', 'ovl2']);
+    });
+
+    it('never prunes an online entry, or one registered by a newer token', () => {
+      const a = tk('a', '2026-10-01T00:00:00.000Z');
+      const b = tk('b', '2026-10-05T00:00:00.000Z');
+      registry.register(a, plugin('ctd-obs-plugin-studio'));
+      registry.register(b, plugin('ctd-obs-plugin-studio-d705a3'));
+      // Both online: two OBS with the same machine name, say. Nothing goes.
+      registry.register(b, plugin('ctd-obs-plugin-studio-d705a3'));
+      expect(ids()).toHaveLength(2);
+      clock += ONLINE_WINDOW_MS + 1;
+      // The older token's app re-registering doesn't remove the newer one's entry.
+      registry.register(a, plugin('ctd-obs-plugin-studio'));
+      expect(ids()).toHaveLength(2);
+      clock += SUPERSEDED_GRACE_MS;
+      registry.checkSuperseded();
+      expect(tokens).toHaveLength(2);
+    });
+
+    it('keeps the old token when another live app still uses it (two OBS with the same machine name)', () => {
+      const a = tk('a', '2026-10-01T00:00:00.000Z');
+      registry.register(a, plugin());
+      clock += 5_000;
+      const b = tk('b', new Date(clock).toISOString());
+      registry.register(b, plugin()); // the second machine takes the id
+      // The first machine keeps going: refused on the id, it moves to its own one.
+      clock += 30_000;
+      use(a);
+      expect(problem(() => registry.register(a, plugin()))).toMatchObject({ code: 'app_owned' });
+      registry.register(a, plugin('ctd-obs-plugin-studio-1a2b3c'));
+      clock += LAST_USED_WRITE_INTERVAL_MS + 1_000;
+      use(a);
+      registry.register(a, plugin('ctd-obs-plugin-studio-1a2b3c'));
+      clock += SUPERSEDED_GRACE_MS;
+      use(a);
+      registry.checkSuperseded();
+      expect(live('a')).toBe(true);
+      expect(ids().sort()).toEqual(['ctd-obs-plugin-studio-1a2b3c:a', 'ctd-obs-plugin-studio:b']);
+      expect(audits).toEqual([]);
+    });
+
+    it('keeps the old token while it still has other apps, or when the new one was revoked meanwhile', () => {
+      const a = tk('a', '2026-10-01T00:00:00.000Z');
+      registry.register(a, plugin());
+      registry.register(a, reg('ctd-overlay'));
+      clock += 5_000;
+      const b = tk('b', new Date(clock).toISOString());
+      registry.register(b, plugin());
+      clock += SUPERSEDED_GRACE_MS;
+      registry.checkSuperseded();
+      expect(live('a')).toBe(true);
+
+      const c = tk('c', new Date(clock).toISOString());
+      const d = tk('d', new Date(clock + 1).toISOString());
+      clock += 1;
+      registry.register(c, plugin('ctd-obs-plugin-lab'));
+      registry.register(d, plugin('ctd-obs-plugin-lab'));
+      tokens.splice(tokens.indexOf(d), 1);
+      clock += SUPERSEDED_GRACE_MS;
+      registry.checkSuperseded();
+      expect(live('c')).toBe(true);
+    });
+
+    it('a re-pair of another kind or by an older token is still refused while online', () => {
+      const a = tk('a', '2026-10-05T00:00:00.000Z');
+      registry.register(a, plugin());
+      const older = tk('older', '2026-09-01T00:00:00.000Z');
+      expect(problem(() => registry.register(older, plugin()))).toMatchObject({ code: 'app_owned' });
+      const fresh = tk('fresh', '2026-10-17T00:00:00.000Z');
+      expect(problem(() => registry.register(fresh, { ...plugin(), kind: 'custom' }))).toMatchObject({ code: 'app_owned' });
+      expect(ids()).toEqual(['ctd-obs-plugin-studio:a']);
+    });
+  });
+
+  it('sameAppIdFamily: an id and its renewals', () => {
+    expect(sameAppIdFamily('ctd-obs-plugin-studio', 'ctd-obs-plugin-studio-d705a3')).toBe(true);
+    expect(sameAppIdFamily('ctd-obs-plugin-studio-1a2b3c', 'ctd-obs-plugin-studio-d705a3')).toBe(true);
+    // A renewed id keeps 18 characters of the machine name, the first id 25.
+    expect(sameAppIdFamily('ctd-obs-plugin-averyveryverylongmachin', 'ctd-obs-plugin-averyveryverylong-d705a3')).toBe(true);
+    expect(sameAppIdFamily('ctd-obs-plugin-studio', 'ctd-obs-plugin-lab')).toBe(false);
+    expect(sameAppIdFamily('ctd-overlay', 'ctd-overlay-dprtmnt')).toBe(false);
   });
 
   it('validates ids, kinds, limits, overlay URLs and unique resource ids', () => {

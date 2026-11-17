@@ -2,10 +2,17 @@
 // so other apps find them through CTD Relay. Registrations are persisted (ConnectedAppsRepo);
 // presence (`online` = seen in the last 90 s) is tracked here, and 'apps-changed' is emitted when an
 // app registers, changes, unregisters, or crosses online/offline.
+//
+// Re-pairing: an app that pairs again (e.g. the CTD OBS plugin asking for new scopes) gets a new
+// token but registers the same app id and name. That registration supersedes the earlier one: it
+// takes the id over (even while the old entry still looks online), earlier entries of the same
+// app left under suffixed ids are pruned, and the old token is revoked once it has gone unused for
+// SUPERSEDED_GRACE_MS (a token still in use belongs to another live app and is kept).
 
 import type { Logger } from 'pino';
 import { z } from 'zod';
 import type { ApiTokenInfo, AppResource, ConnectedApp } from '../../../shared/types.js';
+import { LAST_USED_WRITE_INTERVAL_MS } from '../db/api-tokens-repo.js';
 import type { EventBus } from '../events.js';
 import type { AppRegistry, Repos } from '../services.js';
 import { ApiProblem } from './http.js';
@@ -27,6 +34,25 @@ export const MAX_CAPABILITIES = 50;
 export const MAX_APPS = 100;
 export const MAX_APPS_PER_TOKEN = 20;
 export const OVERLAY_TYPE = 'overlay';
+/**
+ * A token superseded by a newer pairing of the same app is revoked once it has gone unused this
+ * long after being superseded. Longer than two last-used writes (LAST_USED_WRITE_INTERVAL_MS), so a
+ * token another live app still uses always shows it.
+ */
+export const SUPERSEDED_GRACE_MS = 3 * 60_000;
+/** The suffix the CTD OBS plugin adds when it moves to a new id (`ctd-obs-plugin-<machine>-<6 hex>`). */
+const RENEWED_ID_SUFFIX_RE = /-[0-9a-f]{6}$/;
+
+/**
+ * Could `a` and `b` be ids of the same app, one or both renewed after the id was taken? Equal once
+ * the renewal suffix is stripped, or a renewed id's base is the start of the other (a renewed id
+ * keeps only 18 characters of the machine name, the first id 25).
+ */
+export function sameAppIdFamily(a: string, b: string): boolean {
+  const x = a.replace(RENEWED_ID_SUFFIX_RE, '');
+  const y = b.replace(RENEWED_ID_SUFFIX_RE, '');
+  return x === y || (x !== a && y.startsWith(x)) || (y !== b && x.startsWith(y));
+}
 
 /** What an app sends to register (PUT /apps/{id}); the registry adds token, profile and times. */
 export type AppRegistration = Omit<ConnectedApp, 'tokenId' | 'profileId' | 'registeredAt' | 'lastSeenAt' | 'online'>;
@@ -174,8 +200,11 @@ export function overlaysFor(apps: readonly Pick<ConnectedApp, 'id' | 'name' | 'o
 // ---------------------------------------------------------------------------
 
 export interface AppRegistryDeps {
-  /** apiTokens: lets a re-paired app take its id back (see canTakeOver); without it ids stay with their token. */
-  repos: Pick<Repos, 'connectedApps' | 'profiles'> & Partial<Pick<Repos, 'apiTokens'>>;
+  /**
+   * apiTokens: lets a re-paired app take its id back and supersede its old token (see canTakeOver);
+   * without it ids stay with their token. audit: records superseded tokens being revoked.
+   */
+  repos: Pick<Repos, 'connectedApps' | 'profiles'> & Partial<Pick<Repos, 'apiTokens' | 'audit'>>;
   bus: EventBus;
   log: Pick<Logger, 'info' | 'warn'>;
   now?: () => number;
@@ -185,6 +214,8 @@ export interface AppRegistryDeps {
 export interface AppRegistryHandle extends AppRegistry {
   /** Look for online/offline transitions now (also runs every PRESENCE_CHECK_MS). */
   checkPresence(): void;
+  /** Revoke superseded tokens whose grace period is over (also runs every PRESENCE_CHECK_MS). */
+  checkSuperseded(): void;
   /** Stop the presence timer. */
   close(): void;
 }
@@ -201,6 +232,11 @@ export function createAppRegistry(deps: AppRegistryDeps): AppRegistryHandle {
   const lastSeen = new Map<string, number>();
   /** The online flag the last 'apps-changed' reflected. */
   const shownOnline = new Map<string, boolean>();
+  /**
+   * Tokens superseded by a newer pairing of the same app: old token id → the token that superseded
+   * it and when. In memory: after a restart a pending one is simply kept (its entries are gone already).
+   */
+  const superseded = new Map<string, { by: string; at: number; appId: string }>();
 
   const isOnline = (id: string) => now() - (lastSeen.get(id) ?? Number.NEGATIVE_INFINITY) <= ONLINE_WINDOW_MS;
 
@@ -233,18 +269,84 @@ export function createAppRegistry(deps: AppRegistryDeps): AppRegistryHandle {
     return app;
   };
 
+  const tokenById = (id: string): ApiTokenInfo | null => repos.apiTokens?.list().find((t) => t.id === id) ?? null;
+  const newer = (a: ApiTokenInfo, b: ApiTokenInfo) => Date.parse(a.createdAt) > Date.parse(b.createdAt);
+
   /**
    * May `token` take over `existing`, registered by another token? Yes when that token was revoked,
-   * or when the app is offline, of the same kind, and `token` is newer than its owner: the same app
-   * paired again (a re-pair on the same machine keeps its fixed app id). A live app never moves.
+   * or when `token` is newer than its owner and the app is of the same kind and either offline or
+   * the same app by name (the name carries the machine: "CTD OBS plugin (<machine>)"): the same app
+   * paired again, which keeps its app id. A live app of another name never moves.
    */
-  const canTakeOver = (token: ApiTokenInfo, existing: ConnectedApp, kind: string): boolean => {
-    const tokens = repos.apiTokens?.list();
-    if (!tokens) return false;
-    const owner = tokens.find((t) => t.id === existing.tokenId);
+  const canTakeOver = (token: ApiTokenInfo, existing: ConnectedApp, reg: AppRegistration): boolean => {
+    if (!repos.apiTokens) return false;
+    const owner = tokenById(existing.tokenId);
     if (!owner) return true;
-    if (isOnline(existing.id) || existing.kind !== kind) return false;
-    return Date.parse(token.createdAt) > Date.parse(owner.createdAt);
+    if (existing.kind !== reg.kind || !newer(token, owner)) return false;
+    return !isOnline(existing.id) || existing.name === reg.name;
+  };
+
+  /** `oldTokenId` was superseded by `token` (a newer pairing of the same app): revoke it after the grace period. */
+  const supersede = (oldTokenId: string, token: ApiTokenInfo, appId: string) => {
+    if (oldTokenId === token.id || !tokenById(oldTokenId)) return;
+    if (!superseded.has(oldTokenId)) superseded.set(oldTokenId, { by: token.id, at: now(), appId });
+  };
+
+  /**
+   * Earlier entries of the app `saved` just registered, left under other ids (the plugin moved to a
+   * suffixed id when its id was refused): same kind, name and profile, an id of the same family,
+   * offline, and registered by an older (or revoked) token. Removed; their tokens are superseded.
+   */
+  const pruneEarlier = (token: ApiTokenInfo, saved: ConnectedApp): boolean => {
+    if (!repos.apiTokens) return false;
+    let pruned = false;
+    for (const other of repos.connectedApps.list()) {
+      if (other.id === saved.id || other.tokenId === token.id) continue;
+      if (other.kind !== saved.kind || other.name !== saved.name || other.profileId !== saved.profileId) continue;
+      if (!sameAppIdFamily(other.id, saved.id) || isOnline(other.id)) continue;
+      const owner = tokenById(other.tokenId);
+      if (owner && !newer(token, owner)) continue;
+      repos.connectedApps.delete(other.id);
+      forget(other.id);
+      pruned = true;
+      log.info({ appId: other.id, replacedBy: saved.id, tokenId: other.tokenId }, 'hub: earlier entry of a re-paired app removed');
+      if (owner) supersede(owner.id, token, saved.id);
+    }
+    return pruned;
+  };
+
+  const checkSuperseded = () => {
+    if (superseded.size === 0 || !repos.apiTokens) return;
+    const t = now();
+    for (const [oldId, s] of superseded) {
+      if (t < s.at + SUPERSEDED_GRACE_MS) continue;
+      superseded.delete(oldId);
+      const old = tokenById(oldId);
+      const by = tokenById(s.by);
+      // Already revoked, or the newer token is gone (revoked meanwhile): nothing to do / keep the old one.
+      if (!old || !by) continue;
+      const lastUsed = old.lastUsedAt ? Date.parse(old.lastUsedAt) : Number.NEGATIVE_INFINITY;
+      if (lastUsed > s.at + LAST_USED_WRITE_INTERVAL_MS) {
+        log.info({ tokenId: oldId, appId: s.appId }, 'hub: superseded token still in use (another app); kept');
+        continue;
+      }
+      if (repos.connectedApps.list().some((a) => a.tokenId === oldId)) {
+        log.info({ tokenId: oldId, appId: s.appId }, 'hub: superseded token still has apps; kept');
+        continue;
+      }
+      repos.apiTokens.delete(oldId);
+      try {
+        repos.audit?.log({
+          userId: null,
+          username: null,
+          action: 'api_token.superseded',
+          detail: `${old.name} ${old.prefix}…: ${s.appId} paired again (${by.name} ${by.prefix}…); the old token was revoked`,
+        });
+      } catch (err) {
+        log.warn({ error: (err as Error).message }, 'hub: auditing a superseded token failed');
+      }
+      log.info({ tokenId: oldId, by: s.by, appId: s.appId }, 'hub: superseded token revoked');
+    }
   };
 
   const checkPresence = () => {
@@ -264,6 +366,11 @@ export function createAppRegistry(deps: AppRegistryDeps): AppRegistryHandle {
       checkPresence();
     } catch (err) {
       log.warn({ error: (err as Error).message }, 'hub: presence check failed');
+    }
+    try {
+      checkSuperseded();
+    } catch (err) {
+      log.warn({ error: (err as Error).message }, 'hub: revoking superseded tokens failed');
     }
   }, deps.presenceCheckMs ?? PRESENCE_CHECK_MS);
   timer.unref?.();
@@ -303,11 +410,12 @@ export function createAppRegistry(deps: AppRegistryDeps): AppRegistryHandle {
       if (dropped.length > 0) log.info({ appId: reg.id, resources: dropped.length }, 'hub: resources for unknown profiles left out');
 
       const found = repos.connectedApps.get(reg.id);
-      if (found && found.tokenId !== token.id) {
-        if (!canTakeOver(token, found, reg.kind)) {
+      const takenOver = found && found.tokenId !== token.id ? found : null;
+      if (takenOver) {
+        if (!canTakeOver(token, takenOver, reg)) {
           throw new ApiProblem(409, 'app_owned', `"${reg.id}" was registered by another token; pick another app id.`);
         }
-        log.info({ appId: reg.id, kind: reg.kind, from: found.tokenId, tokenId: token.id }, 'hub: app re-registered by a newer token');
+        log.info({ appId: reg.id, kind: reg.kind, from: takenOver.tokenId, tokenId: token.id }, 'hub: app re-registered by a newer token');
       }
       // Taken over: counts as a new registration for this token's limits.
       const existing = found && found.tokenId === token.id ? found : null;
@@ -329,7 +437,10 @@ export function createAppRegistry(deps: AppRegistryDeps): AppRegistryHandle {
       const wasOnline = shownOnline.get(saved.id) === true;
       shownOnline.set(saved.id, true);
       if (!existing) log.info({ appId: saved.id, kind: saved.kind, tokenId: token.id }, 'hub: app registered');
-      if (!existing || !wasOnline || !sameContent(existing, saved)) changed();
+      // The same app (kind and name) paired again: its old token is superseded.
+      if (takenOver && takenOver.kind === saved.kind && takenOver.name === saved.name) supersede(takenOver.tokenId, token, saved.id);
+      const pruned = pruneEarlier(token, saved);
+      if (!existing || !wasOnline || pruned || !sameContent(existing, saved)) changed();
       return withPresence(saved);
     },
 
@@ -362,6 +473,8 @@ export function createAppRegistry(deps: AppRegistryDeps): AppRegistryHandle {
     },
 
     checkPresence,
+
+    checkSuperseded,
 
     close() {
       clearInterval(timer);
