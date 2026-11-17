@@ -9,7 +9,7 @@ import { AccountForm } from './accounts/AddAccountModal';
 import { ConnectModal, Instructions, type ConnectState } from './accounts/ConnectModal';
 import { DestinationForm } from './destinations/DestinationForm';
 import { PlatformPicker } from './destinations/PlatformPicker';
-import { AboutTab } from './settings/AboutTab';
+import { AboutTab, TranscodeCapabilitiesView } from './settings/AboutTab';
 import {
   AccessCard,
   ApprovePairingForm,
@@ -279,7 +279,36 @@ describe('settings tabs (static render)', () => {
   });
 
   it('About tab shows the version', () => {
-    expect(html(<AboutTab version="1.2.3" />)).toContain('1.2.3');
+    const out = html(<AboutTab version="1.2.3" />);
+    expect(out).toContain('1.2.3');
+    // The transcoding line loads after mount; the static render shows it checking.
+    expect(out).toContain('Transcoding');
+    expect(out).toContain('Checking which encoders work…');
+  });
+
+  it('About tab: transcoding capabilities line', () => {
+    const out = html(
+      <TranscodeCapabilitiesView
+        caps={{
+          state: 'ready',
+          probedAt: '2026-11-09T12:00:00.000Z',
+          durationMs: 1800,
+          ffmpegVersion: 'ffmpeg version n8.1.3',
+          hwaccels: [],
+          decoders: { h264: ['h264'], hevc: [], av1: [] },
+          encoders: [{ encoder: 'libx264', codec: 'h264', backend: 'software', ok: true, speed: 3.1, device: null, error: null }],
+          supported: { h264: true, hevc: false, av1: false },
+          cpu: { cores: 4, model: null },
+          devices: { renderNodes: [], nvidia: false },
+          error: null,
+        }}
+        error={null}
+      />,
+    );
+    expect(out).toContain('Supported encoders');
+    expect(out).toContain('H.264: libx264 (CPU, 3.1×) · HEVC: none · AV1: none');
+    expect(out).toContain('4 CPU threads');
+    expect(html(<TranscodeCapabilitiesView caps={null} error="Network error" />)).toContain("Couldn&#x27;t check: Network error");
   });
 });
 

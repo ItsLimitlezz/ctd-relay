@@ -343,6 +343,54 @@ export interface VersionResponse {
   apiRevision: string;
 }
 
+// ---------------------------------------------------------------------------
+// Transcoding capabilities (docs/TRANSCODING.md §4). Read-only: what this machine's FFmpeg can encode.
+// GET /api/system/transcode-capabilities [user] and GET /api/v1/system/transcode-capabilities
+// (status:read) -> TranscodeCapabilities
+// ---------------------------------------------------------------------------
+
+export type TranscodeVideoCodec = 'h264' | 'hevc' | 'av1';
+export type TranscodeEncoderBackend = 'software' | 'nvenc' | 'qsv' | 'vaapi' | 'amf';
+
+/** One candidate encoder that this FFmpeg build has, and how its test encode went. */
+export interface TranscodeEncoderResult {
+  /** FFmpeg encoder name, e.g. "h264_nvenc". */
+  encoder: string;
+  codec: TranscodeVideoCodec;
+  backend: TranscodeEncoderBackend;
+  /** The test encode (30 frames, 1280×720 @ 30 fps) succeeded. */
+  ok: boolean;
+  /** Rough speed of the test encode as a multiple of real time (2 = twice as fast); null when it failed. */
+  speed: number | null;
+  /** VAAPI: the render node that worked (e.g. "/dev/dri/renderD128"); null otherwise. */
+  device: string | null;
+  /** Why the test encode failed (first FFmpeg error line); null when ok. */
+  error: string | null;
+}
+
+export interface TranscodeCapabilities {
+  /** 'probing' until the first probe after startup ends; 'unavailable' when FFmpeg can't run. */
+  state: 'probing' | 'ready' | 'unavailable';
+  /** ISO time the last probe finished. */
+  probedAt: string | null;
+  durationMs: number | null;
+  /** First line of `ffmpeg -version`, e.g. "ffmpeg version n8.1.3-9-g29e619e767 …". */
+  ffmpegVersion: string | null;
+  /** `ffmpeg -hwaccels` (methods compiled in, not necessarily usable here). */
+  hwaccels: string[];
+  /** Decoders compiled in per codec (e.g. av1: ["libdav1d", "av1", "av1_cuvid"]). Not tested yet. */
+  decoders: Record<TranscodeVideoCodec, string[]>;
+  /** Every candidate encoder this build has, with its test result (hardware first, then software). */
+  encoders: TranscodeEncoderResult[];
+  /** At least one encoder of the codec passed its test encode. */
+  supported: Record<TranscodeVideoCodec, boolean>;
+  cpu: { cores: number; model: string | null };
+  /** GPU device nodes seen in this container/OS: VAAPI/QSV render nodes and whether /dev/nvidia* exists. */
+  devices: { renderNodes: string[]; nvidia: boolean };
+  /** 'unavailable': why. */
+  error: string | null;
+}
+
 /** GET /api/settings -> SettingsResponse ; PUT /api/settings body Partial<AppSettings> -> SettingsResponse */
 export interface SettingsResponse {
   settings: AppSettings;

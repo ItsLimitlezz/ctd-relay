@@ -19,6 +19,7 @@ import { EventBus } from './events.js';
 import { buildApp } from './http/app.js';
 import { createPushSupervisor } from './media/ffmpeg-supervisor.js';
 import { createMediaServer } from './media/mediamtx.js';
+import { transcodeCapabilitiesFor } from './media/transcode-capabilities.js';
 import { errorMessage, redactText } from './orchestrator/async-utils.js';
 import { createOrchestratorRegistry } from './orchestrator/registry.js';
 import { createPlatformRegistry } from './platforms/registry.js';
@@ -224,6 +225,10 @@ export async function main(): Promise<void> {
   music.start();
   // Daily: drop blobs no show-profile revision or library entry has referenced for 7 days.
   const stopBlobGc = services.blobStore.startGc();
+  // Which video encoders work here (docs/TRANSCODING.md §4): test encodes in the background, at low
+  // priority; never delays startup and never touches streaming.
+  const transcodeCaps = transcodeCapabilitiesFor(services);
+  void transcodeCaps.start();
 
   await services.media.start();
   await services.orchestrators.init();
@@ -269,6 +274,7 @@ export async function main(): Promise<void> {
       await app.close();
       music.close();
       stopBlobGc();
+      transcodeCaps.close();
       apiEvents.close();
       closeHub(services);
     } catch (err) {

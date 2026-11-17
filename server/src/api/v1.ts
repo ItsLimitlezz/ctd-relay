@@ -21,6 +21,7 @@ import type { ApiEventType, Envelope } from './types.js';
 import { parseUlid } from './ulid.js';
 import { registerHubRoutes } from './v1-hub.js';
 import { musicFor } from '../music/music-service.js';
+import { transcodeCapabilitiesFor } from '../media/transcode-capabilities.js';
 import { registerObsSocketRoute } from './v1-obs-socket.js';
 import { registerShowRoutes } from './v1-show.js';
 
@@ -272,6 +273,11 @@ const v1Plugin: FastifyPluginAsync<V1Options> = async (app, opts) => {
     const p = resolveProfile(token, query(req).profile, DEFAULT_PROFILE_ID);
     if (!p.ok) return sendProblem(reply, p.status, p.code, p.detail);
     return reply.header('cache-control', 'no-store').send({ nowPlaying: musicFor(services).nowPlaying(p.profile ?? DEFAULT_PROFILE_ID) });
+  });
+
+  // What this machine's FFmpeg can encode (v1.10, docs/TRANSCODING.md §4): server-wide, not per profile.
+  app.get('/system/transcode-capabilities', { preHandler: requireToken('status:read') }, async (_req, reply) => {
+    return reply.header('cache-control', 'no-store').send(transcodeCapabilitiesFor(services).get());
   });
 
   // The arrival time is taken before authentication so the client's delay estimate stays honest.
