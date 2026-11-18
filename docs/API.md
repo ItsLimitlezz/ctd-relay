@@ -1515,11 +1515,13 @@ the profile.
 ### 15.4 What is open right now
 
 `GET /status` (§4) carries `issues`: the profile's open issues, oldest first, in the issue-object
-shape (without `update`). On connect (and after `system.reset`) read `/status`, then follow
-`issue.*` on `/events` with its cursor: the stream's opening snapshot doesn't repeat open issues, so
-nothing is notified twice. Open issues live in memory: a Relay restart starts with none (plus
-`system.reset` for clients resuming from before it), and the plugin's next state resend raises its
-issues again.
+shape (without `update`). The stream's opening snapshot doesn't repeat open issues.
+
+**Connecting without a gap:** open `/events` first, then read `/status` and take its `issues` as the
+open set, then apply the stream's events in the order they came. An `issue.raised` for an `id` you
+already hold with the same `firstSeen` is the same issue: replace it, don't notify. After
+`system.reset`, read `/status` again. Open issues live in memory: a Relay restart starts with none,
+and the plugin's next state resend raises its issues again.
 
 ### 15.5 Rules for clients (Live Studio, Live Mobile, anything else)
 
