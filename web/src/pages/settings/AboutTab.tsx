@@ -61,7 +61,7 @@ function TranscodeCapabilitiesLine() {
   return <TranscodeCapabilitiesView caps={caps.data ?? null} error={caps.error} />;
 }
 
-/** Read-only: "Supported encoders — H.264: … · HEVC: … · AV1: …" (Relay doesn't transcode yet). */
+/** Read-only: "Supported encoders — H.264: … · HEVC: … · AV1: …". */
 export function TranscodeCapabilitiesView({ caps, error }: { caps: TranscodeCapabilities | null; error: string | null }) {
   const text = caps ? transcodeSummary(caps) : error ? `Couldn't check: ${error}` : 'Checking which encoders work…';
   return (
@@ -71,7 +71,7 @@ export function TranscodeCapabilitiesView({ caps, error }: { caps: TranscodeCapa
       </span>
       {caps?.state === 'ready' && (
         <span className="muted small">
-          Tested on this machine at startup ({caps.cpu.cores} CPU threads). Read-only for now: every destination still gets the stream as OBS sends it.
+          Tested on this machine at startup ({caps.cpu.cores} CPU threads). Transcoding is set up in Settings → Transcoding and per destination.
         </span>
       )}
     </div>

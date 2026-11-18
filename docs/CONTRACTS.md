@@ -44,7 +44,7 @@ Every route file default-exports `FastifyPluginAsync<RouteOptions>` and receives
 
 ## Storage conventions
 
-- **Settings** (`repos.settings`, JSON): `'app'` → `Partial<AppSettings>`; `'session.title'` → string; `'session.autoGoLive'` → boolean (default `true`); `'session.testMode'` → boolean (default `false`, changeable only while offline); `'tls.acme'` → `{ identifier, failures, nextAttemptAt, lastError }` (Let's Encrypt backoff, survives restarts); `'assets.limits'` → `Partial<BlobLimits>` (v1.9: overrides the blob size limits, quota and revision count; read on every upload; defaults < `ASSETS_QUOTA_BYTES` < this setting).
+- **Settings** (`repos.settings`, JSON): `'app'` → `Partial<AppSettings>`; `'session.title'` → string; `'session.autoGoLive'` → boolean (default `true`); `'session.testMode'` → boolean (default `false`, changeable only while offline); `'tls.acme'` → `{ identifier, failures, nextAttemptAt, lastError }` (Let's Encrypt backoff, survives restarts); `'assets.limits'` → `Partial<BlobLimits>` (v1.9: overrides the blob size limits, quota and revision count; read on every upload; defaults < `ASSETS_QUOTA_BYTES` < this setting). `'transcode'` → `{ enabled: boolean, maxWorkers: number }` (default `{ enabled: false, maxWorkers: 2 }`): the server-wide transcoding switch, read every time a push starts (docs/TRANSCODING.md §0).
 - **Secrets** (`repos.secrets.scoped(scope)`, AES-256-GCM encrypted):
 
 | Scope | Key | Value |

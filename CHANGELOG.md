@@ -2,6 +2,18 @@
 
 Versions follow the hub's CONVENTIONS.md → Versioning. Each release that ships to a TrueNAS install has a runbook in `docs/RELEASE-*.md` (backup, update, verify, rollback).
 
+## Unreleased
+
+Database schema **v5** (migration v4 → v5: one nullable column, `destinations.transcode_json`). 0.2.20 and older refuse to start on a v5 database, so take the backup before updating (rollback = restore it). API revision unchanged.
+
+### Added
+- **Transcoding (#1).** A destination can get a re-encoded version of the feed instead of the copy: send one high-quality feed from OBS (for example ultrawide AV1) and let Relay make what the platform accepts. Off by default twice over: **Settings → Transcoding → Allow transcoding on this server**, then **Destinations → Edit → Transcoding** per destination (codec, frame size, frame rate, bitrate, encoder, audio). Only what the platform takes and this server can encode is offered. Built around CPU encoders (`libx264`, `libx265`, `libsvtav1`); a GPU encoder is used where it passed the startup test.
+- The dashboard card shows what a destination encodes, with which encoder and how fast. If the encode runs slower than real time it warns; after 30 s (or when the encoder keeps failing) the destination sends the original feed instead when the platform accepts it, keeps transcoding with the warning when it doesn't, or stops if set to. Other destinations are never affected, and a destination without transcoding is pushed exactly as before.
+- **Settings → Transcoding** also lists every encoder with its test result and has **Check again**. At most 2 destinations transcode at once by default (1 to 8).
+
+### Docs
+- [docs/TRANSCODING.md](docs/TRANSCODING.md) §0: what the first version does and where it differs from the design.
+
 ## 0.2.20 (2026-11-18)
 
 API revision **1.10**. Database schema stays at **v4** (no migration). Runbook: [docs/RELEASE-v0.2.20.md](docs/RELEASE-v0.2.20.md).

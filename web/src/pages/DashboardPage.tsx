@@ -51,6 +51,7 @@ import {
   type TestModeContext,
   type TestModeEntry,
 } from './dashboard-helpers';
+import { transcodeStatusLine } from './destinations/transcode-form';
 
 export const TITLE_MAX = 140;
 const FEED_LABEL: Record<Feed, string> = { landscape: 'Landscape', vertical: 'Vertical' };
@@ -678,6 +679,8 @@ export function DestinationCard({
   const phase: DestinationPhase = state?.phase ?? (dest.enabled ? 'idle' : 'disabled');
   const watchUrl = safeHttpUrl(state?.watchUrl);
   const stats = state?.stats ?? null;
+  // Set only while this destination's push re-encodes the feed (or fell back from it).
+  const transcode = phase === 'live' || phase === 'retrying' || phase === 'confirming' ? transcodeStatusLine(state?.transcode) : null;
   // Not while 'recovering': the server is already building a fresh live.
   const canRetry = phase === 'error' || phase === 'retrying';
   const hasRecoveries = (state?.recoveries ?? 0) > 0;
@@ -779,6 +782,9 @@ export function DestinationCard({
             <ShieldIcon width={14} height={14} />
             <span>{recovery}</span>
           </p>
+        )}
+        {transcode && (
+          <p className={cx('dest-transcode', transcode.tone === 'warn' && 'is-warn')}>{transcode.text}</p>
         )}
         {stats && (phase === 'live' || phase === 'connecting' || phase === 'confirming') && (
           <div className="dest-stats">

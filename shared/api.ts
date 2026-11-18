@@ -29,7 +29,9 @@ import type {
   SessionState,
   TitleResult,
   TlsStatus,
+  TranscodeProfile,
   User,
+  VideoCodec,
 } from './types.js';
 
 export interface ApiError {
@@ -249,8 +251,17 @@ export interface CreateDestinationRequest {
   options?: Record<string, unknown>;
   ingestUrl?: string | null;
   streamKey?: string | null;
+  /**
+   * Transcoding profile (docs/TRANSCODING.md); null = copy. Checked against the platform's limits
+   * (shared/transcode.ts) and this machine's working encoders: 400 when it doesn't fit.
+   */
+  transcode?: TranscodeProfile | null;
 }
-/** PATCH /api/destinations/:id [admin] -> Destination. streamKey: undefined = keep, '' or null = clear. */
+/**
+ * PATCH /api/destinations/:id [admin] -> Destination. streamKey: undefined = keep, '' or null = clear.
+ * transcode: undefined = keep, null = copy. A change applies the next time the destination's push
+ * starts (it never interrupts a running stream).
+ */
 export type UpdateDestinationRequest = Partial<Omit<CreateDestinationRequest, 'platform'>>;
 /** DELETE /api/destinations/:id [admin] -> {} */
 /** POST /api/destinations/:id/retry [user] -> {} (restart a failed destination during a session) */
@@ -349,7 +360,7 @@ export interface VersionResponse {
 // (status:read) -> TranscodeCapabilities
 // ---------------------------------------------------------------------------
 
-export type TranscodeVideoCodec = 'h264' | 'hevc' | 'av1';
+export type TranscodeVideoCodec = VideoCodec;
 export type TranscodeEncoderBackend = 'software' | 'nvenc' | 'qsv' | 'vaapi' | 'amf';
 
 /** One candidate encoder that this FFmpeg build has, and how its test encode went. */
@@ -389,6 +400,28 @@ export interface TranscodeCapabilities {
   devices: { renderNodes: string[]; nvidia: boolean };
   /** 'unavailable': why. */
   error: string | null;
+}
+
+/**
+ * POST /api/system/transcode-capabilities/refresh [admin] -> TranscodeCapabilities: run the probe
+ * again (audited 'transcode.recheck'); answers when it finished. Never touches running streams.
+ */
+
+/**
+ * Server-wide transcoding switch (settings key 'transcode'). While `enabled` is false every
+ * destination is copied, whatever its profile says.
+ * GET /api/system/transcode [user] -> TranscodeSettingsResponse
+ * PUT /api/system/transcode [admin] body Partial<TranscodeSettings> -> TranscodeSettingsResponse
+ * (audited 'transcode.settings'; applies to pushes that start afterwards).
+ */
+export interface TranscodeSettings {
+  enabled: boolean;
+  /** At most this many destinations transcode at once (1..8); the next ones fall back. Default 2. */
+  maxWorkers: number;
+}
+export interface TranscodeSettingsResponse {
+  settings: TranscodeSettings;
+  capabilities: TranscodeCapabilities;
 }
 
 /** GET /api/settings -> SettingsResponse ; PUT /api/settings body Partial<AppSettings> -> SettingsResponse */

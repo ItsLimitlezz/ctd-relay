@@ -85,6 +85,7 @@ npm run smoke                           # end-to-end media relay test with the r
 - Tests never touch the network or real platform accounts. Platform drivers are tested with stubbed `fetch` and local HTML fixtures.
 - Browser tests drive a real headless Chromium. Set `CI_NO_BROWSER=1` to skip them on machines without it.
 - The smoke test starts MediaMTX and FFmpeg on non-default ports, publishes a test pattern, checks that a wrong key is rejected, relays to a local fake platform and prints PASS or FAIL.
+- `server/src/media/transcode.integration.test.ts` transcodes small test feeds with a real FFmpeg (software encoders) and checks what the fake platform received with ffprobe. It is part of `npm test` and skips itself when there is no `./tools/ffmpeg` (after `npm run setup-tools` it runs); `FFMPEG_BIN=/path/to/ffmpeg npm test` uses another build (ffprobe must sit next to it).
 - CI (`.github/workflows/ci.yml`) runs the same typecheck, tests and build on every push and pull request.
 
 ## Production build without Docker

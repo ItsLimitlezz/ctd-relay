@@ -1,8 +1,82 @@
 # Per-destination transcoding (design)
 
-> Status: **draft for review** (Mid, 2026-11-09). Issue: ItsLimitlezz/ctd-relay#1.
-> Items marked _(verify)_ are platform limits to confirm against current platform docs before the
-> profile defaults ship.
+> Status: **first version built** (2026-11-18): CPU-first, encode inside the destination's push.
+> §0 says what is built and where it differs from the design below (design: Mid, 2026-11-09).
+> Issue: ItsLimitlezz/ctd-relay#1.
+> Items marked _(verify)_ are platform limits to confirm against current platform docs.
+
+## 0. What is built (v1)
+
+The probe on the owner's server (dual Xeon E5-2690, 32 threads; 2026-11-18) found three working
+CPU encoders (`libx264` 3.07×, `libx265` 1.78×, `libsvtav1` 2.01× real time at 720p30) and no
+working GPU encoder. So the first version is built around CPU encoding; a GPU encoder is used only
+where it passed the probe.
+
+**For the user**
+
+- **Settings → Transcoding**: "Allow transcoding on this server" (off by default), how many
+  destinations may transcode at once (default 2), the table of encoders with their test result, and
+  "Check again".
+- **Destinations → Edit → Transcoding**: off by default. On: codec, frame size, frame rate, video
+  bitrate, encoder (Automatic or one that works here), audio, and what to do when the server can't
+  keep up. Only what the platform takes (§3) and this server can encode is offered. A rough load
+  estimate from the probe is shown for CPU encoders.
+- **Dashboard card**: what is being encoded, with which encoder and how fast; a warning when it is
+  behind; a notice when it fell back to the original feed.
+
+**How it works**
+
+- The profile is stored on the destination (`destinations.transcode_json`, schema **v5**). The
+  rules (platform limits, defaults, checks, encoder choice) are in `shared/transcode.ts`, used by
+  the server and the web UI.
+- A destination with a profile encodes **inside its own push**: the FFmpeg process that used to
+  `-c copy` reads the feed, decodes (software), scales/pads, encodes and sends to the platform
+  (`server/src/media/transcode-args.ts`). The push supervisor's restart, backoff, stats and stall
+  handling apply unchanged (`ffmpeg-supervisor.ts`).
+- A destination without a profile, or any destination while the switch is off, launches with the
+  same arguments, at the same moment, and emits the same events as before (tested).
+- **Health** (§7.2): speed and frame rate over the last 10 s. Slower than 0.97× real time (or under
+  90 % of the frames) = `behind`, shown as a warning. Behind for 30 s, an encoder that can't open,
+  or 3 encode failures in 2 minutes = give up transcoding for this push.
+- **Giving up** follows the profile's "If this server can't keep up":
+  - *Send the original feed* (default): if the platform accepts the feed as it is (codec, size,
+    frame rate within §3), the push restarts as a plain copy and stays a copy until the push is
+    started afresh. If the platform can't take the feed (the issue's AV1 3440×1440 to Twitch), Relay
+    **keeps transcoding and warns** (hard rule 4, "degrade, don't drop").
+  - *Stop this destination*: it goes to `error` with the reason.
+  - Network errors and the feed going away never count as encode failures.
+
+**Where v1 differs from the design below, and why**
+
+| Design | v1 | Why |
+|---|---|---|
+| §5: one worker per feed decodes once, splits into renditions, publishes them to MediaMTX `_r/…`; destinations copy from there | Each transcoding destination decodes and encodes in its own push | No new publishable MediaMTX path, no second supervisor: much less to get wrong for a first version. Cost: two transcoding destinations on one feed decode it twice. The shared decode is the next step once several destinations per feed transcode. |
+| §7.2: can't fall back → destination goes to `error` | Can't fall back → keep transcoding, with a warning | Hard rule 4. A stuttering stream is better than none during a show; "Stop this destination" is there for who prefers the opposite. |
+| §5: hardware decode (`-hwaccel`) | Software decode only | No GPU on the owner's server to test with. GPU *encoders* that pass the probe are used (frames uploaded from system memory). |
+| §6: external API v1.10 gets `destinations[].transcode` and `transcode.status` | `/api/v1` unchanged | Keeps other apps' contract out of this change; the web UI gets it over its own WebSocket. Follow-up. |
+| §7.1: admission warns on save and at go-live | The form shows the estimate; nothing is refused or warned server-side | The probe is 30 frames: too rough to refuse on. §7.2 decides while live. |
+| §8: GPU drivers in the Docker image | Not added | CPU encoding needs nothing new in the image. Follow-up (TC-11). |
+| TC-3 decode benchmark; §3 "this platform can't take the feed's codec, turn on transcoding" hint | Not built | Follow-ups. |
+
+**Decisions taken with the conservative default (owner to confirm)**
+
+1. The server switch is **off** after the update; nothing changes until an admin turns it on.
+2. At most **2** destinations transcode at once (setting, 1 to 8).
+3. A profile edit, and the switch, apply the **next time the destination's push starts**. A running
+   stream is never interrupted to apply a setting.
+4. Fallback to the original feed lasts until the push is started afresh (next go-live, or the feed
+   coming back): no flapping within one push.
+5. "Automatic" takes a CPU encoder only if it reached 1.5× in the probe; a slower one can still be
+   picked by name.
+6. CPU presets are the probe's (x264 `veryfast`, x265 `ultrafast`, SVT-AV1 preset 10), so the
+   probe's speed means something. Constant bitrate for x264/x265; SVT-AV1 gets a target bitrate (it
+   has no CBR here).
+7. Twitch and Kick are **H.264 only** until HEVC/AV1 ingest is verified (§3).
+8. Twitch Dual Format through Relay (`ivs`) ignores a transcoding profile (non-goal, §1).
+
+GPU encoder arguments (NVENC, QSV, VAAPI, AMF) are written and unit-tested as argument lists but
+have **not run on real hardware**. They are only used where the encoder passed the probe; if the
+real encode then fails to open, the fallback above applies.
 
 ## 1. What and why
 
