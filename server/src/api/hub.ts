@@ -29,6 +29,9 @@ export const ONLINE_WINDOW_MS = 90_000;
 export const PRESENCE_CHECK_MS = 15_000;
 export const MAX_RESOURCES = 200;
 export const MAX_META_BYTES = 4096;
+/** Overlay `meta.scenes` (docs/API.md §9.2): counted apart from the rest of `meta`. */
+export const MAX_SCENES = 50;
+export const MAX_SCENES_BYTES = 16 * 1024;
 export const MAX_CAPABILITIES = 50;
 /** Registered apps in total, and per token (each app id is one connection). */
 export const MAX_APPS = 100;
@@ -91,12 +94,46 @@ const ResourceSchema = z.object({
   url: httpUrl(2048).optional(),
   width: dimension.optional(),
   height: dimension.optional(),
+  // Size and (for overlays) `scenes` are checked by checkMeta, which needs the resource type.
   meta: z
     .record(z.string(), z.unknown())
     .refine((m) => !Array.isArray(m), 'must be an object')
-    .refine((m) => jsonBytes(m) <= MAX_META_BYTES, `at most ${MAX_META_BYTES} bytes of JSON`)
     .optional(),
 });
+
+const SceneSchema = z.looseObject({
+  id: z.string().min(1, 'required').max(100, 'at most 100 characters').refine(noControls, 'control characters are not allowed'),
+  name: z.string().min(1, 'required').max(120, 'at most 120 characters').refine(noControls, 'control characters are not allowed'),
+  url: httpUrl(2048),
+});
+const ScenesSchema = z
+  .array(SceneSchema)
+  .max(MAX_SCENES, `at most ${MAX_SCENES} scenes`)
+  .refine((scenes) => new Set(scenes.map((s) => s.id)).size === scenes.length, 'scene ids must be unique within the overlay')
+  .refine((scenes) => jsonBytes(scenes) <= MAX_SCENES_BYTES, `at most ${MAX_SCENES_BYTES} bytes of JSON`);
+
+/**
+ * `meta` limits. An overlay's `meta.scenes` (its scenes as single-scene browser-source URLs, which
+ * the OBS plugin loads like the main `url`) must be well formed and has its own size budget; the
+ * rest of `meta` is free-form within MAX_META_BYTES. Nothing is rewritten: `meta` is stored as sent.
+ */
+function checkMeta(type: string, meta: Record<string, unknown>, path: string): void {
+  let rest = meta;
+  if (type === OVERLAY_TYPE && meta.scenes !== undefined) {
+    const parsed = ScenesSchema.safeParse(meta.scenes);
+    if (!parsed.success) {
+      const first = parsed.error.issues[0];
+      const where = [path, 'scenes', ...(first?.path ?? [])].join('.');
+      throw new ApiProblem(400, 'invalid', `${where}: ${first?.message ?? 'invalid'}`);
+    }
+    const { scenes: _scenes, ...others } = meta;
+    rest = others;
+  }
+  if (jsonBytes(rest) > MAX_META_BYTES) {
+    const what = rest === meta ? '' : ' (not counting scenes)';
+    throw new ApiProblem(400, 'invalid', `${path}: at most ${MAX_META_BYTES} bytes of JSON${what}`);
+  }
+}
 
 const RegistrationSchema = z.object({
   name: label(80),
@@ -131,7 +168,10 @@ export function parseAppRegistration(id: unknown, body: unknown): AppRegistratio
     if (r.url !== undefined) out.url = r.url;
     if (r.width !== undefined) out.width = r.width;
     if (r.height !== undefined) out.height = r.height;
-    if (r.meta !== undefined) out.meta = r.meta;
+    if (r.meta !== undefined) {
+      checkMeta(r.type, r.meta, `resources.${i}.meta`);
+      out.meta = r.meta;
+    }
     resources.push(out);
   }
   return {

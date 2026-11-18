@@ -424,8 +424,35 @@ export interface AppResource {
   url?: string;
   width?: number;
   height?: number;
-  /** Free-form extra data (≤ 4 KB JSON). */
+  /**
+   * Free-form extra data (≤ 4 KB JSON). Overlays may add `scenes: OverlayScene[]`, which is
+   * validated and has its own limits (≤ 50 scenes, ≤ 16 KB JSON, not counted in the 4 KB).
+   */
   meta?: Record<string, unknown>;
+}
+
+/**
+ * One scene of an overlay, in an overlay resource's `meta.scenes`: a browser-source URL that shows
+ * only that scene (pinned), for the same canvas and size as the overlay's main `url`.
+ */
+export interface OverlayScene {
+  /** Unique within the overlay (≤ 100). */
+  id: string;
+  /** ≤ 120 characters. */
+  name: string;
+  /** http(s), ≤ 2048 characters. */
+  url: string;
+}
+
+/** The `meta` keys of an overlay resource that CTD apps agree on; every key is optional and others are allowed. */
+export interface OverlayMeta {
+  canvas?: 'landscape' | 'vertical';
+  fps?: number;
+  transparent?: boolean;
+  /** Stable role key shared by the equivalent overlay of every profile. */
+  slot?: string;
+  scenes?: OverlayScene[];
+  [key: string]: unknown;
 }
 
 export interface ConnectedApp {

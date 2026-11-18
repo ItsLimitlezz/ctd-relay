@@ -594,6 +594,12 @@ export interface ApprovePairingRequest {
 /** POST /api/pairings/:id/deny [admin] -> {} */
 
 /** GET /api/apps [admin] -> ConnectedApp[] (for Settings → API; DELETE /api/apps/:id [admin] -> {} removes one) */
+/**
+ * External API (docs/API.md §9.2): GET /api/v1/profiles/{id}/overlays lists a profile's overlay
+ * resources with their `meta` as registered; `meta.scenes` (OverlayScene[]) are the overlay's
+ * single-scene browser-source URLs.
+ */
+export type { OverlayMeta, OverlayScene } from './types.js';
 
 // ---------------------------------------------------------------------------
 // Audit [admin]

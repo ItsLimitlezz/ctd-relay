@@ -3,7 +3,7 @@
 
 import { API_SCOPES, PLATFORM_IDS } from '../../../shared/types.js';
 import { CURRENCY_RE, DECIMAL_RE } from './alert-map.js';
-import { APP_ID_RE, APP_KIND_RE, CAPABILITY_RE, MAX_CAPABILITIES, MAX_META_BYTES, MAX_RESOURCES, RESOURCE_TYPE_RE } from './hub.js';
+import { APP_ID_RE, APP_KIND_RE, CAPABILITY_RE, MAX_CAPABILITIES, MAX_META_BYTES, MAX_SCENES, MAX_SCENES_BYTES, MAX_RESOURCES, RESOURCE_TYPE_RE } from './hub.js';
 import { PROBLEM_CODES, PROBLEM_TYPE } from './http.js';
 import { MAX_PENDING_PAIRINGS, MAX_PENDING_PAIRINGS_INTERNET, MAX_PENDING_PAIRINGS_PER_ADDRESS, PAIRING_CODE_RE, PAIRING_POLL_INTERVAL_SEC, PAIRING_TTL_MS } from './pairing.js';
 import { ALERT_COUNT_UNITS, ALERT_KINDS, API_ROLES, EVENT_TYPES } from './types.js';
@@ -943,7 +943,23 @@ export function openApiDocument(version: string): Record<string, unknown> {
             height: { type: 'integer', minimum: 1 },
             meta: {
               type: 'object',
-              description: `Free-form, ≤ ${MAX_META_BYTES} bytes of JSON. Overlays: canvas ("landscape" | "vertical"), fps (number), transparent (boolean), slot (stable role key shared by the equivalent overlay of every profile)`,
+              description: `Free-form, ≤ ${MAX_META_BYTES} bytes of JSON (not counting an overlay's scenes). Overlays: canvas ("landscape" | "vertical"), fps (number), transparent (boolean), slot (stable role key shared by the equivalent overlay of every profile), scenes`,
+              properties: {
+                scenes: {
+                  type: 'array',
+                  maxItems: MAX_SCENES,
+                  description: `Overlays only: one single-scene browser-source URL per scene, returned as sent. ≤ ${MAX_SCENES_BYTES} bytes of JSON in all`,
+                  items: {
+                    type: 'object',
+                    required: ['id', 'name', 'url'],
+                    properties: {
+                      id: { type: 'string', maxLength: 100, description: 'Unique within the overlay' },
+                      name: { type: 'string', maxLength: 120 },
+                      url: { type: 'string', maxLength: 2048, description: 'http(s)' },
+                    },
+                  },
+                },
+              },
             },
           },
         },

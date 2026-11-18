@@ -67,6 +67,17 @@ describe('connected apps repo', () => {
     expect(repos.connectedApps.get('missing')).toBeNull();
   });
 
+  it('keeps an overlay\'s meta.scenes as stored', () => {
+    const scenes = [
+      { id: 'scn_intro', name: 'Intro', url: 'http://10.20.30.40:30200/o/takeover-h?key=abc&scene=scn_intro' },
+      { id: 'scn_brb', name: 'Be right back', url: 'http://10.20.30.40:30200/o/takeover-h?key=abc&scene=scn_brb' },
+    ];
+    const withScenes: AppResource = { ...overlay, meta: { ...overlay.meta, scenes } };
+    register('ctd-overlay', 'tok-1', { resources: [withScenes] });
+    expect(repos.connectedApps.get('ctd-overlay')!.resources).toEqual([withScenes]);
+    expect(repos.connectedApps.list()[0]!.resources[0]!.meta!.scenes).toEqual(scenes);
+  });
+
   it('updates in place, keeping the registration time, and touches lastSeenAt', () => {
     vi.useFakeTimers({ toFake: ['Date'] });
     vi.setSystemTime(Date.parse('2026-10-15T14:00:00.000Z'));

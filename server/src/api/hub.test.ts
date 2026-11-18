@@ -4,10 +4,13 @@ import type { ApiTokenInfo, AppResource } from '../../../shared/types.js';
 import { EventBus } from '../events.js';
 import type { ProfilesRepo } from '../services.js';
 import { ApiProblem } from './http.js';
+import { jsonBytes } from './json.js';
 import {
   MAX_APPS_PER_TOKEN,
   MAX_META_BYTES,
   MAX_RESOURCES,
+  MAX_SCENES,
+  MAX_SCENES_BYTES,
   ONLINE_WINDOW_MS,
   SUPERSEDED_GRACE_MS,
   appsForProfile,
@@ -458,6 +461,49 @@ describe('register', () => {
     expect(problem(() => registry.register(t, reg('ok', { resources: [overlay('o', null), overlay('o', null)] }))).message).toMatch(/used twice/);
     // Other resource types need no URL.
     expect(registry.register(t, reg('ok', { resources: [{ type: 'scene-preset', id: 's1', name: 'Takeover', profileId: null, meta: { scenes: 3 } }] })).resources).toHaveLength(1);
+  });
+
+  it('overlay meta.scenes: stored and returned unchanged, validated like the main url, with its own size budget', () => {
+    const t = token('t1');
+    const scenes = [
+      { id: 'scn_intro', name: 'Intro', url: 'http://10.20.30.40:30200/o/takeover-h?key=k&scene=scn_intro' },
+      { id: 'scn_brb', name: 'Be right back', url: 'https://o.example/o/takeover-h?key=k&scene=scn_brb', order: 2 },
+    ];
+    const meta = { canvas: 'landscape', slot: 'takeover-landscape', scenes };
+    const app = registry.register(t, reg('ctd-overlay', { resources: [overlay('o', dprtmnt, { meta })] }));
+    expect(app.resources[0]!.meta).toEqual(meta);
+    // The same in every view other apps read (GET /apps, apps.changed, GET /profiles/{id}/overlays).
+    expect(publicApp(registry.list()[0]!).resources[0]!.meta).toEqual(meta);
+    expect(appsForProfile(registry.list(), dprtmnt)[0]!.resources[0]!.meta).toEqual(meta);
+    expect(overlaysFor(registry.list(), dprtmnt)[0]!.meta).toEqual(meta);
+
+    const bad = (value: unknown, extra: Record<string, unknown> = {}) =>
+      problem(() => registry.register(t, reg('ok', { resources: [overlay('o', null, { meta: { ...extra, scenes: value } })] })));
+    const scene = (over: Record<string, unknown> = {}) => ({ id: 's1', name: 'Scene', url: 'http://a/o?scene=s1', ...over });
+    expect(bad('nope')).toMatchObject({ statusCode: 400, code: 'invalid' });
+    expect(bad(['http://a']).message).toMatch(/^resources\.0\.meta\.scenes\.0: /);
+    expect(bad([scene({ url: 'javascript:alert(1)' })]).message).toMatch(/resources\.0\.meta\.scenes\.0\.url: must be an http/);
+    expect(bad([scene({ url: 'file:///etc/passwd' })]).message).toMatch(/http/);
+    expect(bad([scene({ url: undefined })]).message).toMatch(/scenes\.0\.url/);
+    expect(bad([scene({ url: `http://a/${'x'.repeat(2048)}` })]).message).toMatch(/at most 2048/);
+    expect(bad([scene({ id: 7 })]).message).toMatch(/scenes\.0\.id/);
+    expect(bad([scene({ id: '' })]).message).toMatch(/scenes\.0\.id: required/);
+    expect(bad([scene({ name: { en: 'Scene' } })]).message).toMatch(/scenes\.0\.name/);
+    expect(bad([scene({ name: 'x'.repeat(121) })]).message).toMatch(/at most 120/);
+    expect(bad([scene(), scene()]).message).toMatch(/unique/);
+    const many = Array.from({ length: MAX_SCENES + 1 }, (_, i) => scene({ id: `s${i}` }));
+    expect(bad(many).message).toMatch(/at most 50 scenes/);
+    expect(registry.register(t, reg('ok', { resources: [overlay('o', null, { meta: { scenes: many.slice(0, MAX_SCENES) } })] })).resources[0]!.meta!.scenes).toHaveLength(MAX_SCENES);
+    expect(registry.register(t, reg('ok', { resources: [overlay('o', null, { meta: { scenes: [] } })] })).resources[0]!.meta).toEqual({ scenes: [] });
+
+    // Scenes do not use up the 4 KB of the rest of meta, and the rest is still limited.
+    const long = Array.from({ length: 20 }, (_, i) => scene({ id: `s${i}`, url: `http://a/o?scene=s${i}&key=${'k'.repeat(400)}` }));
+    expect(jsonBytes(long)).toBeGreaterThan(MAX_META_BYTES);
+    expect(registry.register(t, reg('ok', { resources: [overlay('o', null, { meta: { canvas: 'vertical', scenes: long } })] })).resources[0]!.meta!.scenes).toEqual(long);
+    expect(bad(long, { blob: 'x'.repeat(MAX_META_BYTES) }).message).toMatch(/4096 bytes of JSON \(not counting scenes\)/);
+    const tooBig = Array.from({ length: 10 }, (_, i) => scene({ id: `s${i}`, url: `http://a/o?key=${'k'.repeat(2000)}` }));
+    expect(jsonBytes(tooBig)).toBeGreaterThan(MAX_SCENES_BYTES);
+    expect(bad(tooBig).message).toMatch(/resources\.0\.meta\.scenes: at most 16384 bytes/);
   });
 
   it('parses a raw body: defaults, trimming, deduplicated capabilities, unknown fields dropped', () => {

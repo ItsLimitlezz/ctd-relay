@@ -377,6 +377,7 @@ export interface ApiOverlay {
   url?: string;
   width?: number;
   height?: number;
+  /** As the app registered it; `meta.scenes` (OverlayScene[]) lists the overlay's single-scene URLs. */
   meta?: Record<string, unknown>;
 }
 

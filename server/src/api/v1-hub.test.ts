@@ -249,6 +249,32 @@ describe('connected apps', () => {
     expect(t.apps.list()).toEqual([]);
   });
 
+  it('overlay meta.scenes round-trips through PUT /apps, GET /apps and GET /profiles/{id}/overlays', async () => {
+    const scenes = [
+      { id: 'scn_intro', name: 'Intro', url: 'http://10.20.30.40:30200/o/takeover-h?key=k&scene=scn_intro' },
+      { id: 'scn_brb', name: 'Be right back', url: 'http://10.20.30.40:30200/o/takeover-h?key=k&scene=scn_brb' },
+    ];
+    const meta = { canvas: 'landscape', slot: 'takeover-landscape', scenes };
+    const base = overlayBody(dprtmnt.id);
+    const withMeta = (m: Record<string, unknown>) => ({ ...base, resources: [{ ...base.resources[0]!, meta: m }, base.resources[1]!] });
+    const body = withMeta(meta);
+    const put = await call('PUT', '/api/v1/apps/ctd-overlay', all, body);
+    expect(put.statusCode, put.body).toBe(200);
+    expect(put.json().resources[0].meta).toEqual(meta);
+
+    const reader = t.token(['apps:read'], 'obs');
+    expect((await get(`/api/v1/apps?profile=${dprtmnt.id}`, reader)).json().items[0].resources[0].meta).toEqual(meta);
+    const overlays = (await get(`/api/v1/profiles/${dprtmnt.id}/overlays`, reader)).json().items;
+    expect(overlays).toHaveLength(1);
+    expect(overlays[0]).toMatchObject({ id: 'ovl_h', url: 'http://10.20.30.40:30200/o/takeover-h?key=k', meta });
+    expect(overlays[0].meta.scenes).toEqual(scenes);
+
+    // A scene URL that is not http(s) refuses the registration, like the main url.
+    const bad = withMeta({ ...meta, scenes: [{ id: 's', name: 'S', url: 'file:///C:/x.html' }] });
+    expectProblem(await call('PUT', '/api/v1/apps/ctd-overlay', all, bad), 400, 'invalid');
+    expect((await get(`/api/v1/profiles/${dprtmnt.id}/overlays`, reader)).json().items[0].meta).toEqual(meta);
+  });
+
   it('rejects invalid registrations as problem documents', async () => {
     expectProblem(await call('PUT', '/api/v1/apps/Not_Valid', all, overlayBody(null)), 400, 'invalid');
     expectProblem(await call('PUT', '/api/v1/apps/x', all, { name: 'x', kind: 'Bad Kind' }), 400, 'invalid');
