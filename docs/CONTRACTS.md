@@ -42,6 +42,32 @@ server/src/main.ts         builds AppServices, starts everything
 
 Every route file default-exports `FastifyPluginAsync<RouteOptions>` and receives `{ services }`.
 
+## Alert contract (`issue.*`, v1.11)
+
+One event pair carries every alert in the CTD suite: **`issue.raised`** / **`issue.cleared`** on
+`/api/v1/events` (`status:read`). The wire format, kinds, hold times and client rules are in
+[API.md §15](API.md#15-issues-alerts-when-a-feed-a-stream-or-a-scene-has-a-problem-v111); this is
+who does what.
+
+| Link | Role | Does |
+|---|---|---|
+| **Relay F2** (`server/src/api/issues.ts`, fed by `event-hub.ts`) | Detector + router | Raises `feed.offline`, `destination.down`, `stream.down`, `obs.output.down` from its own state; turns the plugin's `obs.issue.*` into `obs.issue` issues; applies hold times; keeps the open set (`GET /status` → `issues`); clears with a `resolution` |
+| **CTD OBS F2** (`ctd-obs-plugin`) | Producer | Sends `obs.issue.raised` / `obs.issue.cleared` with `onProgram` / `scene`; makes failovers locally (never waits on Relay) and reports them as `obs.failover` |
+| **Live F2** (`CTDRemoteLive`: `CTDLiveCore`, Live Mobile, Live Studio) | Consumer | Reads `/status` → `issues` on connect, follows `issue.*`, keys by `id`, notifies on `update: false` (and a severity raise), at most once a minute per `id` |
+
+Rules that keep the three in step:
+
+- **Identity:** an issue's `id` is `<kind>|<subject key>` and is the only key for raise, update,
+  clear and dedupe. Clients never parse it. The plugin's own issue id (`<rule>|<subject>`) appears
+  inside Relay's as `obs.issue|<appId>|<plugin id>`.
+- **Severity** is `info` / `warning` / `critical` everywhere (the plugin's `ISSUE_INFO/WARNING/CRITICAL`).
+- **New detectors add a `kind`** (and, for the plugin, a `rule`); they don't add event types. Clients
+  treat unknown kinds by `severity` and `title`.
+- **Relay doesn't switch scenes** and the plugin doesn't wait for Relay: failover is local to OBS,
+  alerts are for people.
+- Additive only within `apiVersion` 1: new fields and kinds are fine, renaming or removing one is a
+  v2 change.
+
 ## Storage conventions
 
 - **Settings** (`repos.settings`, JSON): `'app'` → `Partial<AppSettings>`; `'session.title'` → string; `'session.autoGoLive'` → boolean (default `true`); `'session.testMode'` → boolean (default `false`, changeable only while offline); `'tls.acme'` → `{ identifier, failures, nextAttemptAt, lastError }` (Let's Encrypt backoff, survives restarts); `'assets.limits'` → `Partial<BlobLimits>` (v1.9: overrides the blob size limits, quota and revision count; read on every upload; defaults < `ASSETS_QUOTA_BYTES` < this setting).

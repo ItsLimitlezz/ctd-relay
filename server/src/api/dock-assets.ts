@@ -36,10 +36,11 @@ export const DOCK_HTML = `<!doctype html>
       <span id="session-timer" class="timer"></span>
       <span id="test-badge" class="pill test" hidden>TEST MODE</span>
       <span class="spacer"></span>
-      <label class="alert-toggle" title="Flash and beep when a destination goes down"><input type="checkbox" id="alert-toggle"> Alert</label>
+      <label class="alert-toggle" title="Flash and beep when a destination goes down or a feed is lost"><input type="checkbox" id="alert-toggle"> Alert</label>
     </header>
     <div id="session-title" class="session-title"></div>
     <div id="feeds" class="feeds"></div>
+    <ul id="issues" class="issues" hidden></ul>
     <ul id="destinations" class="destinations"></ul>
     <div id="toast" class="toast" hidden></div>
   </section>
@@ -114,6 +115,12 @@ body { display: flex; flex-direction: column; overflow: hidden; }
 .dest .reason { color: #ffb4b6; margin-top: 2px; overflow-wrap: anywhere; }
 .dest .info { color: var(--muted); margin-top: 2px; overflow-wrap: anywhere; }
 .badge { display: inline-block; min-width: 16px; height: 16px; line-height: 16px; border-radius: 3px; text-align: center; font-size: 10px; font-weight: 800; flex: 0 0 auto; }
+.issues { list-style: none; margin: 0 0 3px; padding: 0; display: flex; flex-direction: column; gap: 3px; }
+.issue { background: var(--panel-2); border-radius: 4px; padding: 3px 6px; border-left: 3px solid var(--amber); overflow-wrap: anywhere; }
+.issue.critical { background: var(--red-bg); border-left-color: var(--red); }
+.issue.info { border-left-color: var(--muted); }
+.issue .title { font-weight: 600; }
+.issue .detail { color: var(--muted); margin-top: 2px; }
 .toast { margin-top: 4px; padding: 3px 6px; border-radius: 3px; background: var(--panel-2); overflow-wrap: anywhere; }
 .toast.warn { color: var(--amber); }
 .toast.error { color: var(--red); }
@@ -160,6 +167,7 @@ export const DOCK_JS = `(function () {
   var session = null;
   var feeds = {};
   var destinations = [];
+  var issues = []; // open issues (GET /status → issues, then issue.raised / issue.cleared; docs/API.md §15)
   var cursor = null;
   var retryMs = 1000;
   var stopped = false;
@@ -255,8 +263,10 @@ export const DOCK_JS = `(function () {
     void document.body.offsetWidth;
     document.body.classList.add('flash');
     setTimeout(function () { document.body.classList.remove('flash'); }, 1300);
-    var row = document.querySelector('[data-dest="' + String(destinationId).replace(/[^A-Za-z0-9_-]/g, '') + '"]');
-    if (row) row.classList.add('flash');
+    if (destinationId) {
+      var row = document.querySelector('[data-dest="' + String(destinationId).replace(/[^A-Za-z0-9_-]/g, '') + '"]');
+      if (row) row.classList.add('flash');
+    }
     beep();
   }
 
@@ -346,14 +356,45 @@ export const DOCK_JS = `(function () {
     });
   }
 
+  // Open issues that aren't a down destination (those already are red rows below): a lost feed,
+  // the whole stream down, a source or output in OBS. Critical first, then oldest first.
+  function renderIssues() {
+    var list = $('issues');
+    if (!list) return;
+    var rank = { info: 0, warning: 1, critical: 2 };
+    var shown = issues.filter(function (i) { return i.kind !== 'destination.down'; });
+    shown.sort(function (a, b) { return (rank[b.severity] || 0) - (rank[a.severity] || 0) || (a.firstSeen || 0) - (b.firstSeen || 0); });
+    list.textContent = '';
+    shown.forEach(function (i) {
+      var li = el('li', 'issue ' + (i.severity === 'critical' ? 'critical' : i.severity === 'info' ? 'info' : 'warning'));
+      li.appendChild(el('div', 'title', i.title || i.kind));
+      if (i.message) li.appendChild(el('div', 'detail', i.message));
+      list.appendChild(li);
+    });
+    list.hidden = shown.length === 0;
+  }
+
+  function upsertIssue(i) {
+    issues = issues.filter(function (x) { return x.id !== i.id; });
+    issues.push(i);
+    renderIssues();
+  }
+
+  function removeIssue(id) {
+    issues = issues.filter(function (x) { return x.id !== id; });
+    renderIssues();
+  }
+
   function applyStatus(s) {
     session = s.session;
     feeds = {};
     (s.feeds || []).forEach(function (f) { feeds[f.feed] = f; });
     destinations = s.destinations || [];
+    issues = s.issues || []; // absent on a server older than v1.11
     renderSession();
     renderFeeds();
     renderDestinations();
+    renderIssues();
   }
 
   function upsertDestination(d) {
@@ -488,6 +529,14 @@ export const DOCK_JS = `(function () {
       case 'feed.status': if (d && d.feed) { feeds[d.feed] = d; renderFeeds(); } break;
       case 'destination.status': if (d && d.id) upsertDestination(d); break;
       case 'destination.down': if (d) flash(d.destinationId); break;
+      case 'issue.raised':
+        if (d && d.id) {
+          upsertIssue(d);
+          // A new critical problem that isn't a destination (those flash on destination.down).
+          if (d.update === false && d.severity === 'critical' && d.kind !== 'destination.down') flash(null);
+        }
+        break;
+      case 'issue.cleared': if (d && d.id) removeIssue(d.id); break;
       case 'system.notice': if (d && d.message) toast(d.level, d.message); break;
       case 'profile.status': renderProfile(d); break;
       case 'profiles.changed': if (has('status:read')) loadProfile().catch(function () {}); break;

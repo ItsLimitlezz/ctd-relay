@@ -14,6 +14,7 @@ export const OBS_EVENT_TYPES = [
   'obs.issue.raised',
   'obs.issue.cleared',
   'obs.sync.status',
+  'obs.failover',
 ] as const;
 export type ObsEventType = (typeof OBS_EVENT_TYPES)[number];
 
@@ -92,6 +93,9 @@ function keyOf(type: ObsEventType, data: Record<string, unknown>): string | null
       const source = str(data.sourceName);
       return group && source ? `${group}|${source}` : null;
     }
+    case 'obs.failover':
+      // The plugin switched program away from a dead feed (docs/API.md §15.6): needs both scenes.
+      return str(data.from) && str(data.to) ? (str(data.canvas) ?? 'landscape') : null;
   }
 }
 
@@ -258,6 +262,9 @@ export class ObsStateStore {
       case 'obs.issue.cleared':
         // Clearing an issue that isn't open (e.g. raised before a server restart) is still passed on.
         track.issues.delete(key);
+        return true;
+      case 'obs.failover':
+        // An action, not a state: nothing is kept; every one (by its id) is passed on.
         return true;
     }
   }
