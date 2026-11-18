@@ -25,6 +25,7 @@ const SHIPPED_STEP_HASHES = [
   'd4c55d6e657418f8be8c2ab177595c933ec0b967bab0629f8a789f9ef6d21d69', // v2: api_tokens
   '000982e766f90785801da6c4a224207382f40d50cd1ae5271aa101a1426f26e3', // v3: profiles + connected apps
   'c501ccc8618f7e0a89d5cf9b5af09c38e0faf2d3ba42a3882eae8d117d7fca84', // v4: show profiles, revisions, blobs, asset library
+  'bb3c162dcbbdd0bcb4adf605155e9caa1d344e7d01694a69884a77408a3684be', // v5: destinations.transcode_json
 ];
 
 const masterKey = crypto.randomBytes(32);
@@ -285,11 +286,11 @@ describe('a fresh database', () => {
     }
   });
 
-  it('is at v4 with the show profile tables', () => {
+  it('is at v5 with the show profile tables', () => {
     const db = openDatabase(':memory:');
     try {
-      expect(schemaVersion(db)).toBe(4);
-      expect(MIGRATIONS.length).toBe(4);
+      expect(schemaVersion(db)).toBe(5);
+      expect(MIGRATIONS.length).toBe(5);
       expect(tables(db)).toEqual(expect.arrayContaining(['show_profiles', 'show_revisions', 'blobs', 'revision_blobs', 'asset_library']));
       const repos = createRepos(db, box);
       expect(repos.showProfiles.list()).toEqual([]);
@@ -309,7 +310,7 @@ describe('v3 to v4', () => {
     await seedOwnerData(old, 3);
     const names = tables(old);
     const before = dump(old, names);
-    migrate(old);
+    migrate(old, MIGRATIONS.slice(0, 4));
     try {
       expect(schemaVersion(old)).toBe(4);
       expect(dump(old, names)).toEqual(before);
@@ -318,6 +319,60 @@ describe('v3 to v4', () => {
       }
     } finally {
       old.close();
+    }
+  });
+});
+
+describe('v4 to v5', () => {
+  it('adds an empty transcoding profile to every destination and changes nothing else', async () => {
+    const old = new DatabaseSync(':memory:');
+    migrate(old, MIGRATIONS.slice(0, 4));
+    const f = await seedOwnerData(old, 4);
+    const names = tables(old);
+    const oldColumns = Object.fromEntries(names.map((t) => [t, columns(old, t)]));
+    const before = dump(old, names, oldColumns);
+    migrate(old);
+    try {
+      expect(schemaVersion(old)).toBe(5);
+      expect(tables(old)).toEqual(names);
+      // Every column that existed keeps its bytes; the only new one is destinations.transcode_json.
+      expect(dump(old, names, oldColumns)).toEqual(before);
+      for (const t of names) {
+        const added = columns(old, t).map((c) => c.name).filter((c) => !oldColumns[t]!.some((o) => o.name === c));
+        expect(added, t).toEqual(t === 'destinations' ? ['transcode_json'] : []);
+      }
+      expect(old.prepare('SELECT COUNT(*) AS n FROM destinations WHERE transcode_json IS NOT NULL').get()?.n).toBe(0);
+
+      // Existing destinations read as "copy" (no profile), and a profile round-trips.
+      const repos = createRepos(old, box);
+      expect(repos.destinations.list().map((d) => d.transcode)).toEqual([null, null]);
+      const profile = {
+        mode: 'transcode' as const,
+        video: { codec: 'h264' as const, width: 1920, height: 1080, fps: null, bitrateKbps: 6000, keyframeSec: 2, encoder: 'auto' },
+        audio: 'copy' as const,
+        fallback: 'copy' as const,
+      };
+      expect(repos.destinations.update(f.destinationId, { transcode: profile }).transcode).toEqual(profile);
+      expect(repos.destinations.get(f.customId)?.transcode).toBeNull();
+      expect(repos.destinations.update(f.destinationId, { name: 'Renamed' }).transcode).toEqual(profile);
+      expect(repos.destinations.update(f.destinationId, { transcode: null }).transcode).toBeNull();
+    } finally {
+      old.close();
+    }
+  });
+
+  it('reads an unreadable stored profile as copy instead of failing', () => {
+    const db = openDatabase(':memory:');
+    try {
+      const repos = createRepos(db, box);
+      const dest = repos.destinations.create({ profileId: DEFAULT_PROFILE_ID, platform: 'custom', accountId: null, name: 'x', feed: 'landscape', enabled: true, options: {}, ingestUrl: null });
+      expect(dest.transcode).toBeNull();
+      for (const bad of ['{not json', '[1,2]', '"text"', '']) {
+        db.prepare('UPDATE destinations SET transcode_json = ? WHERE id = ?').run(bad, dest.id);
+        expect(repos.destinations.get(dest.id)?.transcode, bad).toBeNull();
+      }
+    } finally {
+      db.close();
     }
   });
 });

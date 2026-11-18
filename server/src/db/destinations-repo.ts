@@ -1,5 +1,5 @@
 import crypto from 'node:crypto';
-import { DEFAULT_PROFILE_ID, type Destination, type Feed, type PlatformId } from '../../../shared/types.js';
+import { DEFAULT_PROFILE_ID, type Destination, type Feed, type PlatformId, type TranscodeProfile } from '../../../shared/types.js';
 import type { DestinationsRepo } from '../services.js';
 import {
   NotFoundError,
@@ -14,7 +14,19 @@ import {
 } from './rows.js';
 
 const COLUMNS =
-  'id, profile_id, platform, account_id, name, feed, enabled, options, ingest_url, has_stream_key, created_at, updated_at';
+  'id, profile_id, platform, account_id, name, feed, enabled, options, ingest_url, has_stream_key, transcode_json, created_at, updated_at';
+
+/** Stored transcoding profile; unreadable JSON counts as none (copy), never as an error. */
+function transcodeOf(row: Row): TranscodeProfile | null {
+  const raw = strOrNull(row, 'transcode_json');
+  if (!raw) return null;
+  try {
+    const value: unknown = JSON.parse(raw);
+    return value && typeof value === 'object' && !Array.isArray(value) ? (value as TranscodeProfile) : null;
+  } catch {
+    return null;
+  }
+}
 
 function toDestination(row: Row): Destination {
   return {
@@ -28,6 +40,7 @@ function toDestination(row: Row): Destination {
     options: jsonObject(row, 'options'),
     ingestUrl: strOrNull(row, 'ingest_url'),
     hasStreamKey: bool(row, 'has_stream_key'),
+    transcode: transcodeOf(row),
     createdAt: str(row, 'created_at'),
     updatedAt: str(row, 'updated_at'),
   };
@@ -56,7 +69,7 @@ export function createDestinationsRepo(stmt: Stmt): DestinationsRepo {
     create(input) {
       const id = crypto.randomUUID();
       const now = nowIso();
-      stmt(`INSERT INTO destinations (${COLUMNS}) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)`).run(
+      stmt(`INSERT INTO destinations (${COLUMNS}) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?)`).run(
         id,
         input.profileId || DEFAULT_PROFILE_ID,
         input.platform,
@@ -66,6 +79,7 @@ export function createDestinationsRepo(stmt: Stmt): DestinationsRepo {
         input.enabled ? 1 : 0,
         JSON.stringify(input.options ?? {}),
         input.ingestUrl,
+        input.transcode ? JSON.stringify(input.transcode) : null,
         now,
         now,
       );
@@ -83,6 +97,7 @@ export function createDestinationsRepo(stmt: Stmt): DestinationsRepo {
         options: patch.options === undefined ? undefined : JSON.stringify(patch.options),
         ingest_url: patch.ingestUrl,
         has_stream_key: flag(patch.hasStreamKey),
+        transcode_json: patch.transcode === undefined ? undefined : patch.transcode ? JSON.stringify(patch.transcode) : null,
       });
       const updated = changes > 0 ? get(id) : null;
       if (!updated) throw new NotFoundError('Destination not found');

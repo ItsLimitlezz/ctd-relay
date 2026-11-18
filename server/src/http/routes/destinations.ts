@@ -5,7 +5,9 @@
 
 import type { FastifyPluginAsync, FastifyRequest } from 'fastify';
 import { z } from 'zod';
-import type { Destination, Feed, FieldSpec, PlatformInfo } from '../../../../shared/types.js';
+import { isTranscoding, validateTranscodeProfile } from '../../../../shared/transcode.js';
+import type { Destination, Feed, FieldSpec, PlatformInfo, TranscodeProfile } from '../../../../shared/types.js';
+import { transcodeCapabilitiesFor } from '../../media/transcode-capabilities.js';
 import type { DestinationsRepo } from '../../services.js';
 import { audit, requireAdmin, requireUser, type RouteOptions } from '../guards.js';
 import {
@@ -34,6 +36,22 @@ const accountIdField = z
   .nullish()
   .transform((v) => (v === undefined ? undefined : v || null));
 
+/** Transcoding profile (docs/TRANSCODING.md §2): the shape here, the limits in checkTranscode(). */
+const transcodeSchema = z.strictObject({
+  mode: z.enum(['copy', 'transcode']),
+  video: z.strictObject({
+    codec: z.enum(['h264', 'hevc', 'av1']),
+    width: z.number().int().min(2).max(7680),
+    height: z.number().int().min(2).max(7680),
+    fps: z.number().int().min(1).max(240).nullable(),
+    bitrateKbps: z.number().int().min(1).max(1_000_000),
+    keyframeSec: z.number().int().min(1).max(60),
+    encoder: z.string().regex(/^[a-z0-9_]{1,40}$/, 'Unknown encoder'),
+  }),
+  audio: z.union([z.literal('copy'), z.strictObject({ codec: z.literal('aac'), bitrateKbps: z.number().int().min(1).max(1000) })]),
+  fallback: z.enum(['copy', 'stop']),
+});
+
 const destinationFields = {
   accountId: accountIdField,
   name: z.string().trim().min(1, 'Name is required').max(MAX_NAME),
@@ -42,6 +60,8 @@ const destinationFields = {
   options: optionsSchema.nullish(),
   ingestUrl: z.string().max(4096).nullish(),
   streamKey: z.string().max(4096).nullish(),
+  /** undefined = not submitted (keep), null = copy. */
+  transcode: transcodeSchema.nullish(),
 };
 
 const createBody = z.object({ profileId: profileIdField, platform: platformIdSchema, ...destinationFields });
@@ -117,6 +137,19 @@ const destinationRoutes: FastifyPluginAsync<RouteOptions> = async (app, { servic
     return accountId;
   }
 
+  /**
+   * A submitted transcoding profile must fit the platform (codec, size, frame rate, bitrate) and,
+   * when it is switched on, this machine (a working encoder). null = copy. A profile saved in 'copy'
+   * mode is only checked against the platform: it is kept for later and nothing encodes.
+   */
+  function checkTranscode(info: PlatformInfo, profile: TranscodeProfile | null): TranscodeProfile | null {
+    if (profile === null) return null;
+    const caps = isTranscoding(profile) ? transcodeCapabilitiesFor(services).get() : null;
+    const problems = validateTranscodeProfile(profile, info.id, info.name, caps);
+    if (problems.length > 0) throw badRequest(`Transcoding: ${problems[0]}`, 'transcode_invalid');
+    return profile;
+  }
+
   /** The destination's profile orchestrator (read lazily: wired after the routes are built). */
   const orchestratorOf = (dest: Destination) => services.orchestrators.get(profileOf(dest));
 
@@ -144,6 +177,7 @@ const destinationRoutes: FastifyPluginAsync<RouteOptions> = async (app, { servic
     const options = normalizeFields(fields.options, body.options);
     const ingestUrl = ingestUrlValue(info, fields.ingestUrl, body.ingestUrl);
     const streamKey = streamKeyValue(info, fields.streamKey, body.streamKey);
+    const transcode = checkTranscode(info, body.transcode ?? null);
 
     let dest = repos.destinations.create({
       profileId,
@@ -154,6 +188,7 @@ const destinationRoutes: FastifyPluginAsync<RouteOptions> = async (app, { servic
       enabled: body.enabled ?? true,
       options,
       ingestUrl,
+      transcode,
     });
     if (streamKey) {
       try {
@@ -194,6 +229,7 @@ const destinationRoutes: FastifyPluginAsync<RouteOptions> = async (app, { servic
     if (body.enabled !== undefined) patch.enabled = body.enabled;
     if (body.options != null) patch.options = normalizeFields(fields.options, body.options, current.options);
     if (body.ingestUrl !== undefined) patch.ingestUrl = ingestUrlValue(info, fields.ingestUrl, body.ingestUrl);
+    if (body.transcode !== undefined) patch.transcode = checkTranscode(info, body.transcode);
     // streamKey: undefined = keep, '' / null = clear, otherwise replace.
     const newKey = body.streamKey === undefined ? undefined : streamKeyValue(info, fields.streamKey, body.streamKey);
 
