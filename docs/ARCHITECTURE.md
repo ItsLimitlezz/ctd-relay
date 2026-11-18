@@ -22,7 +22,7 @@ License: **AGPL-3.0**.
 | R8 | Built for one user or a small organization. |
 | R9 | Easy install on TrueNAS (Docker image plus "Install via YAML"). No domain name required. |
 
-Non-goals for now: replying to chat, re-encoding (transcoding), multi-tenant SaaS.
+Non-goals for now: replying to chat, multi-tenant SaaS. Re-encoding is optional and off by default (§5.2).
 
 ---
 
@@ -112,7 +112,7 @@ Destinations fail independently. One platform failing never blocks the others. T
 | Landscape | 1920×1080 or 1280×720 | 60 or 30 | H.264 CBR ≤ 6 Mbps | 2 s | AAC 160 kbps, 48 kHz |
 | Vertical | 1080×1920 or 720×1280 | 30 | H.264 CBR ~4 Mbps | 2 s | AAC 160 kbps, 48 kHz |
 
-- Later: optional per-destination transcoding, hardware-gated (design: [TRANSCODING.md](TRANSCODING.md)).
+- Optional per-destination transcoding (off by default; [TRANSCODING.md](TRANSCODING.md)): with **Settings → Transcoding** on, a destination can get a re-encoded version (codec, size, frame rate, bitrate) instead of the copy, so OBS can send one high-quality feed. It encodes in that destination's own FFmpeg, on the CPU or a GPU encoder that passed the startup test, and falls back to the copy when the server can't keep up and the platform accepts the feed.
 
 ### 5.3 Twitch Dual Format
 Twitch Dual Format uses **Enhanced Broadcasting**: several video tracks (landscape and vertical) inside one Enhanced-RTMP connection, negotiated through Twitch's client configuration endpoint. Restream does not appear to support it, so supporting it would set this project apart.

@@ -25,7 +25,7 @@ An open-source alternative to Restream that you run yourself. OBS sends a **land
 ## Features
 
 - **Two feeds, many platforms.** Landscape and vertical from one OBS, each destination bound to the feed it needs, routing editable per destination.
-- **No re-encoding.** Video and audio are copied as-is, so CPU use stays near zero even on a NAS.
+- **No re-encoding by default.** Video and audio are copied as-is, so CPU use stays near zero even on a NAS. Optional per-destination **transcoding** (off by default) lets OBS send one high-quality feed while the server makes the version a platform accepts: [docs/TRANSCODING.md](docs/TRANSCODING.md).
 - **Goes live when OBS does.** Auto go-live when the feed arrives (or manual), per-destination health and stats, automatic retries, and short OBS disconnects ridden out without ending the lives.
 - **One title everywhere.** Set it once and it's pushed to every platform, before and during the stream. The category or game is never touched.
 - **Combined chat** (read-only) from all platforms, plus a chat overlay for an OBS browser source.

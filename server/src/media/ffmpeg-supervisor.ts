@@ -158,8 +158,12 @@ export const TRANSCODE_FALLBACK_AFTER_MS = 30_000;
 /** This many encode failures within the window do the same. */
 export const TRANSCODE_FAILURES_MAX = 3;
 export const TRANSCODE_FAILURES_WINDOW_MS = 120_000;
-/** The first seconds of output are ignored: encoders start with a burst, then settle. */
-const TRANSCODE_GRACE_US = 10_000_000;
+/**
+ * The first seconds after the push starts running are ignored: FFmpeg begins with a burst (the
+ * feed's buffered frames), then settles. Wall clock, so a badly overloaded encode is still judged
+ * after this long, however little it has produced.
+ */
+const TRANSCODE_GRACE_MS = 10_000;
 
 /** FFmpeg lines that mean the encoder (or its device, or the filter feeding it) could not start. */
 const ENCODER_OPEN_RE =
@@ -436,7 +440,7 @@ export function createPushSupervisor({ config, bus, log, media, repos, transcode
    */
   function trackTranscode(p: Push, block: ProgressBlock, stats: PushStats, t: number): boolean {
     const run = p.transcode;
-    if (!run || p.fallback || block.outTimeUs < TRANSCODE_GRACE_US) return false;
+    if (!run || p.fallback || p.runningSince === null || t - p.runningSince < TRANSCODE_GRACE_MS) return false;
     run.samples.push({ t, outTimeUs: block.outTimeUs, frame: block.frame });
     // Keep one sample that is at least a window old as the base.
     while (run.samples.length > 1 && t - run.samples[1]!.t >= TRANSCODE_WINDOW_MS) run.samples.shift();
@@ -562,6 +566,12 @@ export function createPushSupervisor({ config, bus, log, media, repos, transcode
       (spawnError ? `FFmpeg could not start: ${spawnError.message}` : signal ? `FFmpeg was killed (${signal})` : `FFmpeg exited with code ${code}`);
     if (p.runningSince !== null && now() - p.runningSince >= HEALTHY_RESET_MS) p.attempt = 0;
     p.attempt++;
+
+    // The encode is gone with its process: until the relaunch reports again it is "starting".
+    if (p.transcode) {
+      Object.assign(p.transcode.status, { state: 'starting', speed: null, message: null });
+      Object.assign(p.transcode, { samples: [], behindSince: null, okSince: null, cantCopy: null });
+    }
 
     // An exit caused by the encode itself (not the network, not the feed): after an encoder that
     // can't open, or TRANSCODE_FAILURES_MAX of them in a short time, give up transcoding.

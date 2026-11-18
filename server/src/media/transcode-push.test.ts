@@ -417,7 +417,7 @@ describe('when the encode falls behind real time', () => {
     await flush();
     const first = rig.child();
     const encode = new Encode(rig, first);
-    await encode.run(20); // settles, keeps up
+    await encode.run(24); // settles (10 s), then a full 10 s window: keeps up
     expect(rig.last()).toMatchObject({ status: 'running', message: null, transcode: { state: 'running', speed: 1 } });
 
     await encode.run(16, 0.8); // the window fills with slow samples
@@ -455,7 +455,7 @@ describe('when the encode falls behind real time', () => {
     rig.sup.start('d1', plan);
     await flush();
     const encode = new Encode(rig);
-    await encode.run(20);
+    await encode.run(24);
     await encode.run(14, 0.8);
     expect(rig.last()?.transcode?.state).toBe('behind');
     await encode.run(30);
@@ -473,7 +473,7 @@ describe('when the encode falls behind real time', () => {
     rig.sup.start('d1', plan);
     await flush();
     const encode = new Encode(rig);
-    await encode.run(20);
+    await encode.run(24);
     await encode.run(14, 1, 22); // 22 of 30 frames per second
     expect(rig.last()?.transcode).toMatchObject({ state: 'behind' });
     expect(rig.last()?.message).toBe(transcodeBehindMessage(rig.last()!.transcode!.speed!));
@@ -496,12 +496,24 @@ describe('when the encode falls behind real time', () => {
     await rig.sup.stop('d1');
   });
 
+  it('judges an encode that is overloaded from the start by the clock, not by how little it produced', async () => {
+    const rig = setup();
+    rig.sup.start('d1', plan);
+    await flush();
+    const encode = new Encode(rig);
+    await encode.run(20, 0.3);
+    expect(rig.last()?.transcode?.state).toBe('running'); // 10 s to settle + a 10 s window
+    await encode.run(6, 0.3);
+    expect(rig.last()?.transcode).toMatchObject({ state: 'behind', speed: 0.3 });
+    await rig.sup.stop('d1');
+  });
+
   it("keeps transcoding with a clear warning when the platform can't take the original feed", async () => {
     const rig = setup({ feed: AV1_FEED });
     rig.sup.start('d1', plan);
     await flush();
     const encode = new Encode(rig);
-    await encode.run(20);
+    await encode.run(24);
     await encode.run(TRANSCODE_FALLBACK_AFTER_MS / 1000 + 30, 0.8);
     expect(rig.sp.calls).toHaveLength(1);
     expect(rig.child().signals).toEqual([]);
@@ -517,7 +529,7 @@ describe('when the encode falls behind real time', () => {
     const child = rig.child();
     child.ignore.add('SIGTERM'); // FFmpeg takes a moment to leave
     const encode = new Encode(rig, child);
-    await encode.run(20);
+    await encode.run(24);
     for (let i = 0; i < 40 && rig.last()?.status !== 'failed'; i++) await encode.run(2, 0.8);
     expect(rig.last()?.status).toBe('failed');
     expect(rig.last()?.message).toMatch(/^Transcoding stopped: this server encoded at 0\.80× real time\./);
@@ -541,7 +553,7 @@ describe('when the encode falls behind real time', () => {
     rig.sup.start('d1', plan);
     await flush();
     const encode = new Encode(rig);
-    await encode.run(20);
+    await encode.run(24);
     await encode.run(120, 0.5);
     expect(rig.sp.calls).toHaveLength(1);
     expect(rig.child().signals).toEqual([]);
