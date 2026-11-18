@@ -717,7 +717,8 @@ again (§9.3, *Pairing again*).
       "url": "http://10.20.30.40:30200/o/takeover-v?key=…", "width": 1080, "height": 1920 }
   ] }
 ```
-Response: `200` with the `ConnectedApp` (below). Limits: 200 resources, `meta` ≤ 4 KB each, body
+Response: `200` with the `ConnectedApp` (below). Limits: 200 resources, `meta` ≤ 4 KB each (plus
+an overlay's `meta.scenes`, below), body
 ≤ 256 KB (`413`), 100 apps in all and 20 per token (`409 limit`). A profile-limited token may only
 assign resources to its own profile (or `null`; `403 profile_forbidden`). A resource assigned to
 a profile that doesn't exist (e.g. one deleted since — deleting a profile also removes the resources
@@ -744,6 +745,25 @@ Fields not listed are ignored. Each `PUT` replaces the whole registration (send 
   `"takeover-lower-third"`; `[a-z0-9-]`, ≤ 64 — typically the template id plus the canvas). The OBS
   plugin uses `canvas` (falling back to width > height) to place the source, and `slot` + `canvas` to
   re-point existing browser sources when the user switches profile ("Switch existing").
+- **Overlay scenes: `meta.scenes`.** An overlay with several scenes lists them so the OBS plugin
+  can add one scene as its own browser source instead of the whole overlay:
+  ```json
+  "meta": { "canvas": "landscape", "slot": "takeover-landscape",
+    "scenes": [
+      { "id": "scn_intro", "name": "Intro", "url": "http://10.20.30.40:30200/o/takeover-h?key=…&scene=scn_intro" },
+      { "id": "scn_brb", "name": "Be right back", "url": "http://10.20.30.40:30200/o/takeover-h?key=…&scene=scn_brb" }
+    ] }
+  ```
+  Each scene `url` shows only that scene (pinned), for the same canvas and size as the overlay's
+  main `url` (an overlay per canvas lists the scene URLs of its own canvas). Rules, for resources of
+  type `overlay`: `scenes` is an array of ≤ 50 objects, each with `id` (string, 1 to 100, unique
+  within the overlay), `name` (string, 1 to 120) and `url` (`http(s)`, ≤ 2048, like the main `url`);
+  ≤ 16 KB of JSON in all, **not** counted in the 4 KB of the rest of `meta`. Other keys on a scene
+  are kept. A malformed `scenes` refuses the `PUT` (`400 invalid`, naming the field, e.g.
+  `resources.0.meta.scenes.1.url`). Relay stores `meta` and returns it exactly as sent in
+  `GET /apps`, `GET /profiles/{id}/overlays` and the `apps.changed` event; leave `scenes` out (or
+  send `[]`) for an overlay without separate scenes. Readers should treat a missing `scenes` as
+  "main URL only". On other resource types `meta.scenes` is free-form like the rest of `meta`.
 
 #### `GET /api/v1/apps?profile=<id>` — `apps:read`
 ```json
@@ -772,9 +792,13 @@ to it; unassigned ones are listed by `GET /apps`), from every app, with its `met
 { "items": [ { "appId": "ctd-overlay", "appName": "CTD Overlay", "appOnline": true,
   "id": "ovl_h", "name": "DPRTMNT takeover — landscape",
   "url": "http://10.20.30.40:30200/o/takeover-h?key=…", "width": 1920, "height": 1080,
-  "meta": { "canvas": "landscape", "slot": "takeover-landscape" } } ] }
+  "meta": { "canvas": "landscape", "slot": "takeover-landscape",
+    "scenes": [ { "id": "scn_intro", "name": "Intro",
+      "url": "http://10.20.30.40:30200/o/takeover-h?key=…&scene=scn_intro" } ] } } ] }
 ```
-`url`, `width`, `height` and `meta` are left out when the app didn't send them.
+`url`, `width`, `height` and `meta` are left out when the app didn't send them. `meta` is returned
+as the app registered it; `meta.scenes` (when present: `[{ "id", "name", "url" }]`, see
+`PUT /apps/{appId}`) are the overlay's single-scene browser-source URLs.
 
 #### `DELETE /api/v1/apps/{appId}` — `apps:write`
 Unregister (the owning token only) → `204`. Revoking a token removes its apps; an admin can also
@@ -1379,6 +1403,11 @@ the revision in `info.version`.
 - **Transcoding capabilities:** `GET /system/transcode-capabilities` (`status:read`): which video
   encoders (H.264, HEVC, AV1; hardware and software) work on the Relay machine, from a test encode
   at startup. Read-only groundwork for per-destination transcoding (docs/TRANSCODING.md).
+- **Overlay scenes:** an overlay resource may list its scenes in `meta.scenes`
+  (`[{ "id", "name", "url" }]`, single-scene browser-source URLs; §9.2). Relay validates them
+  (`http(s)` URLs, ≤ 50 scenes, ≤ 16 KB, outside the 4 KB `meta` limit) and returns `meta` as sent in
+  `GET /apps`, `GET /profiles/{id}/overlays` and `apps.changed`. Earlier revisions also passed
+  `meta.scenes` through, but unchecked and inside the 4 KB limit.
 
 ### v1.9
 
