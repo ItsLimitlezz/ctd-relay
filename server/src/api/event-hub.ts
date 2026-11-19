@@ -86,8 +86,11 @@ export interface EventHubDeps {
   summaries?(): ProfileSummary[];
   /** Every connected app, unfiltered (AppRegistry.list()). Default: none. */
   apps?(): ConnectedApp[];
-  /** An OBS app's open issues as last stored (ObsStateStore), for re-raising after it was offline. Default: none. */
-  obsIssues?(profileId: string, appId: string): Record<string, unknown>[];
+  /**
+   * An OBS app's issues were cleared because it went offline ('stale') or unregistered ('removed'): drop what the
+   * OBS state store remembers of them, so its next report counts as a change. Default: nothing.
+   */
+  obsAppForgotten?(profileId: string, appId: string, resolution: 'stale' | 'removed'): void;
   /** Issue hold times (tests). Default: ISSUE_HOLDS. */
   issueHolds?: Partial<IssueHolds>;
   log: Pick<Logger, 'warn'>;
@@ -235,7 +238,7 @@ export class EventHub {
       raised: (profile, src, data) => this.publish<ApiIssueRaised>('issue.raised', source(src.connection, src.platform, profile), data),
       cleared: (profile, src, data) => this.publish<ApiIssueCleared>('issue.cleared', source(src.connection, src.platform, profile), data),
       run: (fn) => this.guard(fn),
-      ...(deps.obsIssues ? { obsIssues: deps.obsIssues } : {}),
+      ...(deps.obsAppForgotten ? { obsAppForgotten: deps.obsAppForgotten } : {}),
       ...(deps.issueHolds ? { holds: deps.issueHolds } : {}),
     });
 
@@ -880,10 +883,11 @@ export function eventHubDeps(services: AppServices): EventHubDeps {
     profiles: () => services.repos.profiles.list(),
     summaries: () => services.orchestrators.summaries(),
     apps: () => services.apps.list(),
-    obsIssues: (profileId, appId) =>
-      obsStoreFor(services)
-        .view(profileId)
-        .find((a) => a.appId === appId)?.issues ?? [],
+    obsAppForgotten: (profileId, appId, resolution) => {
+      const store = obsStoreFor(services);
+      if (resolution === 'removed') store.forgetApp(appId);
+      else store.forgetReported(profileId, appId);
+    },
   };
 }
 

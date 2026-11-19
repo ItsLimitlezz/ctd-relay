@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { CLEAN_STOP_WINDOW_MS, ISSUE_HOLDS, IssueTracker, OBS_APP_RECENT_MS, outputFeed, type IssueSource } from './issues.js';
+import { CLEAN_STOP_WINDOW_MS, ISSUE_HOLDS, IssueTracker, MAX_OBS_ISSUES_PER_APP, outputFeed, type IssueSource } from './issues.js';
 import type { ApiDestination, ApiIssueCleared, ApiIssueRaised } from './types.js';
 
 const T0 = Date.parse('2026-11-18T20:00:00.000Z');
@@ -11,7 +11,7 @@ type Sent =
   | { type: 'cleared'; profile: string; src: IssueSource; data: ApiIssueCleared };
 
 let sent: Sent[];
-let stored: Record<string, unknown>[];
+let forgotten: string[];
 let tracker: IssueTracker;
 
 function destination(id: string, over: Partial<ApiDestination> = {}): ApiDestination {
@@ -52,13 +52,13 @@ beforeEach(() => {
   vi.useFakeTimers();
   vi.setSystemTime(T0);
   sent = [];
-  stored = [];
+  forgotten = [];
   tracker = new IssueTracker({
     now: Date.now,
     raised: (profile, src, data) => sent.push({ type: 'raised', profile, src, data }),
     cleared: (profile, src, data) => sent.push({ type: 'cleared', profile, src, data }),
     run: (fn) => fn(),
-    obsIssues: () => stored,
+    obsAppForgotten: (profile, appId, resolution) => forgotten.push(`${profile}:${appId}:${resolution}`),
   });
 });
 
@@ -135,7 +135,27 @@ describe('feed.offline', () => {
     tracker.feed(P, 'vertical', false);
     vi.advanceTimersByTime(ISSUE_HOLDS.feed);
     expect(raisedOf('feed.offline|landscape')).toMatchObject({ severity: 'critical', message: expect.stringContaining('without stopping its stream') });
-    expect(OBS_APP_RECENT_MS).toBeGreaterThan(60_000); // the plugin resends every 60 s
+  });
+
+  it('a plugin that has had nothing new to say for an hour is still watching, until it goes offline', () => {
+    // Only changes reach the tracker (the OBS state store drops the 60 s resends): silence is not absence.
+    tracker.obsEvent(P, APP, 'obs.scene', { canvas: 'landscape', scene: 'Main' });
+    tracker.apps([{ id: APP, online: true }]);
+    vi.advanceTimersByTime(3600_000);
+    goLive();
+    tracker.feed(P, 'landscape', false);
+    tracker.feed(P, 'vertical', false);
+    vi.advanceTimersByTime(ISSUE_HOLDS.feed);
+    expect(raisedOf('feed.offline|landscape').severity).toBe('critical');
+    // The same loss with the app offline: nobody there to say why, a warning.
+    tracker.session(P, false);
+    tracker.apps([{ id: APP, online: false }]);
+    sent = [];
+    goLive();
+    tracker.feed(P, 'landscape', false);
+    tracker.feed(P, 'vertical', false);
+    vi.advanceTimersByTime(ISSUE_HOLDS.feed);
+    expect(raisedOf('feed.offline|landscape').severity).toBe('warning');
   });
 
   it('OBS stopping its stream on purpose is no alert (clean stop before or during the hold)', () => {
@@ -143,6 +163,7 @@ describe('feed.offline', () => {
     tracker.obsEvent(P, APP, 'obs.output', { output: 'main', canvas: 'landscape', state: 'live' });
     tracker.feed(P, 'landscape', false);
     tracker.feed(P, 'vertical', false);
+    tracker.obsEvent(P, APP, 'obs.output', { output: 'Vertical Stream', canvas: 'vertical', state: 'live' });
     vi.advanceTimersByTime(1500);
     tracker.obsEvent(P, APP, 'obs.output', { output: 'main', canvas: 'landscape', state: 'stopped' });
     tracker.obsEvent(P, APP, 'obs.output', { output: 'Vertical Stream', canvas: 'vertical', state: 'stopped' });
@@ -151,14 +172,36 @@ describe('feed.offline', () => {
     expect(CLEAN_STOP_WINDOW_MS).toBeGreaterThan(ISSUE_HOLDS.feed);
   });
 
-  it('a clean stop reported late ends the alert; a stop with an error does not count as clean', () => {
+  it('a clean stop reported a little late ends the alert', () => {
     goLive();
+    tracker.obsEvent(P, APP, 'obs.output', { output: 'main', state: 'live' });
     tracker.feed(P, 'landscape', false);
-    tracker.obsEvent(P, APP, 'obs.output', { output: 'main', state: 'stopped', error: 'Disconnected' });
     vi.advanceTimersByTime(ISSUE_HOLDS.feed);
     expect(log()).toEqual(['raised:feed.offline|landscape']);
     tracker.obsEvent(P, APP, 'obs.output', { output: 'main', state: 'stopped' });
     expect(log()).toEqual(['raised:feed.offline|landscape', 'cleared:feed.offline|landscape:ended']);
+  });
+
+  it('only a live output stopping without an error, around the loss, is a stop on purpose', () => {
+    // A stop with an error is a failure.
+    goLive();
+    tracker.obsEvent(P, APP, 'obs.output', { output: 'main', state: 'live' });
+    tracker.feed(P, 'landscape', false);
+    tracker.obsEvent(P, APP, 'obs.output', { output: 'main', state: 'stopped', error: 'Disconnected' });
+    vi.advanceTimersByTime(ISSUE_HOLDS.feed);
+    expect(log()).toEqual(['raised:feed.offline|landscape']);
+    // OBS crashed and was started again: its idle output reports "stopped", but it never was live for this app
+    // run, and a second OBS machine's idle output is not this stream either. The crash alert stays.
+    tracker.obsEvent(P, APP, 'obs.output', { output: 'main', state: 'stopped' });
+    tracker.obsEvent(P, 'ctd-obs-plugin-backup', 'obs.output', { output: 'main', state: 'stopped' });
+    expect(log()).toEqual(['raised:feed.offline|landscape']);
+    // Ten minutes after the loss, even a real live → stopped is about something else (a later attempt).
+    vi.advanceTimersByTime(10 * 60_000);
+    tracker.obsEvent(P, APP, 'obs.output', { output: 'main', state: 'live' });
+    tracker.obsEvent(P, APP, 'obs.output', { output: 'main', state: 'stopped' });
+    expect(log()).toEqual(['raised:feed.offline|landscape']);
+    tracker.session(P, false);
+    expect(log().at(-1)).toBe('cleared:feed.offline|landscape:ended');
   });
 
   it('says OBS is reconnecting when the plugin reports it, and updates the open issue', () => {
@@ -265,6 +308,8 @@ describe('destination.down and stream.down', () => {
     goLive();
     tracker.destination(P, destination('t1'));
     tracker.destination(P, destination('i1', { feed: 'vertical' }));
+    tracker.obsEvent(P, APP, 'obs.output', { output: 'main', canvas: 'landscape', state: 'live' });
+    tracker.obsEvent(P, APP, 'obs.output', { output: 'Vertical Stream', canvas: 'vertical', state: 'live' });
     tracker.obsEvent(P, APP, 'obs.output', { output: 'main', canvas: 'landscape', state: 'stopped' });
     tracker.obsEvent(P, APP, 'obs.output', { output: 'Vertical Stream', canvas: 'vertical', state: 'stopped' });
     tracker.feed(P, 'landscape', false);
@@ -278,6 +323,7 @@ describe('destination.down and stream.down', () => {
 
   it('a clean stop says nothing about the next stream: its loss alerts again', () => {
     goLive();
+    tracker.obsEvent(P, APP, 'obs.output', { output: 'main', canvas: 'landscape', state: 'live' });
     tracker.obsEvent(P, APP, 'obs.output', { output: 'main', canvas: 'landscape', state: 'stopped' });
     tracker.feed(P, 'landscape', false);
     vi.advanceTimersByTime(2000);
@@ -294,9 +340,31 @@ describe('destination.down and stream.down', () => {
     tracker.session(P, true);
     tracker.destination(P, destination('t1'));
     tracker.destination(P, down('i1', { feed: 'vertical', phase: 'waiting-for-feed', waitingFor: ['vertical'], message: 'Waiting for vertical feed' }));
-    vi.advanceTimersByTime(ISSUE_HOLDS.destination);
+    // The vertical output a few seconds behind the main one is a show starting, not a problem…
+    vi.advanceTimersByTime(ISSUE_HOLDS.waiting - 1);
+    expect(sent).toEqual([]);
+    // …but one that never comes is worth saying.
+    vi.advanceTimersByTime(1);
     expect(log()).toEqual(['raised:destination.down|i1']);
-    expect(raisedOf('destination.down|i1').message).toBe('Waiting for vertical feed');
+    expect(raisedOf('destination.down|i1')).toMatchObject({ severity: 'warning', message: 'Waiting for vertical feed' });
+    expect(ISSUE_HOLDS.waiting).toBeGreaterThan(ISSUE_HOLDS.destination);
+  });
+
+  it('a session started by hand before OBS sends anything is not "down on every platform"', () => {
+    tracker.session(P, true);
+    tracker.destination(P, down('t1', { phase: 'waiting-for-feed', waitingFor: ['landscape'], message: 'Waiting for landscape feed' }));
+    tracker.destination(P, down('i1', { feed: 'vertical', phase: 'waiting-for-feed', waitingFor: ['vertical'], message: 'Waiting for vertical feed' }));
+    vi.advanceTimersByTime(ISSUE_HOLDS.stream + ISSUE_HOLDS.destination);
+    expect(sent).toEqual([]);
+    vi.advanceTimersByTime(ISSUE_HOLDS.waiting);
+    expect(log()).toEqual(['raised:destination.down|t1', 'raised:destination.down|i1']); // no stream.down
+    // The feeds arrive, then every platform fails: now it is.
+    sent = [];
+    tracker.feed(P, 'landscape', true);
+    tracker.destination(P, down('t1', { phase: 'error', message: 'Stream key rejected' }));
+    tracker.destination(P, down('i1', { feed: 'vertical', phase: 'retrying' }));
+    vi.advanceTimersByTime(ISSUE_HOLDS.stream);
+    expect(log()).toContain('raised:stream.down');
   });
 });
 
@@ -339,17 +407,42 @@ describe('OBS issues', () => {
     expect(sent[1]!.data).toMatchObject({ firstSeen: T0 - 3600_000, updatedAt: T0 });
   });
 
-  it('an app going offline clears its issues as stale and raises them again when it returns', () => {
+  it('an app going offline clears its issues as stale; its own next report raises what is still wrong', () => {
     tracker.obsEvent(P, APP, 'obs.issue.raised', issue);
     tracker.apps([{ id: APP, online: true }]);
     expect(sent).toHaveLength(1);
     tracker.apps([{ id: APP, online: false }]);
     expect(log().at(-1)).toBe(`cleared:obs.issue|${APP}|camera-offline|Club cam:stale`);
-    stored = [{ ...issue, updatedAt: T0 }];
+    // The hub is told, so the OBS state store forgets what the app reported (its next report is a change again).
+    expect(forgotten).toEqual([`${P}:${APP}:stale`]);
+    // Back online: nothing is revived from memory (yesterday's "camera offline" must not come back by itself)…
     tracker.apps([{ id: APP, online: true }]);
-    expect(log().at(-1)).toBe(`raised:obs.issue|${APP}|camera-offline|Club cam`);
+    tracker.obsEvent(P, APP, 'obs.scene', { canvas: 'landscape', scene: 'Main' });
+    expect(sent).toHaveLength(2);
+    // …the plugin says so if it is still wrong.
+    tracker.obsEvent(P, APP, 'obs.issue.raised', issue);
+    expect(sent.at(-1)).toMatchObject({ type: 'raised', data: { update: false } });
     tracker.apps([]);
     expect(log().at(-1)).toBe(`cleared:obs.issue|${APP}|camera-offline|Club cam:removed`);
+    expect(forgotten.at(-1)).toBe(`${P}:${APP}:removed`);
+  });
+
+  it('caps the open issues of one app', () => {
+    for (let i = 0; i < MAX_OBS_ISSUES_PER_APP + 50; i++) tracker.obsEvent(P, APP, 'obs.issue.raised', { id: `frozen-picture|Cam ${i}`, severity: 'warning', title: `Frozen picture on Cam ${i}` });
+    expect(tracker.list(P)).toHaveLength(MAX_OBS_ISSUES_PER_APP);
+    // The ones that are open still update and clear; another app has its own budget.
+    tracker.obsEvent(P, APP, 'obs.issue.raised', { id: 'frozen-picture|Cam 0', severity: 'critical', title: 'Frozen picture on Cam 0' });
+    expect(sent.at(-1)).toMatchObject({ type: 'raised', data: { update: true, severity: 'critical' } });
+    tracker.obsEvent(P, 'ctd-obs-plugin-backup', 'obs.issue.raised', { id: 'av-drift|Cam', severity: 'warning', title: 'A/V drift' });
+    expect(tracker.list(P)).toHaveLength(MAX_OBS_ISSUES_PER_APP + 1);
+    tracker.obsEvent(P, APP, 'obs.issue.cleared', { id: 'frozen-picture|Cam 1' });
+    tracker.obsEvent(P, APP, 'obs.issue.raised', { id: 'frozen-picture|Cam 140', severity: 'warning', title: 'Frozen picture on Cam 140' });
+    expect(tracker.list(P)).toHaveLength(MAX_OBS_ISSUES_PER_APP + 1);
+    // A long id is cut like the OBS state store cuts it, and a missing title can't run past the limit.
+    tracker.obsEvent('club', APP, 'obs.issue.raised', { id: `upstream-loss|${'x'.repeat(400)}`, severity: 'warning' });
+    const long = tracker.list('club')[0]!;
+    expect(long.id.length).toBeLessThanOrEqual(`obs.issue|${APP}|`.length + 120);
+    expect(long.title.length).toBeLessThanOrEqual(120);
   });
 
   it('obs.output.down: an output reconnecting for 3 s when no Relay feed tells it; live clears it', () => {

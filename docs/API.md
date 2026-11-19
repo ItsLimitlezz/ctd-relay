@@ -1608,8 +1608,8 @@ detectors add a `kind`, not a new event.
 | `kind` | `id` | Severity | Raised when | Cleared when |
 |---|---|---|---|---|
 | `feed.offline` | `feed.offline\|<feed>` | critical; **warning** when every feed went quiet and no CTD OBS app is there to say why | A running session's (`starting`/`live`) ingest feed goes from online to offline and stays offline **5 s** — unless OBS stopped that stream on purpose (below) | The feed is back (`recovered`), the session ends, or OBS reports a clean stop late (`ended`) |
-| `destination.down` | `destination.down\|<destinationId>` | warning; **critical** once the phase is `error` (Relay gave up) | The destination's `down` flag (§4) stays set **5 s** (not while it only waits for a feed this session lost: that is `feed.offline`'s) | `destination.up` (`recovered`), the session ends (`ended`), the destination is deleted (`removed`) |
-| `stream.down` | `stream.down` | critical | A running session has at least one counted destination (enabled, not skipped by test mode) and **every** one is down, for **5 s** (same exception) | Any of them is up again (`recovered`), or the session ends (`ended`) |
+| `destination.down` | `destination.down\|<destinationId>` | warning; **critical** once the phase is `error` (Relay gave up) | The destination's `down` flag (§4) stays set **5 s**. While it only waits for a feed: **30 s** when that feed hasn't come yet (a show being set up), never when this session lost it (that is `feed.offline`'s) | `destination.up` (`recovered`), the session ends (`ended`), the destination is deleted (`removed`) |
+| `stream.down` | `stream.down` | critical | A running session has at least one counted destination (enabled, not skipped by test mode) and **every** one is down, for **5 s**. Not while every one only waits for a feed: this is for platforms failing | Any of them is up again (`recovered`), or the session ends (`ended`) |
 | `obs.output.down` | `obs.output.down\|<appId>\|<output>` | warning | An OBS output reports `reconnecting` for **3 s**, and no `feed.offline` already tells it (OBS streams elsewhere, or Relay isn't live) | It reports `live` (`recovered`) or `stopped` (`ended`); its app goes away (`removed` / `stale`) |
 | `obs.issue` | `obs.issue\|<appId>\|<plugin issue id>` | the plugin's | The plugin sends `obs.issue.raised` (it applies its own hold time) | The plugin sends `obs.issue.cleared` (`recovered`); its app unregisters (`removed`) or goes offline (`stale`) |
 
@@ -1617,12 +1617,17 @@ Hold times keep a blip (OBS reconnecting in a second, a platform retry) from bec
 They are fixed in v1.12.
 
 **Stopping on purpose is not an alert.** When the CTD OBS plugin reports that OBS stopped a stream
-cleanly (`obs.output` `stopped` without `error`, within 15 s of the feed going offline), Relay raises
-no `feed.offline`, and the destinations that then wait for that feed raise nothing either while the
-session runs out its grace period. With the plugin connected and no such report, a lost feed is
-`critical` ("OBS stopped sending without stopping its stream": a crash or the network); when the
-plugin reports `reconnecting`, the message says so. Without the plugin Relay can't tell a stop from
-a crash: one feed lost while the other stays is `critical`, every feed gone is a `warning`. `obs.issue` carries the plugin's `onProgram` / `scene` when the plugin
+cleanly — that output's `obs.output` going from `live` to `stopped` without `error`, within 15 s of
+the feed going offline, before or after — Relay raises no `feed.offline` (one already raised clears
+as `ended`), and the destinations that then wait for that feed raise nothing either while the
+session runs out its grace period. Any other `stopped` (with an `error`, from an output that wasn't
+live, or long after the loss) changes nothing. While an OBS app that reports on the profile is
+online and there is no such report, a lost feed is `critical` ("OBS stopped sending without stopping
+its stream": a crash or the network); when the plugin reports `reconnecting`, the message says so.
+With no OBS app online Relay can't tell a stop from a crash: one feed lost while the other stays is
+`critical`, every feed gone is a `warning`.
+
+At most 100 `obs.issue` issues are open per app; reports beyond that are dropped until some clear. `obs.issue` carries the plugin's `onProgram` / `scene` when the plugin
 sends them (CTD OBS F2 and later): that is how a dead source **on program** — a scene problem —
 becomes visible to the Live apps.
 
@@ -1632,7 +1637,8 @@ becomes visible to the Live apps.
 
 - `update: false` — a new problem. **This is the one to notify on.**
 - `update: true` — the open issue with the same `id` changed: `severity`, `title`, `message`,
-  `onProgram` or `scene`. Replace what you show. Notify again only if `severity` went up.
+  `onProgram` or `scene` (or, rarely, `rule` or `subject`: a destination renamed). Replace what you
+  show. Notify again only if `severity` went up.
 
 Relay sends at most one `issue.raised` per change; the plugin's 60 s state resend never repeats one.
 
@@ -1647,9 +1653,9 @@ Relay sends at most one `issue.raised` per change; the plugin's 60 s state resen
 | `resolution` | Means |
 |---|---|
 | `recovered` | The thing works again (feed back, destination live, source has signal) |
-| `ended` | It no longer applies: the session or the output stopped. **A `feed.offline` that clears as `ended` means the stream ended without the feed coming back** (OBS stopped or crashed and the grace period ran out). |
+| `ended` | It no longer applies: the session or the output stopped. **A `feed.offline` that clears as `ended` means OBS's stream is over without the feed coming back**: the session ended (OBS stopped or crashed and the grace period ran out), or OBS reported, a little late, that it stopped on purpose. |
 | `removed` | Its destination, app or profile was deleted |
-| `stale` | The OBS app that reported it went offline (§9.2's 90 s rule); its state is unknown. If the app returns with the problem still there, it is raised again (`update: false`) |
+| `stale` | The OBS app that reported it went offline (§9.2's 90 s rule); its state is unknown. Relay forgets what that app reported. When it returns, its own next report raises whatever is still wrong (`update: false`, a new `firstSeen`); a problem that ended while it was away never comes back |
 
 `src` is the usual envelope source: `core` for `feed` and `stream` subjects, the destination for
 `destination`, and `{ connection: <appId>, platform: "obs" }` for OBS subjects. `src.profile` is
@@ -1674,7 +1680,8 @@ and the plugin's next state resend raises its issues again.
    `severity` went up. Not on `issue.cleared`, except that a `feed.offline` / `stream.down` cleared
    as `ended` is worth one "stream ended" line.
 3. Don't notify the same `id` more than once a minute: a camera that drops every 20 s is one
-   alert, not three. Keep showing it while it is open.
+   alert, not three. Keep showing it while it is open. A rise in severity is told even right after
+   the first alert, but also at most once a minute per `id`.
 4. Order by `severity`, then `firstSeen`. Show `title` (and `message` when there is room).
 5. Filter by `kind` / `subject` only for what your app can act on; show the rest.
 

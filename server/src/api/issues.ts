@@ -28,6 +28,8 @@ export const ISSUE_HOLDS = {
   /** feed.offline: long enough for the plugin's clean-stop report to arrive first. */
   feed: 5_000,
   destination: 5_000,
+  /** destination.down while it only waits for a feed that hasn't come yet (a show being set up). */
+  waiting: 30_000,
   stream: 5_000,
   output: 3_000,
 };
@@ -35,8 +37,10 @@ export type IssueHolds = typeof ISSUE_HOLDS;
 
 /** A clean OBS stop (obs.output stopped, no error) this close to a feed going offline = on purpose. */
 export const CLEAN_STOP_WINDOW_MS = 15_000;
-/** An OBS app that sent events for a profile this recently is watching it (the plugin resends every 60 s). */
-export const OBS_APP_RECENT_MS = 90_000;
+/** Most open (or pending) OBS issues, and reconnecting outputs, kept per app: what the OBS state store keeps too. */
+export const MAX_OBS_ISSUES_PER_APP = 100;
+/** Ids and names from the plugin are cut like the OBS state store cuts them (obs.ts). */
+const NAME_MAX = 120;
 /** A plugin issue's firstSeen is kept when it is at most this far ahead of, or behind, Relay's clock. */
 const FIRST_SEEN_AHEAD_MS = 5 * 60_000;
 const FIRST_SEEN_MAX_AGE_MS = 7 * 24 * 3600_000;
@@ -70,8 +74,12 @@ export interface IssueTrackerDeps {
   cleared(profileId: string, src: IssueSource, data: ApiIssueCleared): void;
   /** Runs timer callbacks (the hub's guard: nothing may throw out of a timer). */
   run(fn: () => void): void;
-  /** The plugin's open issues as Relay last stored them (re-raised when a stale app returns). */
-  obsIssues?(profileId: string, appId: string): Record<string, unknown>[];
+  /**
+   * An OBS app's issues were cleared because it went offline ('stale') or unregistered ('removed'). The hub
+   * drops them from the OBS state store too, so the app's next report of a problem that is still there is a
+   * change again and raises it afresh — and one that isn't there any more never comes back.
+   */
+  obsAppForgotten?(profileId: string, appId: string, resolution: 'stale' | 'removed'): void;
   holds?: Partial<IssueHolds>;
 }
 
@@ -102,18 +110,18 @@ interface Reconnecting {
 interface ProfileState {
   running: boolean;
   feeds: Map<Feed, boolean>;
-  /** Feeds that were online in this session and went offline (until they return or it ends). */
-  lostFeeds: Set<Feed>;
+  /** Feeds that were online in this session and went offline, and when (until they return or it ends). */
+  lostAt: Map<Feed, number>;
   /** Latest destination item per id (from the hub's refreshes). */
   destinations: Map<string, ApiDestination>;
   /** Canvas → when OBS last stopped that stream cleanly. */
   cleanStop: Map<Feed, number>;
   /** obs.output.down id → the output that is reconnecting. */
   reconnecting: Map<string, Reconnecting>;
-  /** OBS app id → when it last sent an event for this profile. */
-  obsApps: Map<string, number>;
-  /** OBS apps whose issues were cleared as stale (re-raised from the store when they return). */
-  staleApps: Set<string>;
+  /** obs.output.down id → that output's last reported state (a clean stop is live → stopped). */
+  outputs: Map<string, string>;
+  /** OBS apps that reported on this profile and are online (apps() takes the others out). */
+  obsApps: Set<string>;
   open: Map<string, OpenIssue>;
   pending: Map<string, Pending>;
 }
@@ -193,7 +201,7 @@ export class IssueTracker {
     const st = this.state(profileId);
     const was = st.running;
     st.running = running;
-    if (was !== running) st.lostFeeds.clear();
+    if (was !== running) st.lostAt.clear();
     if (was && !running) {
       this.dropWhere(st, profileId, (i) => i.subject.type === 'feed' || i.subject.type === 'destination' || i.subject.type === 'stream', 'ended');
     }
@@ -207,11 +215,11 @@ export class IssueTracker {
     if (was === online) return;
     const id = `feed.offline|${feed}`;
     if (online) {
-      st.lostFeeds.delete(feed);
+      st.lostAt.delete(feed);
       st.cleanStop.delete(feed); // a new stream: an old clean stop says nothing about its next loss
       this.drop(st, profileId, id, 'recovered');
     } else if (was === true && st.running) {
-      st.lostFeeds.add(feed);
+      st.lostAt.set(feed, this.deps.now());
       this.want(st, profileId, id, this.holds.feed, () => this.feedDraft(profileId, feed));
     }
     this.refreshFeeds(st, profileId);
@@ -222,7 +230,10 @@ export class IssueTracker {
     const st = this.state(profileId);
     st.destinations.set(item.id, item);
     const id = `destination.down|${item.id}`;
-    if (item.down && st.running) this.want(st, profileId, id, this.holds.destination, () => this.destinationDraft(profileId, item.id));
+    // A destination that only waits for a feed that hasn't come yet gets longer: a show being set up
+    // (the session started by hand, or the vertical output a few seconds behind) is not a problem yet.
+    const hold = item.phase === 'waiting-for-feed' ? this.holds.waiting : this.holds.destination;
+    if (item.down && st.running) this.want(st, profileId, id, hold, () => this.destinationDraft(profileId, item.id));
     else this.drop(st, profileId, id, 'recovered');
     this.checkStream(st, profileId);
   }
@@ -238,14 +249,13 @@ export class IssueTracker {
   /** An OBS event the hub re-emitted (only changes reach it: the store drops unchanged resends). */
   obsEvent(profileId: string, appId: string, type: string, data: Record<string, unknown>): void {
     const st = this.state(profileId);
-    st.obsApps.set(appId, this.deps.now());
-    st.staleApps.delete(appId);
+    st.obsApps.add(appId);
     switch (type) {
       case 'obs.issue.raised':
         this.obsIssueRaised(st, profileId, appId, data);
         break;
       case 'obs.issue.cleared': {
-        const pid = text(data.id, 200);
+        const pid = text(data.id, NAME_MAX);
         if (pid) this.drop(st, profileId, `obs.issue|${appId}|${pid}`, 'recovered');
         break;
       }
@@ -259,24 +269,17 @@ export class IssueTracker {
   apps(list: readonly IssueApp[]): void {
     const byId = new Map(list.map((a) => [a.id, a]));
     for (const [profileId, st] of this.profiles) {
-      const appIds = new Set<string>([...st.obsApps.keys(), ...st.staleApps]);
+      const appIds = new Set<string>(st.obsApps);
       for (const o of st.open.values()) {
         const s = o.issue.subject;
         if (s.type === 'obs.output' || s.type === 'obs.source') appIds.add(s.appId);
       }
       for (const appId of appIds) {
         const app = byId.get(appId);
-        if (!app) {
-          this.forgetApp(st, profileId, appId, 'removed');
-          st.staleApps.delete(appId);
-        } else if (!app.online) {
-          if (this.forgetApp(st, profileId, appId, 'stale')) st.staleApps.add(appId);
-        } else if (st.staleApps.has(appId)) {
-          // Back: the store still has what it reported last; raise it again.
-          st.staleApps.delete(appId);
-          st.obsApps.set(appId, this.deps.now());
-          for (const data of this.deps.obsIssues?.(profileId, appId) ?? []) this.obsIssueRaised(st, profileId, appId, data);
-        }
+        // When it returns, its own next report raises whatever is still wrong (the hub drops what the
+        // OBS state store remembered, so that report counts as a change): nothing is revived from memory.
+        if (!app) this.forgetApp(st, profileId, appId, 'removed');
+        else if (!app.online) this.forgetApp(st, profileId, appId, 'stale');
       }
     }
   }
@@ -296,12 +299,14 @@ export class IssueTracker {
   private feedDraft(profileId: string, feed: Feed): IssueDraft | null {
     const st = this.profiles.get(profileId);
     if (!st || !st.running || st.feeds.get(feed) !== false) return null;
-    const now = this.deps.now();
     const clean = st.cleanStop.get(feed);
-    if (clean !== undefined && now - clean <= CLEAN_STOP_WINDOW_MS) return null; // OBS stopped on purpose
+    const lost = st.lostAt.get(feed);
+    // OBS stopped this stream on purpose, right around the moment the feed went away
+    if (clean !== undefined && lost !== undefined && Math.abs(lost - clean) <= CLEAN_STOP_WINDOW_MS) return null;
     const other = FEEDS.find((f) => f !== feed && st.feeds.get(f) === true);
     const rec = [...st.reconnecting.values()].find((r) => r.feed === feed);
-    const watched = [...st.obsApps.values()].some((at) => now - at <= OBS_APP_RECENT_MS);
+    // A CTD OBS app that reports on this profile is online: had OBS stopped on purpose, it would have said so
+    const watched = st.obsApps.size > 0;
     let severity: IssueSeverity = 'critical';
     let message: string;
     if (rec) message = `OBS is reconnecting to Relay${rec.error ? `: ${rec.error}` : '.'}`;
@@ -331,7 +336,7 @@ export class IssueTracker {
    * that never came is the destination's own problem and is raised.)
    */
   private coveredByFeed(st: ProfileState, item: ApiDestination): boolean {
-    return item.phase === 'waiting-for-feed' && item.waitingFor.some((f) => st.lostFeeds.has(f));
+    return item.phase === 'waiting-for-feed' && item.waitingFor.some((f) => st.lostAt.has(f));
   }
 
   private destinationDraft(profileId: string, destinationId: string): IssueDraft | null {
@@ -370,8 +375,9 @@ export class IssueTracker {
     if (!st || !st.running) return null;
     const counted = this.counted(st);
     if (counted.length === 0 || !counted.every((d) => d.down)) return null;
-    // Every one only waits for a lost feed: the feed issue is the alert.
-    if (!st.open.has('stream.down') && counted.every((d) => this.coveredByFeed(st, d))) return null;
+    // Every one only waits for a feed: a lost feed has its own alert (or OBS stopped on purpose), and a feed
+    // that hasn't come yet is a show being set up. "Down on every platform" is for platforms failing.
+    if (!st.open.has('stream.down') && counted.every((d) => d.phase === 'waiting-for-feed')) return null;
     const only = counted.length === 1 ? counted[0] : undefined;
     return {
       id: 'stream.down',
@@ -412,8 +418,11 @@ export class IssueTracker {
   // -------------------------------------------------------------------------
 
   private obsIssueRaised(st: ProfileState, profileId: string, appId: string, data: Record<string, unknown>): void {
-    const pid = text(data.id, 200);
+    const pid = text(data.id, NAME_MAX);
     if (!pid) return;
+    const id = `obs.issue|${appId}|${pid}`;
+    // A plugin gone wrong (or a hostile token) can't fill memory or GET /status: new ids beyond the cap are dropped.
+    if (!this.hasIssue(st, id) && this.countFor(st, `obs.issue|${appId}|`) >= MAX_OBS_ISSUES_PER_APP) return;
     const rule = text(data.rule, 64) ?? pid.split('|')[0] ?? null;
     const path = text(data.path, 200);
     const source = text(data.source, TITLE_MAX) ?? path ?? pid.split('|').slice(1).join('|');
@@ -422,11 +431,11 @@ export class IssueTracker {
     const firstSeen = typeof data.firstSeen === 'number' && Number.isFinite(data.firstSeen) && data.firstSeen <= now + FIRST_SEEN_AHEAD_MS && data.firstSeen >= now - FIRST_SEEN_MAX_AGE_MS ? data.firstSeen : undefined;
     const onProgram = typeof data.onProgram === 'boolean' ? data.onProgram : null;
     const draft: IssueDraft = {
-      id: `obs.issue|${appId}|${pid}`,
+      id,
       kind: 'obs.issue',
       rule,
       severity: severityOf(data.severity),
-      title: text(data.title, TITLE_MAX) ?? (source ? `${rule}: ${source}` : (rule ?? 'OBS issue')),
+      title: text(data.title, TITLE_MAX) ?? text(source ? `${rule}: ${source}` : (rule ?? 'OBS issue'), TITLE_MAX) ?? 'OBS issue',
       message: text(data.cause, MESSAGE_MAX),
       subject: { type: 'obs.source', appId, source, path },
       onProgram,
@@ -442,17 +451,25 @@ export class IssueTracker {
     if (!output) return;
     const id = `obs.output.down|${appId}|${output}`;
     const feed = outputFeed(data);
-    const state = data.state;
+    const state = typeof data.state === 'string' ? data.state : '';
     const error = text(data.error, MESSAGE_MAX);
+    const previous = st.outputs.get(id);
+    if (previous !== undefined || this.countFor(st, `obs.output.down|${appId}|`, st.outputs.keys()) < MAX_OBS_ISSUES_PER_APP) st.outputs.set(id, state);
     if (state === 'reconnecting') {
-      st.reconnecting.set(id, { appId, output, feed, error });
-      this.want(st, profileId, id, this.holds.output, () => this.outputDraft(profileId, id));
+      if (st.reconnecting.has(id) || this.countFor(st, `obs.output.down|${appId}|`, st.reconnecting.keys()) < MAX_OBS_ISSUES_PER_APP) {
+        st.reconnecting.set(id, { appId, output, feed, error });
+        this.want(st, profileId, id, this.holds.output, () => this.outputDraft(profileId, id));
+      }
     } else {
       st.reconnecting.delete(id);
-      if (feed && state === 'stopped' && !error) {
-        // OBS stopped this stream on purpose: its feed going offline is no alert.
-        st.cleanStop.set(feed, this.deps.now());
-        this.drop(st, profileId, `feed.offline|${feed}`, 'ended');
+      // A clean stop: this output was live and now reports stopped, without an error. Not any "stopped"
+      // (an OBS started again after a crash reports its idle outputs as stopped too).
+      if (feed && state === 'stopped' && !error && (previous === 'live' || previous === 'starting')) {
+        const now = this.deps.now();
+        st.cleanStop.set(feed, now);
+        // Reported after the feed went away: still on purpose, if it is about that same moment.
+        const lost = st.lostAt.get(feed);
+        if (lost !== undefined && now - lost <= CLEAN_STOP_WINDOW_MS) this.drop(st, profileId, `feed.offline|${feed}`, 'ended');
       }
       if (state === 'live' || state === 'stopped') this.drop(st, profileId, id, state === 'live' ? 'recovered' : 'ended');
     }
@@ -460,9 +477,11 @@ export class IssueTracker {
   }
 
   /** Clear an app's OBS issues (it left or went quiet); true if it had any open or pending. */
-  private forgetApp(st: ProfileState, profileId: string, appId: string, resolution: IssueResolution): boolean {
+  private forgetApp(st: ProfileState, profileId: string, appId: string, resolution: 'stale' | 'removed'): boolean {
     st.obsApps.delete(appId);
     for (const [id, r] of st.reconnecting) if (r.appId === appId) st.reconnecting.delete(id);
+    for (const id of [...st.outputs.keys()]) if (id.startsWith(`obs.output.down|${appId}|`)) st.outputs.delete(id);
+    this.deps.obsAppForgotten?.(profileId, appId, resolution);
     const prefixes = [`obs.issue|${appId}|`, `obs.output.down|${appId}|`];
     const mine = (id: string) => prefixes.some((p) => id.startsWith(p));
     let had = false;
@@ -491,12 +510,12 @@ export class IssueTracker {
       st = {
         running: false,
         feeds: new Map(),
-        lostFeeds: new Set(),
+        lostAt: new Map(),
         destinations: new Map(),
         cleanStop: new Map(),
         reconnecting: new Map(),
-        obsApps: new Map(),
-        staleApps: new Set(),
+        outputs: new Map(),
+        obsApps: new Set(),
         open: new Map(),
         pending: new Map(),
       };
@@ -507,6 +526,13 @@ export class IssueTracker {
 
   private hasIssue(st: ProfileState, id: string): boolean {
     return st.open.has(id) || st.pending.has(id);
+  }
+
+  /** How many ids start with `prefix`: among the open and pending issues, or among `keys`. */
+  private countFor(st: ProfileState, prefix: string, keys?: Iterable<string>): number {
+    let n = 0;
+    for (const id of keys ?? [...st.open.keys(), ...st.pending.keys()]) if (id.startsWith(prefix)) n++;
+    return n;
   }
 
   /** Feed issues' text depends on the other feed and on OBS's reports: re-evaluate the open/pending ones. */

@@ -531,9 +531,11 @@ export const DOCK_JS = `(function () {
       case 'destination.down': if (d) flash(d.destinationId); break;
       case 'issue.raised':
         if (d && d.id) {
+          // Already here from GET /status (same id, same start): the same problem, not news (API.md §16.4).
+          var known = issues.some(function (x) { return x.id === d.id && x.firstSeen === d.firstSeen; });
           upsertIssue(d);
           // A new critical problem that isn't a destination (those flash on destination.down).
-          if (d.update === false && d.severity === 'critical' && d.kind !== 'destination.down') flash(null);
+          if (!known && d.update === false && d.severity === 'critical' && d.kind !== 'destination.down') flash(null);
         }
         break;
       case 'issue.cleared': if (d && d.id) removeIssue(d.id); break;

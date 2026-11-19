@@ -286,6 +286,18 @@ export class ObsStateStore {
       .sort((a, b) => b.updatedAt - a.updatedAt);
   }
 
+  /**
+   * An app went offline: forget the issues and outputs it reported for a profile. What it knew is unknown now
+   * (issues.ts clears them as stale); when it returns, its next report is a change again, so a problem that is
+   * still there is raised afresh and one that ended while it was away never comes back.
+   */
+  forgetReported(profileId: string, appId: string): void {
+    const t = this.profiles.get(profileId)?.get(appId);
+    if (!t) return;
+    t.issues.clear();
+    t.outputs.clear();
+  }
+
   /** Forget an app (it unregistered) or a profile (deleted). */
   forgetApp(appId: string): void {
     for (const apps of this.profiles.values()) apps.delete(appId);

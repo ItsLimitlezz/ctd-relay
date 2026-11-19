@@ -51,7 +51,7 @@ who does what.
 
 | Link | Role | Does |
 |---|---|---|
-| **Relay F2** (`server/src/api/issues.ts`, fed by `event-hub.ts`) | Detector + router | Raises `feed.offline`, `destination.down`, `stream.down`, `obs.output.down` from its own state; turns the plugin's `obs.issue.*` into `obs.issue` issues; applies hold times; keeps the open set (`GET /status` → `issues`); clears with a `resolution` |
+| **Relay F2** (`server/src/api/issues.ts`, fed by `event-hub.ts`) | Detector + router | Raises `feed.offline`, `destination.down`, `stream.down`, `obs.output.down` from its own state; turns the plugin's `obs.issue.*` into `obs.issue` issues; applies hold times; keeps the open set (`GET /status` → `issues`); clears with a `resolution`; forgets what an OBS app reported when it goes offline or unregisters (its next report starts fresh) |
 | **CTD OBS F2** (`ctd-obs-plugin`) | Producer | Sends `obs.issue.raised` / `obs.issue.cleared` with `onProgram` / `scene`; makes failovers locally (never waits on Relay) and reports them as `obs.failover` |
 | **Live F2** (`CTDRemoteLive`: `CTDLiveCore`, Live Mobile, Live Studio) | Consumer | Reads `/status` → `issues` on connect, follows `issue.*`, keys by `id`, notifies on `update: false` (and a severity raise), at most once a minute per `id` |
 

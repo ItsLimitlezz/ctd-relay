@@ -5,6 +5,7 @@ import type { ConnectedApp, Destination, FeedState, SessionState } from '../../.
 import { EventBus } from '../events.js';
 import { EventHub } from './event-hub.js';
 import { ISSUE_HOLDS } from './issues.js';
+import { ObsStateStore, type ObsEventType } from './obs.js';
 import { dest, dstate, platformInfo, session, silentLog } from './test-helpers.js';
 import type { ApiIssueCleared, ApiIssueRaised, Envelope } from './types.js';
 
@@ -15,7 +16,7 @@ let bus: EventBus;
 let destinations: Destination[];
 let current: SessionState;
 let apps: ConnectedApp[];
-let stored: Record<string, unknown>[];
+let store: ObsStateStore;
 let hub: EventHub;
 let events: Envelope[];
 
@@ -52,7 +53,7 @@ beforeEach(() => {
   destinations = [dest('t1', { name: 'Twitch' }), dest('i1', { name: 'Instagram', platform: 'instagram', feed: 'vertical' })];
   current = session({ status: 'offline', startedAt: null, feeds: [feed('landscape', false), feed('vertical', false)], destinations: [dstate('t1', 'idle'), dstate('i1', 'idle')] });
   apps = [];
-  stored = [];
+  store = new ObsStateStore();
   events = [];
   hub = new EventHub({
     bus,
@@ -62,7 +63,8 @@ beforeEach(() => {
     destination: (id) => destinations.find((d) => d.id === id) ?? null,
     platformInfo,
     apps: () => apps,
-    obsIssues: () => stored,
+    // As eventHubDeps wires it: the OBS state store forgets what a stale or removed app reported.
+    obsAppForgotten: (profileId, appId, resolution) => (resolution === 'removed' ? store.forgetApp(appId) : store.forgetReported(profileId, appId)),
   });
   hub.subscribe((e) => events.push(e));
 });
@@ -162,20 +164,74 @@ describe('issues on the event stream', () => {
     expect(hub.status().issues).toEqual([]);
   });
 
-  it('an OBS app going offline makes its issues stale; unregistering removes them', () => {
+  /** The plugin posts an event the way the route handles it: the store first, re-emitted only when it is a change. */
+  let posted = 0;
+  function post(type: ObsEventType, data: Record<string, unknown>): boolean {
+    const now = Date.now();
+    const id = `e${++posted}`;
+    const fresh = store.apply('default', APP, { id, type, ts: now, data }, now);
+    if (fresh) bus.emit('obs-event', { appId: APP, profileId: 'default', type, id, ts: now, data });
+    return fresh;
+  }
+  const camera = { id: 'camera-offline|Club cam', rule: 'camera-offline', severity: 'critical', source: 'Club cam', title: 'Camera offline' };
+
+  it('an OBS app going offline makes its issues stale; when it returns, its resend raises them again', () => {
     apps = [app(true)];
-    const data = { id: 'camera-offline|Club cam', rule: 'camera-offline', severity: 'critical', source: 'Club cam', title: 'Camera offline' };
-    bus.emit('obs-event', { appId: APP, profileId: 'default', type: 'obs.issue.raised', id: 'e1', ts: T0, data });
+    post('obs.issue.raised', camera);
+    expect(post('obs.issue.raised', camera)).toBe(false); // the 60 s resend: no change, not re-emitted
+    expect(short()).toEqual([`issue.raised:obs.issue|${APP}|camera-offline|Club cam`]);
     apps = [app(false)];
     bus.emit('apps-changed');
     expect((issues().at(-1) as Envelope<ApiIssueCleared>).data.resolution).toBe('stale');
-    stored = [data];
+    // It returns. Its first batch carries something else that changed, then the issue again, unchanged.
+    post('obs.scene', { canvas: 'landscape', scene: 'Main' });
     apps = [app(true)];
     bus.emit('apps-changed');
+    expect(issues()).toHaveLength(2); // nothing revived by Relay itself
+    expect(post('obs.issue.raised', camera)).toBe(true); // a change again: the store forgot it with the app
     expect(issues().at(-1)).toMatchObject({ type: 'issue.raised', data: { update: false } });
+    expect(hub.status().issues).toHaveLength(1);
+  });
+
+  it('yesterday\'s issue does not come back when OBS is started again without the problem', () => {
+    apps = [app(true)];
+    post('obs.issue.raised', camera);
+    apps = [app(false)];
+    bus.emit('apps-changed'); // OBS closed for the night with the issue open
+    vi.advanceTimersByTime(12 * 3600_000);
+    apps = [app(true)];
+    bus.emit('apps-changed'); // registered again the next day
+    post('obs.scene', { canvas: 'landscape', scene: 'Main' });
+    expect(short()).toEqual([`issue.raised:obs.issue|${APP}|camera-offline|Club cam`, `issue.cleared:obs.issue|${APP}|camera-offline|Club cam`]);
+    expect(hub.status().issues).toEqual([]);
+  });
+
+  it('unregistering removes an app\'s issues; registering again and reporting raises them afresh', () => {
+    apps = [app(true)];
+    post('obs.issue.raised', camera);
     apps = [];
     bus.emit('apps-changed');
     expect((issues().at(-1) as Envelope<ApiIssueCleared>).data.resolution).toBe('removed');
+    apps = [app(true)];
+    bus.emit('apps-changed');
+    expect(post('obs.issue.raised', camera)).toBe(true);
+    expect(issues().at(-1)).toMatchObject({ type: 'issue.raised', data: { update: false } });
+  });
+
+  it('a lost feed is critical while the plugin is online, however long it has had nothing new to report', () => {
+    apps = [app(true)];
+    setSession(live());
+    post('obs.output', { output: 'main', canvas: 'landscape', state: 'live' });
+    // Three minutes of 60 s resends: none is a change, so none reaches the issue tracker.
+    for (let i = 0; i < 3; i++) {
+      vi.advanceTimersByTime(60_000);
+      expect(post('obs.output', { output: 'main', canvas: 'landscape', state: 'live' })).toBe(false);
+    }
+    bus.emit('feed', feed('landscape', false));
+    bus.emit('feed', feed('vertical', false));
+    vi.advanceTimersByTime(ISSUE_HOLDS.feed);
+    expect(issues().map((e) => (e.data as ApiIssueRaised).severity)).toEqual(['critical', 'critical']);
+    expect((issues()[0]!.data as ApiIssueRaised).message).toContain('without stopping its stream');
   });
 
   it('issues belong to their profile, and a deleted profile takes them along', () => {
