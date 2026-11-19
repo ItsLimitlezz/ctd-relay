@@ -167,7 +167,7 @@ export const DOCK_JS = `(function () {
   var session = null;
   var feeds = {};
   var destinations = [];
-  var issues = []; // open issues (GET /status → issues, then issue.raised / issue.cleared; docs/API.md §15)
+  var issues = []; // open issues (GET /status → issues, then issue.raised / issue.cleared; docs/API.md §16)
   var cursor = null;
   var retryMs = 1000;
   var stopped = false;
@@ -390,7 +390,7 @@ export const DOCK_JS = `(function () {
     feeds = {};
     (s.feeds || []).forEach(function (f) { feeds[f.feed] = f; });
     destinations = s.destinations || [];
-    issues = s.issues || []; // absent on a server older than v1.11
+    issues = s.issues || []; // absent on a server older than v1.12
     renderSession();
     renderFeeds();
     renderDestinations();

@@ -15,7 +15,7 @@ import { MAX_SOCKETS_PER_TOKEN, OBS_SUBPROTOCOL } from './obs-relay.js';
 import { showPaths, showSchemas } from './openapi-show.js';
 
 /** Minor revision of the v1 contract (additive changes only; see the changelog in docs/API.md). */
-export const API_REVISION = '1.11';
+export const API_REVISION = '1.12';
 
 const ref = (name: string) => ({ $ref: `#/components/schemas/${name}` });
 const nullable = (schema: object) => ({ oneOf: [schema, { type: 'null' }] });
@@ -610,7 +610,7 @@ export function openApiDocument(version: string): Record<string, unknown> {
             feeds: { type: 'array', items: ref('Feed') },
             destinations: { type: 'array', items: ref('Destination') },
             platforms: { type: 'array', items: ref('PlatformRollup') },
-            issues: { type: 'array', items: ref('Issue'), description: 'Open issues of the profile, oldest first (v1.11, docs/API.md §15)' },
+            issues: { type: 'array', items: ref('Issue'), description: 'Open issues of the profile, oldest first (v1.12, docs/API.md §16)' },
           },
         },
         Envelope: {
@@ -1078,7 +1078,7 @@ export function openApiDocument(version: string): Record<string, unknown> {
   };
 }
 
-/** v1.11: issue.raised / issue.cleared and GET /status → issues (docs/API.md §15). */
+/** v1.12: issue.raised / issue.cleared and GET /status → issues (docs/API.md §16). */
 const issueSubject = {
   description: 'What the problem is about, by `type`',
   oneOf: [

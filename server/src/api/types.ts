@@ -168,7 +168,7 @@ export interface ApiStatus {
   feeds: ApiFeed[];
   destinations: ApiDestination[];
   platforms: ApiPlatform[];
-  /** Open issues of the profile, oldest first (v1.11, docs/API.md §15). */
+  /** Open issues of the profile, oldest first (v1.12, docs/API.md §16). */
   issues: ApiIssue[];
 }
 
@@ -277,7 +277,7 @@ export interface ApiNotice {
   message: string;
 }
 
-// ---- issues: the suite's alert contract (v1.11, docs/API.md §15) ----
+// ---- issues: the suite's alert contract (v1.12, docs/API.md §16) ----
 
 export type IssueSeverity = 'info' | 'warning' | 'critical';
 export const ISSUE_SEVERITIES: readonly IssueSeverity[] = ['info', 'warning', 'critical'];

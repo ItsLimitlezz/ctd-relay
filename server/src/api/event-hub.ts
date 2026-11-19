@@ -8,7 +8,7 @@
 // events, events about no profile, app messages addressed to them; apps.changed is rendered with
 // the reader's view of the apps.
 //
-// The hub also feeds the issue tracker (issues.ts, docs/API.md §15): sessions, feeds, destinations,
+// The hub also feeds the issue tracker (issues.ts, docs/API.md §16): sessions, feeds, destinations,
 // OBS events and connected apps go in, issue.raised / issue.cleared envelopes come out.
 //
 // One hub per AppServices (eventHubFor). main.ts creates it at startup so nothing is missed.

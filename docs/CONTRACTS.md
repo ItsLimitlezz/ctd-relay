@@ -42,11 +42,11 @@ server/src/main.ts         builds AppServices, starts everything
 
 Every route file default-exports `FastifyPluginAsync<RouteOptions>` and receives `{ services }`.
 
-## Alert contract (`issue.*`, v1.11)
+## Alert contract (`issue.*`, v1.12)
 
 One event pair carries every alert in the CTD suite: **`issue.raised`** / **`issue.cleared`** on
 `/api/v1/events` (`status:read`). The wire format, kinds, hold times and client rules are in
-[API.md §15](API.md#15-issues-alerts-when-a-feed-a-stream-or-a-scene-has-a-problem-v111); this is
+[API.md §16](API.md#16-issues-alerts-when-a-feed-a-stream-or-a-scene-has-a-problem-v112); this is
 who does what.
 
 | Link | Role | Does |
