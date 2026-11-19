@@ -72,6 +72,30 @@ describe('built-in pack', () => {
     expect(event('requested to join')).toBe(true);
     expect(event('joined us from Miami')).toBe(false);
   });
+
+  it('join patterns: capture group 1 of the one that matches is how many others joined (singular, plural, "more")', () => {
+    const p = BUILTIN_CHAT_PACK;
+    const others = (s: string): string | null | undefined => {
+      for (const m of p.classify.join) {
+        const hit = new RegExp(m, 'i').exec(s);
+        if (hit) return hit[1] ?? null;
+      }
+      return undefined; // not a join line
+    };
+    const event = (s: string) => p.classify.event.some((m) => new RegExp(m, 'i').test(s));
+    expect(others('and 3 others joined')).toBe('3');
+    expect(others('and 1 other joined')).toBe('1');
+    expect(others('and 12 more joined the live video.')).toBe('12');
+    expect(others('And 4 Others Joined The Live')).toBe('4');
+    expect(others('and 1,234 others joined')).toBe('1,234');
+    expect(others('joined')).toBeNull();
+    expect(others('joined the live video')).toBeNull();
+    expect(others('and 3 others joined me for lunch')).toBeUndefined();
+    expect(others('and others joined')).toBeUndefined();
+    for (const s of ['and 3 others joined', 'and 1 other joined', 'and 12 more joined the live video.', 'and 1,234 others joined']) expect(event(s), s).toBe(true);
+    // Every built-in pattern passes the pack's own checks.
+    for (const s of [...p.classify.event, ...p.classify.join]) expect(regexProblem(s), s).toBeNull();
+  });
 });
 
 describe('selectorProblem', () => {

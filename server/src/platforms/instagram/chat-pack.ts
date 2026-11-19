@@ -95,7 +95,11 @@ export interface IgChatPack {
   classify: {
     /** Text (after the username) of presence/system events shown in the chat as events. */
     event: string[];
-    /** The subset of events that are "<name> joined" lines (`join: true` in the API). */
+    /**
+     * The subset of events that are "<name> joined" lines (`join: true` in the API). Capture group 1,
+     * when the pattern has one and it is a number ("and 3 others joined"), is how many others joined
+     * with the named user (`othersCount` in the API).
+     */
     join: string[];
     /** Rows without a user avatar whose text matches are Instagram's own notices: dropped. */
     system: string[];
@@ -185,12 +189,14 @@ export const BUILTIN_CHAT_PACK: IgChatPack = {
   },
   classify: {
     event: [
-      '^(joined|joined the live video|joined the live|is watching|started watching|requested to join)\\.?$',
-      '^and \\d+ (other|others|more) (joined|joined the live video|joined the live)\\.?$',
+      '^(?:joined|joined the live video|joined the live|is watching|started watching|requested to join)\\.?$',
+      '^and \\d[\\d,.]* (?:other|others|more) (?:joined|joined the live video|joined the live)\\.?$',
     ],
+    // Capture group 1, when it is a number, is how many others joined with the named user
+    // ("<name> and 3 others joined": `othersCount: 3` in the API).
     join: [
-      '^(joined|joined the live video|joined the live|is watching|started watching)\\.?$',
-      '^and \\d+ (other|others|more) (joined|joined the live video|joined the live)\\.?$',
+      '^(?:joined|joined the live video|joined the live|is watching|started watching)\\.?$',
+      '^and (\\d[\\d,.]*) (?:other|others|more) (?:joined|joined the live video|joined the live)\\.?$',
     ],
     system: [
       "^we'?re telling (your )?followers",

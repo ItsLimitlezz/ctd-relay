@@ -175,7 +175,7 @@ Instagram has no live chat API, so the app reads the **Comments** panel of Insta
 
 What is not a comment:
 
-- "<name> joined" lines are delivered as **events** with `join: true` (docs/API.md → `chat.message`), so a chat box can hide them.
+- "<name> joined" lines are delivered as **events** with `join: true` (docs/API.md → `chat.message`), so a chat box can hide them. "<name> and 3 others joined" (also "and 1 other", "and 12 more", "… joined the live video") is one join event by `<name>` with `othersCount: 3`. When a line has no avatar or link to take the name from, its first word is the name.
 - A **pinned** copy of a comment is not delivered again.
 - Instagram's own **notices** in the list ("We're telling your followers…") are dropped.
 - **Comments that were already on screen when the reader first gets to read them are history**: remembered, so they are never sent later, but not delivered. That is the case when the reader starts during a live, when the comments panel only opens or renders later, and when a changed selector pack makes the panel readable. Before 0.2.40 the last two delivered everything on screen at once, as one burst (25 comments in the same second during a live run).
@@ -247,7 +247,7 @@ What each part of a pack does:
 | `text.css` | The element holding the comment text. When set, only its text is the comment. |
 | `text.authorCss`, `text.skipCss`, `text.emojiCss` | Where the user name is when the avatar does not give it; elements whose text is never comment text; images read as emoji. |
 | `text.meta` | Patterns for labels inside a row that are not comment text ("Reply", "2m"). |
-| `classify.event`, `classify.join` | Text that makes a row an event, and which events are "joined" lines. |
+| `classify.event`, `classify.join` | Text (after the user name) that makes a row an event, and which events are "joined" lines. In a `classify.join` pattern, capture group 1, when it is a number, is how many others joined with the named user (`othersCount`): the built-in `^and (\d[\d,.]*) (?:other\|others\|more) (?:joined…)\.?$`. Write the other groups as `(?:…)`; a pattern without a number in group 1 still marks joins, without a count. |
 | `classify.system`, `systemCss` | Instagram's own notices, dropped. |
 | `classify.pinned`, `pinnedCss` | What marks a pinned copy, dropped. |
 | `composer.css`, `composer.post` | The comment box and its Post button, used only for the test comment of a Practice live. |

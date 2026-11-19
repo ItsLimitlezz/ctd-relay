@@ -7,6 +7,8 @@ import type { ChatMessageInput } from '../platforms/types.js';
 export const MAX_TEXT_LENGTH = 500;
 export const MAX_AUTHOR_LENGTH = 64;
 export const MAX_BADGES = 10;
+/** Largest `othersCount` accepted on a join line ("<name> and N others joined"). */
+export const MAX_OTHERS_COUNT = 9_999_999;
 const MAX_BADGE_LENGTH = 32;
 const MAX_ID_LENGTH = 200;
 const MAX_URL_LENGTH = 2048;
@@ -118,7 +120,11 @@ export function normalizeChatMessage(
   if (kind === 'event') {
     const alert = cleanAlert(input.alert, name);
     if (alert) msg.alert = alert;
-    if (input.join === true) msg.join = true;
+    if (input.join === true) {
+      msg.join = true;
+      const others = input.othersCount;
+      if (typeof others === 'number' && Number.isInteger(others) && others >= 1 && others <= MAX_OTHERS_COUNT) msg.othersCount = others;
+    }
   }
   return msg;
 }

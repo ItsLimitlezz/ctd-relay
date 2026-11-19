@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Fixture: presence lines in the live comments (synthetic)</title>
+<style>
+  body { font-family: sans-serif; margin: 0; }
+  #panel { width: 380px; min-height: 260px; }
+  .row { display: flex; gap: 6px; padding: 4px; }
+  .row img.av { width: 20px; height: 20px; }
+  .body { display: block; }
+  .meta { display: flex; gap: 8px; font-size: 11px; }
+</style>
+</head>
+<body>
+<div role="dialog" aria-label="Live producer">
+  <div role="tablist">
+    <button type="button" role="tab" id="tab-comments" aria-selected="true" aria-controls="panel">Comments</button>
+  </div>
+  <div role="tabpanel" id="panel" aria-labelledby="tab-comments">
+    <ul id="list" style="list-style: none; margin: 0; padding: 0;">
+      <div class="row" data-fx="joined">
+        <a href="/fixture_user_a/"><img class="av" alt="fixture_user_a's profile picture" src="data:image/gif;base64,R0lGODlhAQABAAAAACH5BAEKAAEALAAAAAABAAEAAAICTAEAOw=="></a>
+        <span><span class="u">fixture_user_a</span> joined</span>
+      </div>
+      <div class="row" data-fx="others-plural">
+        <a href="/fixture_user_b/"><img class="av" alt="fixture_user_b's profile picture" src="data:image/gif;base64,R0lGODlhAQABAAAAACH5BAEKAAEALAAAAAABAAEAAAICTAEAOw=="></a>
+        <span><span class="u">fixture_user_b</span> and 3 others joined</span>
+      </div>
+      <div class="row" data-fx="others-singular">
+        <a href="/fixture_user_c/"><img class="av" alt="fixture_user_c's profile picture" src="data:image/gif;base64,R0lGODlhAQABAAAAACH5BAEKAAEALAAAAAABAAEAAAICTAEAOw=="></a>
+        <span><span class="u">fixture_user_c</span> and 1 other joined</span>
+      </div>
+      <div class="row" data-fx="more-live-video">
+        <a href="/fixture_user_d/"><img class="av" alt="fixture_user_d's profile picture" src="data:image/gif;base64,R0lGODlhAQABAAAAACH5BAEKAAEALAAAAAABAAEAAAICTAEAOw=="></a>
+        <span><span class="u">fixture_user_d</span> and 12 more joined the live video.</span>
+      </div>
+      <div class="row" data-fx="joined-live-video">
+        <a href="/fixture_user_e/"><img class="av" alt="fixture_user_e's profile picture" src="data:image/gif;base64,R0lGODlhAQABAAAAACH5BAEKAAEALAAAAAABAAEAAAICTAEAOw=="></a>
+        <span><span class="u">fixture_user_e</span> joined the live video</span>
+      </div>
+      <!-- no avatar: the name is a link -->
+      <li class="plain" data-fx="others-link"><a href="/fixture_user_f/">fixture_user_f</a> <span>and 2 others joined</span></li>
+      <!-- no avatar, no link: the whole line is one piece of text -->
+      <li class="plain" data-fx="others-one-text">fixture_user_g and 1,234 others joined the live</li>
+      <!-- comments that only look like presence lines -->
+      <div class="row" data-fx="comment-lookalike">
+        <a href="/fixture_user_h/"><img class="av" alt="fixture_user_h's profile picture" src="data:image/gif;base64,R0lGODlhAQABAAAAACH5BAEKAAEALAAAAAABAAEAAAICTAEAOw=="></a>
+        <div class="body">
+          <div><a href="/fixture_user_h/"><span class="u">fixture_user_h</span></a> <span class="t">and 3 others joined me for the afterparty</span></div>
+          <div class="meta"><span>1m</span><span>Reply</span></div>
+        </div>
+      </div>
+      <li class="plain" data-fx="one-text-lookalike">fixture_note joined us from far away</li>
+    </ul>
+  </div>
+</div>
+<script>
+  const AV = 'data:image/gif;base64,R0lGODlhAQABAAAAACH5BAEKAAEALAAAAAABAAEAAAICTAEAOw==';
+  // Test helper: add a presence line, "<user> and <others> others joined" (others 0: "<user> joined").
+  window.__addJoin = (user, others) => {
+    const row = document.createElement('div');
+    row.className = 'row';
+    row.innerHTML = '<a href="/' + user + '/"><img class="av" alt="' + user + '\'s profile picture" src="' + AV + '"></a><span><span class="u"></span><span class="w"></span></span>';
+    row.querySelector('.u').textContent = user;
+    row.querySelector('.w').textContent = others > 0 ? ' and ' + others + (others === 1 ? ' other' : ' others') + ' joined' : ' joined';
+    document.getElementById('list').appendChild(row);
+  };
+</script>
+</body>
+</html>

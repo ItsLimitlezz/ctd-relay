@@ -146,6 +146,7 @@ export function chatMessageData(msg: ChatMessage, channel: string): ApiChatMessa
     action: msg.action === true,
     kind: msg.kind,
     join: msg.kind === 'event' && msg.join === true,
+    othersCount: msg.kind === 'event' && msg.join === true && typeof msg.othersCount === 'number' ? msg.othersCount : null,
     ts: Number.isFinite(ts) ? ts : Date.now(),
   };
 }

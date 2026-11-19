@@ -27,6 +27,11 @@ export interface ScanRow {
   text: string;
   kind: 'message' | 'event';
   join: boolean;
+  /**
+   * On a join line that names one user and a number of others ("<name> and 3 others joined"): that
+   * number (capture group 1 of the `classify.join` pattern that matched). Else null.
+   */
+  othersCount: number | null;
   avatarUrl: string | null;
   badges: string[] | null;
   /** Not a comment to deliver, and why. */
@@ -391,7 +396,7 @@ ${PAGE_HELPERS}
       text = metas[0].t;
       restored = true;
     }
-    const base = { author: author, text: text, kind: 'message', join: false, id: null, avatarUrl: null, badges: null, restored: restored, hasAvatar: hasAvatar };
+    const base = { author: author, text: text, kind: 'message', join: false, othersCount: null, id: null, avatarUrl: null, badges: null, restored: restored, hasAvatar: hasAvatar };
     if (!text) return Object.assign(base, { drop: 'empty' });
     const within = (list, where) => !!closest(el, list, where) || qsa(el, list, where).length > 0;
     if (pinnedLabels.length > 0 || (P.classify.pinnedCss.length > 0 && within(P.classify.pinnedCss, 'classify.pinnedCss'))) return Object.assign(base, { drop: 'pinned' });
@@ -399,7 +404,29 @@ ${PAGE_HELPERS}
     if ((P.classify.systemCss.length > 0 && within(P.classify.systemCss, 'classify.systemCss')) || (!hasAvatar && (any(RX.system, text) || any(RX.system, whole)))) {
       return Object.assign(base, { drop: 'system' });
     }
-    const isEvent = any(RX.event, text);
+    let isEvent = any(RX.event, text);
+    if (!isEvent && !author) {
+      // A presence line written as one piece of text ("name and 3 others joined", no avatar or link
+      // to take the name from): the first word is who joined.
+      const lead = /^([\p{L}\p{N}._]{1,30}) (.+)$/u.exec(cut(text));
+      if (lead && any(RX.event, lead[2])) {
+        author = lead[1];
+        text = lead[2];
+        isEvent = true;
+      }
+    }
+    const isJoin = isEvent && any(RX.join, text);
+    let othersCount = null;
+    if (isJoin) {
+      // The first join pattern that matches says how many others: its capture group 1, a number.
+      for (const re of RX.join) {
+        const m = re.exec(cut(text));
+        if (!m) continue;
+        const digits = m[1] ? String(m[1]).replace(/[,.]/g, '') : '';
+        if (/^\d{1,7}$/.test(digits) && Number(digits) > 0) othersCount = Number(digits);
+        break;
+      }
+    }
     let id = null;
     for (const attr of P.row.idAttrs) {
       const holder = el.hasAttribute(attr) ? el : el.querySelector('[' + CSS.escape(attr) + ']');
@@ -410,7 +437,8 @@ ${PAGE_HELPERS}
       author: author || 'Instagram',
       text: isEvent && author ? author + ' ' + text : text,
       kind: isEvent ? 'event' : 'message',
-      join: isEvent && any(RX.join, text),
+      join: isJoin,
+      othersCount: othersCount,
       id: id,
       avatarUrl: img && /^https?:/i.test(img.src || '') ? img.src : null,
       badges: qsa(el, P.classify.verifiedCss, 'classify.verifiedCss').length > 0 ? ['verified'] : null,

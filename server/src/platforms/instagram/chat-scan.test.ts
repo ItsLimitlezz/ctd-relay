@@ -21,7 +21,7 @@ import {
 let nextEl = 1;
 /** A parsed row; `n` (the element) is new unless given. */
 function row(author: string, text: string, over: Partial<ScanRow> = {}): ScanRow {
-  return { n: nextEl++, id: null, author, text, kind: 'message', join: false, avatarUrl: null, badges: null, drop: null, restored: false, hasAvatar: true, ...over };
+  return { n: nextEl++, id: null, author, text, kind: 'message', join: false, othersCount: null, avatarUrl: null, badges: null, drop: null, restored: false, hasAvatar: true, ...over };
 }
 function scan(rows: ScanRow[], over: Partial<ScanResult> = {}): ScanResult {
   return { doc: 'doc-1', ready: true, container: { strategy: 'tabpanel', tag: 'div', role: 'tabpanel', n: 1_000_000 }, rows, truncated: 0, bad: [], ...over };

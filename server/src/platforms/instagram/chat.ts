@@ -164,7 +164,10 @@ function toChatInput(row: ScanRow): ChatMessageInput {
     msg.id = row.id;
     msg.platformMessageId = row.id;
   }
-  if (row.join) msg.join = true;
+  if (row.join) {
+    msg.join = true;
+    if (row.othersCount !== null) msg.othersCount = row.othersCount;
+  }
   return msg;
 }
 

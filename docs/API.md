@@ -384,6 +384,7 @@ Without `after`: returns nothing but the current cursor (`next`), so you can sta
   "action": false,
   "kind": "message",
   "join": false,
+  "othersCount": null,
   "ts": 1791830000123
 }
 ```
@@ -410,6 +411,11 @@ Without `after`: returns nothing but the current cursor (`next`), so you can sta
   `kind: "event"`; `user.name` is who joined, `text` the line as shown ("dj_fan joined"). A chat box
   that should show only comments drops `join` lines (or shows them as a light "👋 joined" toast);
   they can be frequent at a busy live.
+- `othersCount` (v1.12) is set on a `join` line that names one user and a number of others:
+  Instagram shows "dj_fan and 3 others joined" (also "and 1 other", "and 12 more", "… joined the
+  live video"). `user.name` is the named user (`dj_fan`), `othersCount` the number (`3`), `text`
+  the line as shown. So that line stands for `othersCount + 1` people. `null` on every other line,
+  including a plain "dj_fan joined". An integer from 1.
 - `color` is `#RRGGBB` or `null`; `avatar` is an `https` URL or `null`. `channel` is the
   destination name.
 - `platformMessageId` and `user.login` are `null` when the chat source doesn't provide them
@@ -1447,7 +1453,7 @@ lists every problem with its path, e.g. `row.css.0: CSS selector: …`):
 | Settings | Only the known ones. An unknown key is refused |
 | CSS selectors | Plain CSS, at most 200 characters, at most 12 per list. No selector engine prefixes (`xpath=`, `text=`), no `>>` chains, no `{ } ; @ <` or comments |
 | Attribute names | `[A-Za-z_][A-Za-z0-9_.:-]*`, at most 64 characters |
-| Patterns | Regular-expression source, at most 300 characters, at most 24 per list, compiled with the `i` flag. No backreferences. A pattern that is slow on long input (catastrophic backtracking) is refused |
+| Patterns | Regular-expression source, at most 300 characters, at most 24 per list, compiled with the `i` flag. No backreferences. A pattern that is slow on long input (catastrophic backtracking) is refused. Capture group 1 has a meaning in `row.avatarAlt` (the user name) and `classify.join` (the number of others, v1.12) |
 | Numbers | `timing.pollMs` 500–10000, `timing.tabRetryMs` 3000–120000, `timing.backoffMaxMs` 1000–60000, `timing.liveStartGraceMs` 0–600000 (v1.12), `limits.maxRows` 20–500, `limits.history` 50–2000, `row.maxAvatars` 1–4, `container.climbLevels` 0–12, `container.climbMinHeight` 0–2000 |
 | Switches (v1.12) | `timing.backlogAsHistory`, `container.climbPreferRows`: `true` or `false` |
 
@@ -1551,9 +1557,16 @@ the revision in `info.version`.
   reader first gets to read them are history, not delivered, unless the live is younger than the
   grace), and `container.climbPreferRows`. The built-in pack is `builtin-3` (`builtinVersion`).
   The debug capture's `reader` has `backlog`. An override stored on v1.11 is still accepted.
+  `classify.join` patterns may capture the number of others in group 1 (the built-in ones do).
+- **Joins with others** (`chat.message`): a new field, `othersCount`. On a `join` line that names
+  one user and a number of others (Instagram's "dj_fan and 3 others joined"), `user.name` is the
+  named user and `othersCount` the number (`3`); `null` otherwise. A chat box that counts people
+  joining adds `othersCount + 1` for such a line.
 - **Instagram comments** (`chat.message` from `instagram`): when the reader starts during a live,
   or a changed pack makes the comments readable, the comments on screen are no longer delivered
-  all at once. No change to the shape of any event. Nothing to change in apps that read the chat.
+  all at once. A presence line that is one piece of text with no avatar or link ("dj_fan joined
+  the live") is a `join` event by `dj_fan`, no longer a comment. Apps that read the chat need no
+  change; `othersCount` is there for those that want it.
 
 ### v1.11
 

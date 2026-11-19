@@ -15,6 +15,7 @@ const fixture = (name: string): string => fs.readFileSync(new URL(`./fixtures/${
 const PANEL = fixture('comments-panel.html');
 const OBFUSCATED = fixture('comments-obfuscated.html');
 const FOOTER = fixture('comments-footer-composer.html');
+const PRESENCE = fixture('comments-presence.html');
 const OBFUSCATED_PACK = ((): ChatPackOverride => {
   const parsed = parseChatPackOverride(JSON.parse(fixture('pack-obfuscated.json')));
   if (!parsed.ok) throw new Error(parsed.problems.join('; '));
@@ -55,7 +56,7 @@ describe.skipIf(!!process.env.CI_NO_BROWSER)('instagram chat reader (Chromium + 
     context = await browser.newContext();
     await context.route(`${ORIGIN}/**`, (route) => {
       const path = new URL(route.request().url()).pathname;
-      return route.fulfill({ contentType: 'text/html; charset=utf-8', body: path === '/obfuscated' ? OBFUSCATED : path === '/footer' ? FOOTER : PANEL });
+      return route.fulfill({ contentType: 'text/html; charset=utf-8', body: path === '/obfuscated' ? OBFUSCATED : path === '/footer' ? FOOTER : path === '/presence' ? PRESENCE : PANEL });
     });
     page = await context.newPage();
   });
@@ -121,10 +122,46 @@ describe.skipIf(!!process.env.CI_NO_BROWSER)('instagram chat reader (Chromium + 
       expect(by('fixture_user_c').badges).toEqual(['verified']); // also: the curly apostrophe in the alt
       expect(by('fixture_user_d').restored).toBe(true); // "now" reads like a timestamp label
       expect(by('fixture_user_h').hasAvatar).toBe(false);
+      expect(by('fixture_user_f').othersCount).toBe(3); // "and 3 others joined"
+      expect(by('fixture_user_a').othersCount).toBeNull(); // "joined"
+      expect(by('fixture_user_g').othersCount).toBeNull(); // "requested to join": an event, not a join
       // The comment box is never a row; the reader's tags are on the container and on each row.
       expect(await page.locator(`[${CHAT_ROW_ATTR}]`).count()).toBe(11);
       expect(await page.locator(`.composer[${CHAT_ROW_ATTR}], .composer [${CHAT_ROW_ATTR}]`).count()).toBe(0);
       expect(await page.locator(`#panel[${CHAT_CONTAINER_ATTR}="tabpanel"]`).count()).toBe(1);
+    });
+
+    it('reads presence lines as joins: the named user is the author, "and N other(s)/more" is othersCount', async () => {
+      await page.goto(`${ORIGIN}/presence`);
+      const result = await scanOnce(page);
+      expect(result.container).toMatchObject({ strategy: 'tabpanel' });
+      expect(result.bad).toEqual([]);
+      expect(result.rows.map((r) => ({ ...view(r), othersCount: r.othersCount }))).toEqual([
+        { author: 'fixture_user_a', text: 'fixture_user_a joined', kind: 'event', join: true, drop: null, othersCount: null },
+        { author: 'fixture_user_b', text: 'fixture_user_b and 3 others joined', kind: 'event', join: true, drop: null, othersCount: 3 },
+        { author: 'fixture_user_c', text: 'fixture_user_c and 1 other joined', kind: 'event', join: true, drop: null, othersCount: 1 },
+        { author: 'fixture_user_d', text: 'fixture_user_d and 12 more joined the live video.', kind: 'event', join: true, drop: null, othersCount: 12 },
+        { author: 'fixture_user_e', text: 'fixture_user_e joined the live video', kind: 'event', join: true, drop: null, othersCount: null },
+        { author: 'fixture_user_f', text: 'fixture_user_f and 2 others joined', kind: 'event', join: true, drop: null, othersCount: 2 },
+        // No avatar and no link: the first word of the line is who joined.
+        { author: 'fixture_user_g', text: 'fixture_user_g and 1,234 others joined the live', kind: 'event', join: true, drop: null, othersCount: 1234 },
+        // Comments that only start like a presence line stay comments.
+        { author: 'fixture_user_h', text: 'and 3 others joined me for the afterparty', kind: 'message', join: false, drop: null, othersCount: null },
+        { author: 'Instagram', text: 'fixture_note joined us from far away', kind: 'message', join: false, drop: null, othersCount: null },
+      ]);
+    });
+
+    it('an override whose join pattern has no number group still reads joins, without a count', async () => {
+      await page.goto(`${ORIGIN}/presence`);
+      const pack = mergeChatPack({
+        schema: 1,
+        version: 'old-join',
+        classify: { join: ['^(joined|joined the live video|joined the live)\\.?$', '^and \\d+ (other|others|more) (joined|joined the live video|joined the live)\\.?$'] },
+      });
+      const result = await scanOnce(page, pack, '__scanOldJoin');
+      const b = result.rows.find((r) => r.author === 'fixture_user_b')!;
+      expect(b).toMatchObject({ kind: 'event', join: true, othersCount: null });
+      expect(result.rows.find((r) => r.author === 'fixture_user_a')).toMatchObject({ join: true, othersCount: null });
     });
 
     it('gives each element a stable number and reads a changed row again', async () => {
@@ -583,6 +620,26 @@ describe.skipIf(!!process.env.CI_NO_BROWSER)('instagram chat reader (Chromium + 
         await page.evaluate(`window.__add('fixture_user_a', 'written before the tab opened'); window.__add('fixture_user_b', 'this one too')`);
         expect(await chat.next()).toMatchObject({ author: { name: 'fixture_user_a' }, text: 'written before the tab opened' });
         expect(await chat.next()).toMatchObject({ author: { name: 'fixture_user_b' }, text: 'this one too' });
+        await chat.none(800);
+      } finally {
+        await chat.stop();
+      }
+    });
+
+    it('delivers "<name> and N others joined" as a join event by the named user, with othersCount', async () => {
+      await page.goto(`${ORIGIN}/presence`);
+      const memory = newChatMemory();
+      const chat = startReader(memory);
+      try {
+        await baselined(memory); // the lines already on screen are history
+        await page.evaluate(`window.__addJoin('fixture_user_k', 3)`);
+        expect(await chat.next()).toEqual({ author: { name: 'fixture_user_k' }, text: 'fixture_user_k and 3 others joined', ts: expect.any(String), kind: 'event', join: true, othersCount: 3 });
+        await page.evaluate(`window.__addJoin('fixture_user_l', 1)`);
+        expect(await chat.next()).toMatchObject({ author: { name: 'fixture_user_l' }, kind: 'event', join: true, othersCount: 1 });
+        await page.evaluate(`window.__addJoin('fixture_user_m', 0)`);
+        const plain = await chat.next();
+        expect(plain).toMatchObject({ author: { name: 'fixture_user_m' }, text: 'fixture_user_m joined', kind: 'event', join: true });
+        expect(plain).not.toHaveProperty('othersCount');
         await chat.none(800);
       } finally {
         await chat.stop();
