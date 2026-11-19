@@ -3,6 +3,7 @@
 import type { FastifyPluginAsync } from 'fastify';
 import { z } from 'zod';
 import type { PlatformAppStatus } from '../../../../shared/api.js';
+import { CHAT_DEBUG_BODY_LIMIT, CHAT_PACK_BODY_LIMIT, chatDebug, chatPackStatus, putChatPack, revertChatPack } from '../../platforms/instagram/chat-admin.js';
 import type { PlatformDriver } from '../../platforms/types.js';
 import type { AppServices } from '../../services.js';
 import { audit, requireAdmin, requireUser, type RouteOptions } from '../guards.js';
@@ -98,6 +99,35 @@ const platformRoutes: FastifyPluginAsync<RouteOptions> = async (app, { services 
     // Field names only — never the values.
     if (changed.length > 0) audit(services, req, 'platform-app.update', `${platform}: ${changed.join(', ')}`);
     return appStatus(services, driver);
+  });
+
+  // ---- Instagram chat reader: selector pack + debug capture (Settings → Advanced) ----
+  // The same operations exist in the external API for system:admin tokens (api/v1-platforms.ts).
+
+  const PACK_PATH = '/api/platforms/instagram/chat/selector-pack';
+
+  app.get(PACK_PATH, { preHandler: requireAdmin }, async (_req, reply) => {
+    return reply.header('cache-control', 'no-store').send(chatPackStatus());
+  });
+
+  app.put(PACK_PATH, { preHandler: requireAdmin, bodyLimit: CHAT_PACK_BODY_LIMIT }, async (req, reply) => {
+    const result = putChatPack(req.body, req.user?.username ?? null);
+    if (!result.ok) throw badRequest(result.problems.join('; '));
+    audit(services, req, 'instagram.chat_pack.update', result.summary);
+    return reply.header('cache-control', 'no-store').send(result.status);
+  });
+
+  app.delete(PACK_PATH, { preHandler: requireAdmin }, async (req, reply) => {
+    const { reverted, status } = revertChatPack();
+    if (reverted) audit(services, req, 'instagram.chat_pack.revert', `back to the built-in pack ${status.builtinVersion}`);
+    return reply.header('cache-control', 'no-store').send(status);
+  });
+
+  app.post('/api/platforms/instagram/chat/debug', { preHandler: requireAdmin, bodyLimit: CHAT_DEBUG_BODY_LIMIT }, async (req, reply) => {
+    const result = await chatDebug(req.body);
+    if (!result.ok) throw badRequest(result.problems.join('; '));
+    audit(services, req, 'instagram.chat_debug', `sanitised capture of ${result.response.readers.length} live comment reader(s)`);
+    return reply.header('cache-control', 'no-store').send(result.response);
   });
 };
 
