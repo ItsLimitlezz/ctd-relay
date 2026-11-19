@@ -119,6 +119,27 @@ describe('regexProblem', () => {
     }
     expect(Date.now() - started).toBeLessThan(5_000);
   });
+
+  it('refuses a slow pattern whatever it stops at: a space, a letter, a line break', () => {
+    // These pass on a run that ends in "!" or NUL; an ordinary comment ("aaaa… b") makes them run for hours.
+    for (const s of ['^(\\S+)+$', '^([^ ]+)+$', '^(\\D+)+$', '^(.+)+$']) expect(regexProblem(s), s).toMatch(/too slow/);
+  });
+
+  it('refuses a slow pattern that writes its characters as escapes', () => {
+    for (const s of ['(\\x62+)+$', '(\\u0062+)+$', '(\\u0131+)+$', '(\\xe9+)+$', '(\\041+)+$', '(\\cJ+)+$', '(\\x62|\\x62\\x62)+$']) {
+      expect(regexProblem(s), s).toMatch(/too slow/);
+    }
+  });
+
+  it('refuses a slow pattern behind a literal start', () => {
+    for (const s of ['^pinned by (\\w+\\s?)+$', '^joined (\\S+)+$']) expect(regexProblem(s), s).toMatch(/too slow/);
+  });
+
+  it('accepts ordinary patterns in other languages and with counts', () => {
+    for (const s of ['^(antworten|gefällt mir|übersetzung anzeigen)$', '^(コメント|ライブコメント)$', '^comments?( \\(\\d+\\))?$', '^[a-z0-9._]{1,30} (joined|is watching)$', 'profile picture of (.+)$']) {
+      expect(regexProblem(s), s).toBeNull();
+    }
+  });
 });
 
 describe('parseChatPackOverride', () => {

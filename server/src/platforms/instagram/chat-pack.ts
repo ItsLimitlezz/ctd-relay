@@ -231,24 +231,50 @@ export function selectorProblem(selector: string): string | null {
   return null;
 }
 
-/** Strings a pack regex must get through quickly: long runs of what it is made of, ending in a mismatch. */
+/**
+ * `source` with its character escapes (\x62, \u0062, \cJ, \041) written out as the characters
+ * they stand for, so a pattern cannot hide what it repeats from the probes.
+ */
+function writtenOut(source: string): string {
+  return source.replace(/\\(?:x([0-9a-f]{2})|u([0-9a-f]{4})|c([a-z])|(0[0-7]{0,2}))/gi, (_m, x?: string, u?: string, c?: string, o?: string) => {
+    if (x ?? u) return String.fromCharCode(parseInt((x ?? u)!, 16));
+    if (c) return String.fromCharCode(c.toUpperCase().charCodeAt(0) ^ 64);
+    return String.fromCharCode(parseInt(o!, 8));
+  });
+}
+
+/** What follows a run in a probe: nothing, or one character of each kind a pattern may stop at. */
+const PROBE_TAILS = ['', '\u0000', '!', ' ', 'a', '0', '\n'];
+const PROBE_MAX = 600;
+
+/**
+ * Strings a pack regex must get through quickly: long runs of what it is made of (and of every
+ * common kind of character), each ending in a mismatch of every kind, also after the pattern's
+ * literal start ("^pinned by ..." only backtracks on input that starts with "pinned by ").
+ */
 function regexProbes(source: string): string[] {
   const n = REGEX_INPUT_MAX * 4;
-  const probes = new Set<string>();
-  const add = (unit: string): void => {
-    if (!unit) return;
-    const run = unit.repeat(Math.ceil(n / unit.length)).slice(0, n);
-    probes.add(run);
-    probes.add(`${run}\u0000`);
-    probes.add(`${run}!`);
-  };
-  for (const unit of ['a', ' ', '0', 'a ', 'a0', '\u{1F600}']) add(unit);
-  for (const word of source.match(/[\p{L}\p{N}]+/gu) ?? []) {
-    add(word);
-    add(`${word} `);
+  const plain = writtenOut(source);
+  const units = new Set<string>(['a', ' ', '0', 'a ', 'a0', '_', '!', '.', '-', '\u00e9', '\u{1F600}']);
+  for (const text of plain === source ? [source] : [plain, source]) {
+    for (const word of text.match(/[\p{L}\p{N}]+/gu) ?? []) {
+      units.add(word);
+      units.add(`${word} `);
+    }
+    for (const ch of new Set(text.replace(/[\\^$.*+?()[\]{}|]/g, ''))) units.add(ch);
   }
-  for (const ch of new Set(source.replace(/[\\^$.*+?()[\]{}|]/g, ''))) add(ch);
-  return [...probes].slice(0, 400);
+  const head = /^\^?([^\\^$.*+?()[\]{}|]+)/.exec(plain)?.[1] ?? '';
+  const starts = head ? ['', head] : [''];
+  const probes = new Set<string>();
+  for (const unit of units) {
+    if (!unit) continue;
+    const run = unit.repeat(Math.ceil(n / unit.length)).slice(0, n);
+    for (const start of starts) {
+      for (const tail of PROBE_TAILS) probes.add(start + run + tail);
+    }
+    if (probes.size >= PROBE_MAX) break;
+  }
+  return [...probes].slice(0, PROBE_MAX);
 }
 
 const PROBE_SCRIPT = new vm.Script('for (const p of probes) re.test(p);');
@@ -261,6 +287,8 @@ const PROBE_BUDGET_MS = 150;
 const PACK_PROBE_BUDGET_MS = 1_500;
 /** When the pack being validated runs out of probe time (set by parseChatPackOverride). */
 let probeDeadline: number | null = null;
+/** Multiplies both budgets for the pack being validated (set by parseChatPackOverride). */
+let probePatience = 1;
 
 /**
  * Why `source` is not accepted as a pack regex, or null: it must compile (flag `i`), must not use
@@ -278,7 +306,8 @@ export function regexProblem(source: string): string | null {
     return `not a valid regular expression (${err instanceof Error ? err.message : String(err)})`.slice(0, 200);
   }
   if (/\\(?:[1-9]|k<)/.test(source.replace(/\\\\/g, ''))) return 'backreferences are not allowed';
-  const left = probeDeadline === null ? PROBE_BUDGET_MS : Math.min(PROBE_BUDGET_MS, probeDeadline - Date.now());
+  const budget = PROBE_BUDGET_MS * probePatience;
+  const left = probeDeadline === null ? budget : Math.min(budget, probeDeadline - Date.now());
   if (left < 1) return 'not checked: the patterns before it used up the time allowed for checking a pack';
   try {
     PROBE_SCRIPT.runInNewContext({ re, probes: regexProbes(source) }, { timeout: Math.ceil(left) });
@@ -351,8 +380,12 @@ export type ChatPackOverride = z.infer<typeof chatPackOverrideSchema>;
 
 export type ParsedOverride = { ok: true; override: ChatPackOverride } | { ok: false; problems: string[] };
 
-/** Validate an override as received (any JSON value). Never throws. */
-export function parseChatPackOverride(value: unknown): ParsedOverride {
+/**
+ * Validate an override as received (any JSON value). Never throws. `patience` multiplies the time
+ * allowed for the speed check: a pack that was accepted on an idle server is checked again when the
+ * server starts (attach), which is its busiest moment, and must not be dropped for being slow then.
+ */
+export function parseChatPackOverride(value: unknown, patience = 1): ParsedOverride {
   let bytes: number;
   try {
     bytes = Buffer.byteLength(JSON.stringify(value) ?? '', 'utf8');
@@ -360,12 +393,14 @@ export function parseChatPackOverride(value: unknown): ParsedOverride {
     return { ok: false, problems: ['body: not JSON'] };
   }
   if (bytes > CHAT_PACK_MAX_BYTES) return { ok: false, problems: [`body: larger than ${CHAT_PACK_MAX_BYTES} bytes`] };
-  probeDeadline = Date.now() + PACK_PROBE_BUDGET_MS;
+  probePatience = Math.max(1, patience);
+  probeDeadline = Date.now() + PACK_PROBE_BUDGET_MS * probePatience;
   let parsed: ReturnType<typeof chatPackOverrideSchema.safeParse>;
   try {
     parsed = chatPackOverrideSchema.safeParse(value);
   } finally {
     probeDeadline = null;
+    probePatience = 1;
   }
   if (!parsed.success) {
     return { ok: false, problems: parsed.error.issues.slice(0, 20).map((i) => `${i.path.join('.') || 'body'}: ${i.message}`) };
@@ -408,6 +443,9 @@ export interface ChatPackState {
   /** Goes up on every change; the reader compares it to notice a new pack. */
   revision: number;
 }
+
+/** The stored override passed the speed check when it was set: give it this many times longer at start-up. */
+const STARTUP_PATIENCE = 4;
 
 interface StoredPack {
   override?: unknown;
@@ -453,7 +491,7 @@ export class ChatPackStore {
       return ['stored selector pack could not be read'];
     }
     if (!stored || typeof stored !== 'object' || stored.override === undefined || stored.override === null) return [];
-    const parsed = parseChatPackOverride(stored.override);
+    const parsed = parseChatPackOverride(stored.override, STARTUP_PATIENCE);
     if (!parsed.ok) return parsed.problems;
     this.current = {
       source: 'override',
