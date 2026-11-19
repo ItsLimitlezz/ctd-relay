@@ -381,10 +381,12 @@ export async function captureChatDebug(opts: DebugCaptureOptions = {}): Promise<
       item.snapshot = await withTimeout(reader.page.evaluate(expression) as Promise<SnapshotResult>, SCAN_TIMEOUT_MS, 'The page did not answer');
       const tab = sel.commentsTab(reader.page, pack.tab);
       const visibleTab = await visibleNow(tab);
+      const selected = visibleTab ? await visibleTab.getAttribute('aria-selected', { timeout: 1000 }).catch(() => null) : null;
       item.tab = {
         matches: await tab.count(),
         visible: visibleTab !== null,
-        ariaSelected: visibleTab ? await visibleTab.getAttribute('aria-selected', { timeout: 1000 }).catch(() => null) : null,
+        // An attribute value from the page: only its two meaningful values are passed on.
+        ariaSelected: selected === 'true' || selected === 'false' ? selected : selected === null ? null : 'other',
       };
       item.composer = { matches: await sel.commentBox(reader.page, pack.composer.css).count() };
     } catch (err) {
