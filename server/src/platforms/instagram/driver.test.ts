@@ -47,7 +47,7 @@ describe.skipIf(!!process.env.CI_NO_BROWSER)('instagram driver (Chromium + local
   beforeAll(async () => {
     fx = await startFixtureServer();
     browser = await chromium.launch({ headless: true });
-    driver = createInstagramDriver({ baseUrl: fx.origin, timeouts: TIMEOUTS, chat: { markMs: 200, pollMs: 200 } });
+    driver = createInstagramDriver({ baseUrl: fx.origin, timeouts: TIMEOUTS, chat: { pollMs: 200, tabRetryMs: 2_000 } });
     cfg = { baseUrl: fx.origin, timeouts: { ...DEFAULT_TIMEOUTS, ...TIMEOUTS } };
   }, 60_000);
 

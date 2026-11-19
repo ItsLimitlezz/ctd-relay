@@ -11,6 +11,7 @@ import type { Account, PlatformInfo } from '../../../../shared/types.js';
 import { requireLoggedIn } from '../../browser/helpers.js';
 import { DriverError, type DriverContext, type PlatformDriver, type PreparedLive } from '../types.js';
 import { DEFAULT_CHAT_TIMINGS, instagramChat, TEST_COMMENT, type ChatTimings } from './chat.js';
+import { newChatMemory } from './chat-scan.js';
 import {
   checkpointError,
   DEFAULT_TIMEOUTS,
@@ -261,6 +262,8 @@ export function createInstagramDriver(opts: InstagramDriverOptions = {}): Platfo
     const marks: LiveMarks = { liveAt: null, sawLive: false };
     // Practice test lives: one test comment per live (only the account sees it), once the reader runs.
     const chatTest = { comment: testMode && options.audience === 'practice' ? TEST_COMMENT : null, posted: false };
+    // What the comments reader remembers for this live, kept across restarts of the chat source.
+    const chatMemory = newChatMemory();
     let ending: Promise<void> | null = null;
     return {
       push: { url: joinStreamUrl(details.server, details.key), mode: 'copy', feeds: ['vertical'] },
@@ -311,7 +314,7 @@ export function createInstagramDriver(opts: InstagramDriverOptions = {}): Platfo
         return ending;
       },
 
-      chat: (signal) => instagramChat(page, signal, log, chatTimings, chatTest),
+      chat: (signal) => instagramChat(page, signal, log, chatTimings, chatTest, chatMemory),
 
       health(signal) {
         const monitor = new HealthMonitor({
