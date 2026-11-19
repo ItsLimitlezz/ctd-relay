@@ -30,14 +30,18 @@ Public paths that work without logging in:
 - A token holder can read your chat and stream status (titles, destination names, watch URLs, error messages). Stream keys, account tokens and settings are never part of the API.
 - Treat a token like a password: give each app its own, and revoke it when an app is retired or a dock URL (`/dock#token=…`) may have leaked.
 
-### Show profiles and uploaded files (v1.9)
+### Operator tools (v1.11)
 
 One scope is for **operators**, not apps: `system:admin` ([API.md §15](API.md#15-operator-tools-the-instagram-chat-reader-v111)). It can replace the selectors the Instagram comments reader uses and take a debug capture of the comments panel.
 
 - Only an admin can put it on a token, in **Settings → API**, and only on a token for every profile. An app can't get it by pairing, whatever it asks for and whatever is ticked when approving.
-- A selector pack is data: CSS selectors, attribute names and text patterns with size and speed limits. It can't run code in the browser or on the server. The worst a bad pack does is make the reader miss or misread Instagram comments until someone reverts it (**Settings → Advanced → Revert to built-in**).
-- The debug capture returns the page's structure only. Text is replaced by its length; user names, comment text, link and image addresses, cookies and typed input are never in it.
+- A selector pack is data: CSS selectors, attribute names and text patterns with size and speed limits. It can't run code in the browser or on the server. A bad pack makes the reader miss or misread Instagram comments until someone reverts it (**Settings → Advanced → Revert to built-in**).
+- The speed limit on text patterns is a test, not a proof: each pattern is timed on long made-up input before it is accepted, which catches the usual mistakes (nested repetitions). A pattern built to get past that test could still keep the Instagram page busy until the live is restarted; comments, viewer count and "End live" for Instagram would stop answering, the stream itself would go on. Only give `system:admin` to someone you would give the admin login.
+- The debug capture returns the page's structure only. Text is replaced by its length; user names, comment text, link and image addresses, cookies and typed input are never in it, so a capture can be pasted into a ticket.
+- That protects what a capture shows, not the page from the token's holder: a capture also counts how many elements each selector of the pack matches, and the holder picks the selectors. With enough tries, counts can tell what an attribute on the Instagram page holds. This is one more reason to treat the token like the admin login, and to revoke it when the work is done.
 - Every pack change, revert and capture is in the audit log with the token's or user's name. Revoke the token when the work is done.
+
+### Show profiles and uploaded files (v1.9)
 
 The CTD OBS plugin saves OBS set-ups ("show profiles", [API.md §14](API.md#14-show-profiles-v19)) through three more scopes:
 
