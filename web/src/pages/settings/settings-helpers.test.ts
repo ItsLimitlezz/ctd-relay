@@ -15,6 +15,7 @@ import {
   validateTokenForm,
   fieldForMessage,
   generalChanges,
+  chatPackReaders,
   generalDraft,
   hasErrors,
   instructionLines,
@@ -39,6 +40,10 @@ describe('settings helpers', () => {
   it('reads the tab from the query', () => {
     expect(settingsTab('apps')).toBe('apps');
     expect(settingsTab('api')).toBe('api');
+    expect(settingsTab('advanced')).toBe('advanced');
+    expect(chatPackReaders(0)).toBe('No Instagram live right now');
+    expect(chatPackReaders(1)).toBe('1 Instagram live');
+    expect(chatPackReaders(3)).toBe('3 Instagram lives');
     expect(settingsTab('nope')).toBe('general');
     expect(settingsTab(null)).toBe('general');
   });

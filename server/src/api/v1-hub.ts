@@ -14,7 +14,7 @@ import { APP_ID_RE, APP_KIND_RE, issuesText, overlaysFor, parseAppRegistration, 
 import { LAN_HTTP_PORT_ENV, LAN_HTTP_PORT_SETTING, parsePortOverride } from './access.js';
 import { SlidingWindowLimiter, addressBucket, params, query, sendProblem } from './http.js';
 import { CONTROL_RE, jsonBytes } from './json.js';
-import { PAIRING_POLL_INTERVAL_SEC, TOKEN_NAME_MAX } from './pairing.js';
+import { PAIRING_POLL_INTERVAL_SEC, PAIRING_SCOPES, TOKEN_NAME_MAX } from './pairing.js';
 import { apiProfile, buildApiIngest } from './profiles.js';
 import { createUlidGenerator, parseUlid } from './ulid.js';
 import { showSummary } from './v1-show.js';
@@ -368,8 +368,9 @@ export function registerHubRoutes(app: FastifyInstance, ctx: V1Context): void {
     const parsed = PairingBody.safeParse(req.body ?? {});
     if (!parsed.success) return sendProblem(reply, 400, 'invalid', issuesText(parsed.error));
     const body = parsed.data;
-    const scopes: ApiScope[] = API_SCOPES.filter((s) => body.scopes.includes(s));
-    if (scopes.length === 0) return sendProblem(reply, 400, 'invalid', `scopes: any of ${API_SCOPES.join(', ')}`);
+    // Admin-only scopes (system:admin) cannot be asked for by pairing: ignored like unknown ones.
+    const scopes: ApiScope[] = PAIRING_SCOPES.filter((s) => body.scopes.includes(s));
+    if (scopes.length === 0) return sendProblem(reply, 400, 'invalid', `scopes: any of ${PAIRING_SCOPES.join(', ')}`);
     const profileId = body.profileId ?? null;
     if (profileId !== null && !services.repos.profiles.get(profileId)) {
       return sendProblem(reply, 404, 'unknown_profile', 'profileId: no profile with this id (ask for every profile with null; the admin picks one).');

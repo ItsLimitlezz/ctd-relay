@@ -44,7 +44,9 @@ import {
   profileToSelect,
   resourceNames,
   resourceSummary,
+  PAIRING_SCOPES,
   SECRET_SCOPES,
+  SENSITIVE_SCOPES,
   sortApps,
   withSelectedOption,
 } from '../../state/hub';
@@ -259,12 +261,15 @@ function ScopeChecklist({
   scopes,
   onChange,
   requested,
+  available = API_SCOPES,
   error,
 }: {
   scopes: readonly ApiScope[];
   onChange: (scopes: ApiScope[]) => void;
   /** Scopes the app asked for (marked "requested"). */
   requested?: readonly ApiScope[];
+  /** The scopes offered (default: all of them). */
+  available?: readonly ApiScope[];
   error?: string;
 }) {
   const errorId = useId();
@@ -272,7 +277,7 @@ function ScopeChecklist({
   return (
     <fieldset className="check-group" aria-describedby={error ? errorId : undefined}>
       <legend className="field-label">Permissions</legend>
-      {API_SCOPES.map((s) => (
+      {available.map((s) => (
         <label key={s} className="check-row">
           <input type="checkbox" checked={scopes.includes(s)} onChange={(e) => toggle(s, e.currentTarget.checked)} />
           <span>
@@ -418,7 +423,7 @@ function PairingRow({
         <div className="pairing-actions">
           <div className="pairing-scopes">
             {requested.map((s) => (
-              <Badge key={s} tone={SECRET_SCOPES.includes(s) ? 'warn' : 'info'} title={API_SCOPE_INFO[s].help}>
+              <Badge key={s} tone={SENSITIVE_SCOPES.includes(s) ? 'warn' : 'info'} title={API_SCOPE_INFO[s].help}>
                 {s}
               </Badge>
             ))}
@@ -497,7 +502,8 @@ export function ApprovePairingForm({
       >
         <Select options={withSelectedOption(profileSelectOptions(profiles), profileValue, profiles)} value={profileValue} onValueChange={setProfileValue} />
       </Field>
-      <ScopeChecklist scopes={scopes} onChange={setScopes} requested={requested} error={errors.scopes} />
+      {/* Admin-only permissions (operator tools) are never given by approving a code. */}
+      <ScopeChecklist scopes={scopes} onChange={setScopes} requested={requested} available={PAIRING_SCOPES} error={errors.scopes} />
       {secrets.length > 0 && (
         <div className="alert alert-warn">
           This app will be able to read the OBS stream keys of {target}. Allow it only for an app that sets up OBS (the CTD OBS
@@ -606,7 +612,7 @@ function TokenRow({
           <div className="item-title">
             <span>{t.name}</span>
             {orderedScopes(t.scopes).map((s) => (
-              <Badge key={s} tone={SECRET_SCOPES.includes(s) ? 'warn' : 'info'} title={API_SCOPE_INFO[s].help}>
+              <Badge key={s} tone={SENSITIVE_SCOPES.includes(s) ? 'warn' : 'info'} title={API_SCOPE_INFO[s].help}>
                 {s}
               </Badge>
             ))}
@@ -670,6 +676,10 @@ export function NewTokenForm({
     setErrors(v);
     setFormError(null);
     if (hasErrors(v)) return;
+    if (profileId !== null && scopes.includes('system:admin')) {
+      setFormError(`${API_SCOPE_INFO['system:admin'].label} changes the whole server: choose "Every profile" for this token.`);
+      return;
+    }
     setBusy(true);
     onBusyChange?.(true);
     let result: CreateApiTokenResponse;
@@ -704,6 +714,12 @@ export function NewTokenForm({
       {scopes.includes('show:secrets') && (
         <div className="alert alert-warn">
           {API_SCOPE_INFO['show:secrets'].label} hands out keys saved in OBS sources: give it only to machines you trust.
+        </div>
+      )}
+      {scopes.includes('system:admin') && (
+        <div className="alert alert-warn">
+          {API_SCOPE_INFO['system:admin'].label} lets the holder change how this server reads Instagram comments. Give it only to an operator or a
+          support agent you trust, for every profile, and revoke it when the work is done.
         </div>
       )}
       {formError && (

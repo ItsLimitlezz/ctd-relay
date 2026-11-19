@@ -380,6 +380,9 @@ export interface AuditEntry {
  * show:read    = show profiles (manifests, bundles), their assets and the asset library (CTD OBS plugin; v1.9)
  * show:write   = save show-profile revisions and upload blobs (v1.9)
  * show:secrets = the encrypted third-party secrets of a show profile, e.g. browser-source URL keys (v1.9)
+ * system:admin = operator tools that change how this server works, e.g. the Instagram chat reader's
+ *                selector pack and its debug capture (v1.11). Only for tokens an admin creates in
+ *                Settings → API for every profile; never granted through pairing (ADMIN_ONLY_SCOPES).
  */
 export type ApiScope =
   | 'chat:read'
@@ -391,7 +394,8 @@ export type ApiScope =
   | 'obs:control'
   | 'show:read'
   | 'show:write'
-  | 'show:secrets';
+  | 'show:secrets'
+  | 'system:admin';
 export const API_SCOPES: readonly ApiScope[] = [
   'chat:read',
   'status:read',
@@ -403,7 +407,10 @@ export const API_SCOPES: readonly ApiScope[] = [
   'show:read',
   'show:write',
   'show:secrets',
+  'system:admin',
 ];
+/** Scopes an app cannot ask for by pairing, and that a token limited to one profile cannot hold. */
+export const ADMIN_ONLY_SCOPES: readonly ApiScope[] = ['system:admin'];
 
 // ---------------------------------------------------------------------------
 // Connected apps (the hub): other apps register themselves and what they offer, so apps can
