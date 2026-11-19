@@ -231,3 +231,31 @@ export interface ReportSessionsResponse {
 
 export type ReportExportFormat = 'xlsx' | 'csv' | 'json';
 export const REPORT_EXPORT_FORMATS: readonly ReportExportFormat[] = ['xlsx', 'csv', 'json'];
+
+/** GET /reports/sessions/{id}: the detail plus the four leaderboards of that stream. */
+export interface ReportSessionDetailResponse extends ReportSessionDetail {
+  leaderboards: Leaderboard[];
+}
+
+/** GET/PUT /api/reports/settings (web UI). */
+export interface ReportSettingsResponse {
+  settings: ReportSettings;
+  /** False when the report tables can't be used (made by a newer Relay). */
+  available: boolean;
+  /** Sessions being recorded now. */
+  recording: string[];
+}
+
+/** Query of the list, summary, leaderboard and export routes. */
+export interface ReportQuery {
+  /** A profile id, or '*' for every profile. */
+  profile?: string;
+  from?: string;
+  to?: string;
+  tz?: string;
+  platform?: PlatformId | '';
+  test?: 'include' | 'exclude';
+  limit?: number;
+  board?: LeaderboardKind;
+  session?: string;
+}
