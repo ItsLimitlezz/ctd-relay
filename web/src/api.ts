@@ -26,6 +26,7 @@ import type {
   CreateProfileRequest,
   CreateUserRequest,
   IngestInfo,
+  InstagramChatPackStatus,
   LoginRequest,
   MeResponse,
   ObsRelayStatus,
@@ -284,6 +285,9 @@ export const api = {
   /** What this machine's FFmpeg can encode (read-only; state 'probing' right after startup). */
   transcodeCapabilities: () => get<TranscodeCapabilities>('/api/system/transcode-capabilities'),
   putSettings: (body: Partial<AppSettings>) => put<SettingsResponse>('/api/settings', body),
+  /** Settings → Advanced: the Instagram chat reader's selector pack (admin). */
+  instagramChatPack: () => get<InstagramChatPackStatus>('/api/platforms/instagram/chat/selector-pack'),
+  revertInstagramChatPack: () => del<InstagramChatPackStatus>('/api/platforms/instagram/chat/selector-pack'),
   audit: (limit = 100, before?: number) =>
     get<AuditResponse>(`/api/audit?limit=${limit}${before !== undefined ? `&before=${before}` : ''}`),
 

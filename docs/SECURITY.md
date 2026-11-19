@@ -24,11 +24,22 @@ Public paths that work without logging in:
 
 ## External API tokens
 
-- An admin creates tokens in **Settings → API**. A token has scopes (`chat:read`, `status:read`, …) and cannot start or stop a stream, change the title or touch settings. The write scopes only let an app register itself, message other apps, send OBS events, relay OBS control, or (v1.9) save show profiles and upload files.
+- An admin creates tokens in **Settings → API**. A token has scopes (`chat:read`, `status:read`, …) and cannot start or stop a stream, change the title or touch settings. The write scopes only let an app register itself, message other apps, send OBS events, relay OBS control, or (v1.9) save show profiles and upload files. The one scope that changes how the server itself works is the operator scope `system:admin` (v1.11, below), which no app gets by pairing.
 - The secret is shown once and stored only as a SHA-256 hash. Revoking a token takes effect immediately (open event streams close within 30 s). Creating and revoking tokens is in the audit log.
 - Each token is limited to 600 requests per minute and 5 open event streams. The API never sets or reads cookies.
 - A token holder can read your chat and stream status (titles, destination names, watch URLs, error messages). Stream keys, account tokens and settings are never part of the API.
 - Treat a token like a password: give each app its own, and revoke it when an app is retired or a dock URL (`/dock#token=…`) may have leaked.
+
+### Operator tools (v1.11)
+
+One scope is for **operators**, not apps: `system:admin` ([API.md §15](API.md#15-operator-tools-the-instagram-chat-reader-v111)). It can replace the selectors the Instagram comments reader uses and take a debug capture of the comments panel.
+
+- Only an admin can put it on a token, in **Settings → API**, and only on a token for every profile. An app can't get it by pairing, whatever it asks for and whatever is ticked when approving.
+- A selector pack is data: CSS selectors, attribute names and text patterns with size and speed limits. It can't run code in the browser or on the server. A bad pack makes the reader miss or misread Instagram comments until someone reverts it (**Settings → Advanced → Revert to built-in**).
+- The speed limit on text patterns is a test, not a proof: each pattern is timed on long made-up input before it is accepted, which catches the usual mistakes (nested repetitions). A pattern built to get past that test could still keep the Instagram page busy until the live is restarted; comments, viewer count and "End live" for Instagram would stop answering, the stream itself would go on. Only give `system:admin` to someone you would give the admin login.
+- The debug capture returns the page's structure only. Text is replaced by its length; user names, comment text, link and image addresses, cookies and typed input are never in it, so a capture can be pasted into a ticket.
+- That protects what a capture shows, not the page from the token's holder: a capture also counts how many elements each selector of the pack matches, and the holder picks the selectors. With enough tries, counts can tell what an attribute on the Instagram page holds. This is one more reason to treat the token like the admin login, and to revoke it when the work is done.
+- Every pack change, revert and capture is in the audit log with the token's or user's name. Revoke the token when the work is done.
 
 ### Show profiles and uploaded files (v1.9)
 

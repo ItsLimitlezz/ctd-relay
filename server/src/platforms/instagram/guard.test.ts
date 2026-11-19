@@ -81,7 +81,7 @@ describe.skipIf(!!process.env.CI_NO_BROWSER)('instagram stream guard (Chromium +
     driver = createInstagramDriver({
       baseUrl: fx.origin,
       timeouts: TIMEOUTS,
-      chat: { markMs: 200, pollMs: 200 },
+      chat: { pollMs: 200, tabRetryMs: 2_000 },
       health: HEALTH,
       now: () => clock,
     });

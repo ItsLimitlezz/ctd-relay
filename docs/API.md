@@ -70,6 +70,7 @@ Authorization: Bearer ctd_pat_3fK9wQ1v…
 | `show:read` | Show profiles (§14): `GET /profiles/{id}/show…` (manifests, bundles), `GET /blobs/{sha256}`, `GET /library`, `show.changed` and `library.changed` events (v1.9) |
 | `show:write` | `POST /profiles/{id}/show/revisions`, `POST /blobs/check`, `PUT /blobs/{sha256}`: save revisions and upload files (v1.9) |
 | `show:secrets` | `GET /profiles/{id}/show/revisions/{rev}/secrets`: third-party secrets (URL keys, passwords) saved with a show profile. Grant it per trusted machine only (v1.9) |
+| `system:admin` | Operator tools (§15): read, replace and revert the Instagram chat reader's selector pack, and take its sanitised debug capture. Only for a token an admin creates for **every profile**; pairing never grants it (v1.11) |
 
 A token may also be **limited to one profile** (§9.1). `/`, `/events` and `/events/poll` return
 whatever the token's scopes allow. Browser-only fallback: `GET /events` also accepts
@@ -1409,6 +1410,148 @@ A daily clean-up deletes blobs that no revision or library entry references once
 old (an upload never followed by a save, a pruned revision's files). The rate limit in §2 applies
 as usual.
 
+## 15. Operator tools: the Instagram chat reader (v1.11)
+
+Instagram's live comments are read from its page in Relay's browser, and that page changes often.
+What the reader knows about the page is a **selector pack**: JSON with CSS selectors, attribute
+names, text patterns and timings. These routes let an operator, or a remote agent the operator
+trusts, see what the reader sees and change the pack **while a live is running**, without a new
+release. The guide with examples is docs/PLATFORMS.md → Instagram → "Tuning the chat reader live".
+
+All four routes need **`system:admin`** and a token that is **not limited to one profile**
+(`403 profile_forbidden` otherwise). The scope can only be put on a token in **Settings → API**; a
+pairing request that asks for it gets the other scopes it asked for, and approving a pairing can
+never add it. Every change and every capture is written to the audit log with the token's name.
+The web UI has the same four operations for signed-in admins under
+`/api/platforms/instagram/chat/…` (Settings → Advanced uses them).
+
+#### `GET /api/v1/platforms/instagram/chat/selector-pack` — `system:admin`
+
+```json
+{
+  "source": "override",
+  "version": "2026-11-20 a",
+  "builtinVersion": "builtin-2",
+  "note": "comment rows moved to data-comment-id",
+  "updatedAt": "2026-11-20T10:00:00.000Z",
+  "updatedBy": "token Support agent",
+  "readers": 1,
+  "maxBytes": 16384,
+  "pack": { "schema": 1, "version": "2026-11-20 a", "tab": { "…": "…" }, "container": { "…": "…" }, "row": { "…": "…" }, "text": { "…": "…" }, "classify": { "…": "…" }, "composer": { "…": "…" }, "timing": { "…": "…" }, "limits": { "…": "…" } },
+  "override": { "schema": 1, "version": "2026-11-20 a", "row": { "css": ["[data-comment-id]"] } }
+}
+```
+
+- `source`: `builtin` (the pack shipped with this version) or `override`.
+- `pack`: what the reader runs with, every setting: the built-in pack with the override on top.
+- `override`: the override as stored, `null` on the built-in pack.
+- `readers`: how many Instagram lives are being read right now.
+
+#### `PUT /api/v1/platforms/instagram/chat/selector-pack` — `system:admin`
+
+The body is an override: `schema` (`1`), `version` (your label, at most 40 characters), an optional
+`note`, and **any subset** of the pack's sections (`tab`, `container`, `row`, `text`, `classify`,
+`composer`, `timing`, `limits`) with any subset of their settings. A list replaces the built-in list
+whole. What each setting does: docs/PLATFORMS.md. The exact shape: `InstagramChatPackOverride` in
+`openapi.json`. Answers like `GET`.
+
+A pack is **data only** and the server checks it before storing it (`400 invalid`, the detail
+lists every problem with its path, e.g. `row.css.0: CSS selector: …`):
+
+| Rule | Limit |
+|---|---|
+| Size | 16 KB of JSON (`413` when the request body is over 32 KB) |
+| Settings | Only the known ones. An unknown key is refused |
+| CSS selectors | Plain CSS, at most 200 characters, at most 12 per list. No selector engine prefixes (`xpath=`, `text=`), no `>>` chains, no `{ } ; @ <` or comments |
+| Attribute names | `[A-Za-z_][A-Za-z0-9_.:-]*`, at most 64 characters |
+| Patterns | Regular-expression source, at most 300 characters, at most 24 per list, compiled with the `i` flag. No backreferences. A pattern that is slow on long input (catastrophic backtracking) is refused |
+| Numbers | `timing.pollMs` 500–10000, `timing.tabRetryMs` 3000–120000, `timing.backoffMaxMs` 1000–60000, `limits.maxRows` 20–500, `limits.history` 50–2000, `row.maxAvatars` 1–4, `container.climbLevels` 0–12, `container.climbMinHeight` 0–2000 |
+
+Nothing in a pack is run as code: selectors go to `querySelectorAll`, attribute names to
+`getAttribute`, and patterns are tested against at most 400 characters of text. A selector the
+browser cannot use is skipped and reported in the debug capture (`reader.bad`).
+
+The running reader uses the new pack on its **next poll**. It is stored in the database and loaded
+again at start-up; a stored pack that a later version no longer accepts is ignored (the built-in
+pack runs and the log says why).
+
+#### `DELETE /api/v1/platforms/instagram/chat/selector-pack` — `system:admin`
+
+Back to the built-in pack. Answers like `GET`. Idempotent.
+
+#### `POST /api/v1/platforms/instagram/chat/debug` — `system:admin`
+
+A **sanitised** picture of what each running reader sees. Optional JSON body:
+
+| Field | Default | |
+|---|---|---|
+| `scope` | `container` | `page`: the whole page (also used when no comments container is found) |
+| `up` | `0` | Start this many parents above the container (0–6) |
+| `decisions` | `50` | How many of the last parse decisions to return (0–200) |
+| `maxNodes` | `400` | Size of the tree (20–1500) |
+
+```json
+{
+  "capturedAt": "2026-11-20T10:05:00.000Z",
+  "pack": { "source": "builtin", "version": "builtin-2", "builtinVersion": "builtin-2" },
+  "readers": [
+    {
+      "reader": { "packVersion": "builtin-2", "container": "tabpanel", "rows": 12, "truncated": 0, "failures": 0, "tab": "selected", "tabClicks": 1, "kept": 41, "dropped": 9, "newestFirst": false, "bad": [], "lastReadAt": "2026-11-20T10:04:59.400Z" },
+      "tab": { "matches": 1, "visible": true, "ariaSelected": "true" },
+      "composer": { "matches": 1 },
+      "snapshot": {
+        "page": { "host": "www.instagram.com", "pathSegments": 2, "ready": true, "title": 9 },
+        "container": { "strategy": "tabpanel", "tag": "div", "role": "tabpanel", "box": [380, 520], "rows": 12 },
+        "root": "container",
+        "tree": {
+          "tag": "div", "ctd": "container", "attrs": { "role": "tabpanel" }, "box": [380, 520],
+          "children": [
+            { "tag": "div", "ctd": "row", "class": ["x9f619"], "box": [380, 40], "children": [
+              { "tag": "img", "class": ["xpdipgo"], "labels": { "alt": { "len": 31, "is": ["avatarAlt"] } }, "data": { "src": "https" }, "box": [20, 20] },
+              { "tag": "span", "children": [{ "text": 14 }] },
+              { "tag": "span", "children": [{ "text": 27 }] },
+              { "tag": "span", "children": [{ "text": 5, "is": ["meta"] }] }
+            ] }
+          ]
+        },
+        "nodes": 86, "truncated": false,
+        "selectors": { "row.avatarCss[0]": { "page": 13, "container": 12, "visible": 13 }, "row.css[0]": "invalid" },
+        "patterns": { "container.panelLabel": 1, "container.composerHint": 1, "row.avatarAlt": 13, "tab.name": 1 },
+        "bad": []
+      },
+      "decisions": [
+        { "at": "2026-11-20T10:04:58.400Z", "row": 57, "verdict": "kept", "reason": "new", "kind": "message", "join": false, "authorLength": 14, "textLength": 27, "hasAvatar": true, "hasId": false, "restored": false }
+      ]
+    }
+  ]
+}
+```
+
+`readers` is empty when no Instagram live is being read. What the capture **never** contains: user
+names, comment text, link targets, image addresses, cookies, the page's address beyond its host,
+or anything typed into a field. What it keeps, so a pack can be written from it:
+
+- **Tree:** tag names, class names, roles and other structural attributes (`role`, `type`,
+  `aria-selected`, …) with their values, every attribute's **name**, each visible element's size,
+  and `"ctd": "container" | "row"` on the elements the reader tagged.
+- **Text nodes:** only their length, and which pack patterns they match (`"is": ["meta"]`).
+- **Labels** (`alt`, `aria-label`, `placeholder`, `title`): their length and which pack patterns
+  they match. Words from a fixed list of interface words ("comment", "reply", "pinned", "profile",
+  "picture", …) are shown, every other word is replaced by `#` marks of its length
+  (`"profile photo of ##########"`). An avatar alt that the pack recognises is never shown.
+- **Other attribute values** (`data-*`, `id`, `href`, `src`, …): a shape — `digits/5`, `hex/8`,
+  `word/12`, `text/30`, `path/1` (a relative link one level deep), `https`, `data`, `empty`. A
+  value made only of interface words is shown with a leading `=` (`"=live-comments"`), never for
+  links, `value` or `style`.
+- **`selectors`:** per pack selector, how many elements match in the page, in the container, and
+  how many of them are visible; `"invalid"` when the browser rejects it.
+- **`decisions`:** newest last. `verdict` `kept` (`reason` `new`, or `late`: a row that was not at
+  the newest end of the list) or `dropped` (`baseline`: on screen when the reader started;
+  `rerender`: a re-created row of a comment already delivered; `duplicate-id`; `pinned`; `system`;
+  `pack-changed`: the first read under a new pack). Lengths only.
+
+The capture reads the page; it does not click or change anything.
+
 ## 16. Issues: alerts when a feed, a stream or a scene has a problem (v1.12)
 
 One event pair tells every CTD app that something is wrong and when it is fixed: **`issue.raised`**
@@ -1562,6 +1705,7 @@ and the plugin's next state resend raises its issues again.
 | `mode` | `target` (a set scene), `list` (the next healthy scene of a fallback list) or `return` (back to the original scene once the source recovered) |
 | `title` | Text for people |
 
+
 ## Changelog
 
 `apiVersion` stays `1`: every change below is additive, so clients written for an earlier v1
@@ -1576,6 +1720,19 @@ the revision in `info.version`.
   `obs.issue.*`, with a stable `id`, `severity`, `subject`, hold times, and a `resolution` on clear.
   `GET /status` carries `issues` (open issues). `obs.issue.raised` may carry `onProgram` and
   `scene`; new OBS event type `obs.failover` (§10, §16.6).
+
+### v1.11
+
+- **Operator tools for the Instagram chat reader (§15):** a new scope, `system:admin`, and four
+  routes: `GET` / `PUT` / `DELETE /platforms/instagram/chat/selector-pack` (the reader's selectors
+  and patterns as a JSON pack that can be replaced while a live runs) and
+  `POST /platforms/instagram/chat/debug` (a sanitised capture of what the reader sees). The scope
+  is only for tokens created in Settings → API for every profile; pairing never grants it.
+- **Instagram comments** (`chat.message` from `instagram`): a re-rendered or re-mounted comment
+  list, a tab switch and a page reload no longer deliver comments twice; pinned copies and
+  Instagram's own notices are no longer delivered; "and 3 others joined" lines are `join` events.
+  When the page exposes a comment id (a pack setting), `platformMessageId` carries it. No change to
+  the shape of any event.
 
 ### v1.10
 

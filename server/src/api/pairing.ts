@@ -8,12 +8,15 @@
 
 import crypto from 'node:crypto';
 import type { Logger } from 'pino';
-import { API_SCOPES, type ApiTokenInfo, type PairingRequest } from '../../../shared/types.js';
+import { ADMIN_ONLY_SCOPES, API_SCOPES, type ApiScope, type ApiTokenInfo, type PairingRequest } from '../../../shared/types.js';
 import type { AppConfig } from '../config.js';
 import type { EventBus } from '../events.js';
 import type { PairingService, Repos } from '../services.js';
 import { lanClientPolicy } from '../tls/http-listener.js';
 import { ApiProblem, addressBucket } from './http.js';
+
+/** Scopes an app may ask for, and be given, by pairing (docs/API.md §9.3). */
+export const PAIRING_SCOPES: readonly ApiScope[] = API_SCOPES.filter((s) => !ADMIN_ONLY_SCOPES.includes(s));
 
 /** How long a request waits for the admin, and how long an approved token waits to be collected. */
 export const PAIRING_TTL_MS = 10 * 60_000;
@@ -196,7 +199,7 @@ export function createPairingService(deps: PairingServiceDeps): PairingServiceHa
         appName: input.appName,
         kind: input.kind,
         code,
-        requestedScopes: API_SCOPES.filter((s) => input.requestedScopes.includes(s)),
+        requestedScopes: PAIRING_SCOPES.filter((s) => input.requestedScopes.includes(s)),
         requestedProfileId: input.requestedProfileId,
         ip: input.ip,
         createdAt: new Date(t).toISOString(),
@@ -257,7 +260,8 @@ export function createPairingService(deps: PairingServiceDeps): PairingServiceHa
 
     approve(id, opts) {
       const e = pendingEntry(id);
-      const scopes = API_SCOPES.filter((s) => opts.scopes.includes(s));
+      // Admin-only scopes are never granted by approving a code an app showed.
+      const scopes = PAIRING_SCOPES.filter((s) => opts.scopes.includes(s));
       if (scopes.length === 0) throw new ApiProblem(400, 'invalid', 'Pick at least one scope.');
       if (opts.profileId !== null && !repos.profiles.get(opts.profileId)) {
         throw new ApiProblem(404, 'unknown_profile', 'Unknown profile.');

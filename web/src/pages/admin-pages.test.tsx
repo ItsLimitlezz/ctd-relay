@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { ReactElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
-import type { ApiAccessInfo, ConnectStart, SettingsResponse } from '@shared/api';
+import type { ApiAccessInfo, ConnectStart, InstagramChatPackStatus, SettingsResponse } from '@shared/api';
 import type { Account, ApiTokenInfo, ConnectedApp, Destination, PairingRequest, PlatformInfo, ProfileSummary, TlsStatus } from '@shared/types';
 import { AuthProvider } from '../state/auth';
 import { LiveProvider } from '../state/live';
@@ -10,6 +10,7 @@ import { ConnectModal, Instructions, type ConnectState } from './accounts/Connec
 import { DestinationForm } from './destinations/DestinationForm';
 import { PlatformPicker } from './destinations/PlatformPicker';
 import { AboutTab, TranscodeCapabilitiesView } from './settings/AboutTab';
+import { InstagramChatReaderCard } from './settings/AdvancedTab';
 import {
   AccessCard,
   ApprovePairingForm,
@@ -286,6 +287,57 @@ describe('settings tabs (static render)', () => {
     expect(out).toContain('Checking which encoders work…');
   });
 
+  it('Advanced tab: the Instagram chat reader card on the built-in pack', () => {
+    const status: InstagramChatPackStatus = {
+      source: 'builtin',
+      version: 'builtin-2',
+      builtinVersion: 'builtin-2',
+      note: null,
+      updatedAt: null,
+      updatedBy: null,
+      readers: 0,
+      maxBytes: 16384,
+      pack: {},
+      override: null,
+    };
+    const out = html(<InstagramChatReaderCard status={status} onRevert={noop} />);
+    expect(out).toContain('Instagram chat reader');
+    expect(out).toContain('builtin-2');
+    expect(out).toContain('Built-in');
+    expect(out).toContain('No Instagram live right now');
+    expect(out).toContain('The built-in pack is active.');
+    // Nothing to revert to: the button is there but disabled.
+    expect(out).toMatch(/<button[^>]*disabled=""[^>]*>.*Revert to built-in/s);
+    expect(out).not.toContain('Operator override');
+  });
+
+  it('Advanced tab: an operator override shows who changed it and can be reverted', () => {
+    const status: InstagramChatPackStatus = {
+      source: 'override',
+      version: 'tuned-1',
+      builtinVersion: 'builtin-2',
+      note: 'New comment rows after the redesign',
+      updatedAt: '2026-11-20T10:00:00.000Z',
+      updatedBy: 'token Support agent',
+      readers: 2,
+      maxBytes: 16384,
+      pack: {},
+      override: { schema: 1, version: 'tuned-1' },
+    };
+    const out = html(<InstagramChatReaderCard status={status} onRevert={noop} onRefresh={noop} />);
+    expect(out).toContain('tuned-1');
+    expect(out).toContain('Operator override');
+    expect(out).toContain('builtin-2');
+    expect(out).toContain('by token Support agent');
+    expect(out).toContain('New comment rows after the redesign');
+    expect(out).toContain('2 Instagram lives');
+    expect(out).toContain('system:admin');
+    expect(out).not.toMatch(/<button[^>]*disabled=""[^>]*>.*Revert to built-in/s);
+    expect(out).not.toContain('The built-in pack is active.');
+    // The card never shows the pack's content (selectors are changed through the API).
+    expect(out).not.toContain('schema');
+  });
+
   it('About tab: transcoding capabilities line', () => {
     const out = html(
       <TranscodeCapabilitiesView
@@ -374,12 +426,13 @@ describe('Settings → API (static render)', () => {
 
   it('new token form: name, profile and a checkbox per scope (read-only basics checked)', () => {
     const out = html(<NewTokenForm onCreated={noop} onCancel={noop} />);
-    expect(out.match(/type="checkbox"/g)).toHaveLength(10);
-    // Only chat:read and status:read start checked; stream keys, the hub and OBS access are opt-in.
+    expect(out.match(/type="checkbox"/g)).toHaveLength(11);
+    // Only chat:read and status:read start checked; stream keys, the hub, OBS access and the operator tools are opt-in.
     expect(out.match(/type="checkbox" checked=""/g)).toHaveLength(2);
-    for (const s of ['chat:read', 'status:read', 'ingest:read', 'apps:read', 'apps:write', 'obs:write', 'obs:control', 'show:read', 'show:write', 'show:secrets']) {
+    for (const s of ['chat:read', 'status:read', 'ingest:read', 'apps:read', 'apps:write', 'obs:write', 'obs:control', 'show:read', 'show:write', 'show:secrets', 'system:admin']) {
       expect(out).toContain(s);
     }
+    expect(out).toContain('Operator tools');
     expect(out).toContain('maxLength="60"');
     expect(out).toContain('Create token');
     expect(out).toContain('Profile');
@@ -428,6 +481,9 @@ describe('Settings → API (static render)', () => {
     expect(out.match(/type="checkbox" checked=""/g)).toHaveLength(3);
     expect(out.match(/requested/g)?.length).toBeGreaterThanOrEqual(3);
     expect(out).toContain('read the OBS stream keys of every profile');
+    // Operator tools are never offered when approving a code: one checkbox fewer than a new token has.
+    expect(out.match(/type="checkbox"/g)).toHaveLength(10);
+    expect(out).not.toContain('system:admin');
   });
 
   it('several pairings: a compact row each; nothing at all when none are pending', () => {

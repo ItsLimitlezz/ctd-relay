@@ -130,6 +130,9 @@ describe('pairing requests', () => {
     expect(pairingDefaults(pairing('a', { requestedProfileId: 'gone' }), profiles).profileId).toBe(DEFAULT_PROFILE_ID);
     // Unknown scopes are dropped; nothing usable -> the read-only basics.
     expect(pairingDefaults(pairing('a', { requestedScopes: ['admin:all' as never] }), profiles).scopes).toEqual([...BASIC_SCOPES]);
+    // An admin-only scope (operator tools) is never part of what a pairing starts with.
+    expect(pairingDefaults(pairing('a', { requestedScopes: ['system:admin', 'status:read'] }), profiles).scopes).toEqual(['status:read']);
+    expect(pairingDefaults(pairing('a', { requestedScopes: ['system:admin'] }), profiles).scopes).toEqual([...BASIC_SCOPES]);
     expect(pairingDefaults(pairing('a', { appName: 'x'.repeat(80) }), profiles).name).toHaveLength(60);
     expect(knownScopes(['apps:write', 'nope', 'chat:read'])).toEqual(['chat:read', 'apps:write']);
   });

@@ -177,6 +177,8 @@ describe('GET /openapi.json', () => {
       '/blobs/check',
       '/blobs/{sha256}',
       '/library',
+      '/platforms/instagram/chat/selector-pack',
+      '/platforms/instagram/chat/debug',
     ]);
     expect(doc.components.securitySchemes.bearer).toMatchObject({ type: 'http', scheme: 'bearer' });
     // Every $ref resolves.

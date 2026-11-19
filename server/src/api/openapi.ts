@@ -12,6 +12,7 @@ import { OBS_BODY_LIMIT, OBS_DATA_MAX_BYTES, OBS_EVENT_TYPES, OBS_MAX_EVENTS, OB
 import { PREVIEW_MAX_AGE_MS } from './previews.js';
 import { CONNECT_OFFER_TTL_MS, DEVICE_NAME_MAX, MOBILE_SCOPES } from './connect.js';
 import { MAX_SOCKETS_PER_TOKEN, OBS_SUBPROTOCOL } from './obs-relay.js';
+import { platformPaths, platformSchemas } from './openapi-platforms.js';
 import { showPaths, showSchemas } from './openapi-show.js';
 
 /** Minor revision of the v1 contract (additive changes only; see the changelog in docs/API.md). */
@@ -81,7 +82,7 @@ export function openApiDocument(version: string): Record<string, unknown> {
     },
     servers: [{ url: '/api/v1' }],
     security: [{ bearer: [] }],
-    tags: [{ name: 'status' }, { name: 'chat' }, { name: 'events' }, { name: 'profiles' }, { name: 'apps' }, { name: 'pairing' }, { name: 'show' }],
+    tags: [{ name: 'status' }, { name: 'chat' }, { name: 'events' }, { name: 'profiles' }, { name: 'apps' }, { name: 'pairing' }, { name: 'show' }, { name: 'operator' }],
     paths: {
       '/': {
         get: {
@@ -493,11 +494,13 @@ export function openApiDocument(version: string): Record<string, unknown> {
         },
       },
       ...showPaths({ errors, profileErrors, idPath }),
+      ...platformPaths({ errors }),
     },
     components: {
       securitySchemes: { bearer: { type: 'http', scheme: 'bearer', description: 'ctd_pat_ token from Settings → API (or pairing)' } },
       schemas: {
         ...showSchemas(),
+        ...platformSchemas(),
         TranscodeCapabilities: transcodeCapabilitiesSchema(),
         Ulid: { type: 'string', pattern: '^[0-7][0-9A-HJKMNP-TV-Z]{25}$', description: 'ULID: unique, sortable by time' },
         Problem: {

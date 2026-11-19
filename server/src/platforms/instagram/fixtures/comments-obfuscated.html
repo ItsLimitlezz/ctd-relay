@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Fixture: redesigned comments (synthetic)</title>
+<style>
+  body { font-family: sans-serif; margin: 0; }
+  .x1n2onr6 { width: 380px; }
+  .x78zum5 { min-height: 240px; }
+  .x9f619 { display: flex; gap: 6px; padding: 4px; }
+  .xpdipgo { width: 20px; height: 20px; }
+  .x1cy8zhl { display: flex; flex-direction: column; }
+  .xcomposer [contenteditable] { min-height: 20px; border: 1px solid #ccc; }
+</style>
+</head>
+<body>
+<div class="x1n2onr6">
+  <div class="xheader"><div class="xtab xtab-on" tabindex="0">Chat</div><div class="xtab" tabindex="0">Details</div></div>
+  <div class="x78zum5 xdt5ytf" data-testid="live-comments" id="list">
+    <div class="x9f619 x1lliihq" data-comment-id="c1001">
+      <img class="xpdipgo" alt="Profile photo of fixture_user_a" src="data:image/gif;base64,R0lGODlhAQABAAAAACH5BAEKAAEALAAAAAABAAEAAAICTAEAOw==">
+      <div class="x1cy8zhl"><span class="x1lliihq xuser">fixture_user_a</span><span class="x193iq5w xtext">first comment in the new layout</span><span class="xago">1m</span></div>
+    </div>
+    <div class="x9f619 x1lliihq" data-comment-id="c1002">
+      <img class="xpdipgo" alt="Profile photo of fixture_user_b" src="data:image/gif;base64,R0lGODlhAQABAAAAACH5BAEKAAEALAAAAAABAAEAAAICTAEAOw==">
+      <div class="x1cy8zhl"><span class="x1lliihq xuser">fixture_user_b</span><span class="x193iq5w xtext">like</span><span class="xago">1m</span></div>
+    </div>
+  </div>
+  <div class="xcomposer"><div contenteditable="true" role="textbox" aria-label="Message the live…"></div></div>
+</div>
+<script>
+  const AV = 'data:image/gif;base64,R0lGODlhAQABAAAAACH5BAEKAAEALAAAAAABAAEAAAICTAEAOw==';
+  let next = 1003;
+  window.__add = (user, text, id) => {
+    const row = document.createElement('div');
+    row.className = 'x9f619 x1lliihq';
+    row.setAttribute('data-comment-id', id || 'c' + next++);
+    row.innerHTML = '<img class="xpdipgo" alt="Profile photo of ' + user + '" src="' + AV + '">' +
+      '<div class="x1cy8zhl"><span class="x1lliihq xuser"></span><span class="x193iq5w xtext"></span><span class="xago">now</span></div>';
+    row.querySelector('.xuser').textContent = user;
+    row.querySelector('.xtext').textContent = text;
+    document.getElementById('list').appendChild(row);
+  };
+</script>
+</body>
+</html>

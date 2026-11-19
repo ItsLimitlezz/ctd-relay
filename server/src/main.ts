@@ -22,6 +22,7 @@ import { createMediaServer } from './media/mediamtx.js';
 import { transcodeCapabilitiesFor } from './media/transcode-capabilities.js';
 import { errorMessage, redactText } from './orchestrator/async-utils.js';
 import { createOrchestratorRegistry } from './orchestrator/registry.js';
+import { chatPackStore } from './platforms/instagram/chat-pack.js';
 import { createPlatformRegistry } from './platforms/registry.js';
 import type { DriverContext } from './platforms/types.js';
 import { createSecretBox, loadMasterKey } from './security/secretbox.js';
@@ -229,6 +230,12 @@ export async function main(): Promise<void> {
   // priority; never delays startup and never touches streaming.
   const transcodeCaps = transcodeCapabilitiesFor(services);
   void transcodeCaps.start();
+
+  // The Instagram chat reader's selector pack: load the operator's override, if one is stored
+  // (docs/PLATFORMS.md → Instagram). A stored pack that no longer validates is ignored.
+  const packProblems = chatPackStore.attach(services.repos.settings);
+  if (packProblems.length > 0) log.warn({ problems: packProblems }, 'stored Instagram chat selector pack ignored; using the built-in one');
+  else if (chatPackStore.state().source === 'override') log.info({ version: chatPackStore.active().version }, 'Instagram chat selector pack: operator override active');
 
   await services.media.start();
   await services.orchestrators.init();
