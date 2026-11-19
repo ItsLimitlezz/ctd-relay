@@ -8,7 +8,7 @@ Runs as one multi-arch Docker image (amd64/arm64; TrueNAS or Docker Compose) or 
 ## Layout
 | Path | What |
 | --- | --- |
-| `server/src/` | Fastify + TypeScript backend: `main.ts` (composition root), `media/` (MediaMTX + FFmpeg push), `orchestrator/` (go-live), `platforms/<id>/` (one driver per platform), `browser/` (Playwright), `chat/`, `music/`, `db/` (node:sqlite), `security/`, `tls/`, `http/`, `api/` |
+| `server/src/` | Fastify + TypeScript backend: `main.ts` (composition root), `media/` (MediaMTX + FFmpeg push), `orchestrator/` (go-live), `platforms/<id>/` (one driver per platform), `browser/` (Playwright), `chat/`, `music/`, `reports/` (stream reports, xlsx writer), `db/` (node:sqlite), `security/`, `tls/`, `http/`, `api/` |
 | `shared/` | `types.ts`, `api.ts`: contract shared by server and web |
 | `web/` | React 19 + Vite SPA (talks to the server only via `web/src/api.ts`) |
 | `scripts/` | `setup-tools.mjs` (pinned MediaMTX + FFmpeg), `smoke-test.ts`, `dev-sim.mts`, `healthcheck.mjs` |

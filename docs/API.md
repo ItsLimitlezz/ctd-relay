@@ -71,6 +71,7 @@ Authorization: Bearer ctd_pat_3fK9wQ1v…
 | `show:write` | `POST /profiles/{id}/show/revisions`, `POST /blobs/check`, `PUT /blobs/{sha256}`: save revisions and upload files (v1.9) |
 | `show:secrets` | `GET /profiles/{id}/show/revisions/{rev}/secrets`: third-party secrets (URL keys, passwords) saved with a show profile. Grant it per trusted machine only (v1.9) |
 | `system:admin` | Operator tools (§15): read, replace and revert the Instagram chat reader's selector pack, and take its sanitised debug capture. Only for a token an admin creates for **every profile**; pairing never grants it (v1.11) |
+| `reports:read` | Stream reports (§16): `GET /reports/…` past streams, viewers over time, chat counts, events, leaderboards and exports. Holds viewers' names: give it only to apps you trust with your audience (v1.13) |
 
 A token may also be **limited to one profile** (§9.1). `/`, `/events` and `/events/poll` return
 whatever the token's scopes allow. Browser-only fallback: `GET /events` also accepts
@@ -1535,11 +1536,71 @@ or anything typed into a field. What it keeps, so a pack can be written from it:
 
 The capture reads the page; it does not click or change anything.
 
+## 16. Stream reports (v1.13)
+
+Every stream (a profile's session, start to end) is recorded: titles, destinations, live periods,
+events, viewers every 30 s per destination (unknown = `null`, never 0), chat per platform per
+minute, feed stats per minute and, with audience tracking on, per-person counts (never message
+text). What is recorded and how the numbers are worked out: [REPORTS.md](REPORTS.md).
+
+All routes need **`reports:read`** and are read-only. A token limited to one profile sees that
+profile's streams only (another profile's stream answers `404 not_found`); an every-profile token
+sees every profile unless it passes `?profile=<id>`. `?profile=*` asks for every profile the token
+can see.
+
+Common query parameters (list, summary, leaderboard and range export):
+
+| Parameter | Meaning |
+|---|---|
+| `from`, `to` | A day `YYYY-MM-DD` (in `tz`; `to` includes that day) or an ISO time. Streams that **started** in the range |
+| `tz` | IANA time zone for days and for times in .xlsx/CSV (default `UTC`) |
+| `platform` | One platform id |
+| `test` | `include` or `exclude` test-mode streams (default `include` for `/reports/sessions`, `exclude` for the others) |
+
+| Route | Returns |
+|---|---|
+| `GET /reports/sessions?limit=100` | `{ sessions: ReportSessionSummary[] }`, newest first (1–1000) |
+| `GET /reports/sessions/{id}` | the stream: `titles`, `destinations` (canvas, Dual Format, live periods), `stats` (per platform, `total` last), `viewers` (`[{ ts, total, byPlatform }]`), `chatMinutes`, `feedMinutes`, `events`, `presence`, `audienceTracked`, `leaderboards` |
+| `GET /reports/sessions/{id}/export?format=xlsx\|csv\|json&tz=` | a file (`Content-Disposition: attachment`); `xlsx` is the default |
+| `GET /reports/summary?limit=25` | over the range: `streams`, `stats`, `sessions`, the four `leaderboards` |
+| `GET /reports/export?from&to&format&tz` | the range as one file |
+| `GET /reports/audience?board=chatters\|loyal\|watch\|newest&session=<id>&limit=25` | one leaderboard over the range or one stream (1–500 rows) |
+| `GET /reports/audience/users/{userId}` | one person: `user`, `totals`, `streams`. `userId` is the `chat.message` `user.id` form, URL-encoded |
+
+`ReportStats` (per platform and `total`): `durationSec`, `liveSec`, `uptime` (0–1), `peakViewers`,
+`peakViewersAt`, `avgViewers` (time-weighted over the known time), `viewerMinutes` (viewers ×
+minutes, **not** unique viewers), `viewersKnownMinutes`, `chatMessages`, `chatEvents`, `joins`,
+`anonymousJoins` (Instagram "and N others joined"), `uniqueChatters`, `chatPer1kViewerMinutes`,
+`recoveries`, `errors`. Numbers Relay could not know are `null`.
+
+Leaderboard rows: `id`, `platform`, `displayName`, `login`, `firstSeenAt`, `lastSeenAt`,
+`messages`, `streams` (attended: chatted, joined or present), `joins`, `watchSec` (`null` unless
+the person's platform reports presence: today Twitch's chatters list).
+
+Errors: `400 invalid` (bad `from`/`to`/`platform`/`board`/`limit`/`format`), `404 not_found`,
+`503 unavailable` (the report tables were made by a newer Relay).
+
+The web UI uses the same routes under `/api/reports` (session cookie), plus, for admins,
+`GET`/`PUT /api/reports/settings` (`{ recording, audience, retentionDays: 0|90|365 }`) and
+`DELETE /api/reports/audience/users/{userId}` ("forget this user"). Those two are not in v1.
+
 ## Changelog
 
 `apiVersion` stays `1`: every change below is additive, so clients written for an earlier v1
 keep working (ignore event types and fields you don't know). `GET /api/v1/openapi.json` reports
 the revision in `info.version`.
+
+### v1.13
+
+- **Stream reports (§16):** a new scope, `reports:read`, and `GET /reports/sessions`,
+  `/reports/sessions/{id}`, `/reports/sessions/{id}/export`, `/reports/summary`,
+  `/reports/export` and `/reports/audience`, `/reports/audience/users/{userId}`. Exports are
+  `.xlsx` (default), CSV in a .zip, or JSON. Pairing can ask for `reports:read`; the approve form
+  shows it as sensitive.
+- **Twitch:** connecting (or reconnecting) a Twitch account also asks for
+  `moderator:read:chatters`, for reports' watch time. Accounts connected earlier keep working
+  without it; their reports have no watch time until they reconnect.
+- (v1.12 is the Instagram chat reader revision of 0.2.40.)
 
 ### v1.11
 
