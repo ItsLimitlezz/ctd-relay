@@ -366,7 +366,8 @@ export async function captureChatDebug(opts: DebugCaptureOptions = {}): Promise<
   const pack = chatPackStore.active();
   const out: ReaderDebug[] = [];
   for (const reader of [...readers].slice(0, 4)) {
-    const decisions = reader.memory.decisions.slice(-Math.max(0, Math.min(opts.decisions ?? DEBUG_DEFAULTS.decisions, 200)));
+    const wanted = Math.max(0, Math.min(opts.decisions ?? DEBUG_DEFAULTS.decisions, 200));
+    const decisions = wanted === 0 ? [] : reader.memory.decisions.slice(-wanted); // slice(-0) would be all of them
     const item: ReaderDebug = { reader: { ...reader.status, bad: [...reader.status.bad] }, snapshot: null, tab: null, composer: null, decisions };
     try {
       if (reader.page.isClosed()) throw new Error('the page is closed');

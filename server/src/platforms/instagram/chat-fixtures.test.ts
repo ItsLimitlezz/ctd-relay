@@ -466,6 +466,9 @@ describe.skipIf(!!process.env.CI_NO_BROWSER)('instagram chat reader (Chromium + 
         expect(capture!.decisions.some((d) => d.reason === 'baseline')).toBe(true);
         const json = JSON.stringify(capture);
         for (const secret of [...PRIVATE, 'private remark']) expect(json, secret).not.toContain(secret);
+        // decisions: 0 means none, not all of them.
+        expect((await captureChatDebug({ decisions: 0 }))[0]!.decisions).toEqual([]);
+        expect((await captureChatDebug({ decisions: 1 }))[0]!.decisions).toHaveLength(1);
       } finally {
         await chat.stop();
       }
