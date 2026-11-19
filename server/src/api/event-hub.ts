@@ -8,6 +8,9 @@
 // events, events about no profile, app messages addressed to them; apps.changed is rendered with
 // the reader's view of the apps.
 //
+// The hub also feeds the issue tracker (issues.ts, docs/API.md §16): sessions, feeds, destinations,
+// OBS events and connected apps go in, issue.raised / issue.cleared envelopes come out.
+//
 // One hub per AppServices (eventHubFor). main.ts creates it at startup so nothing is missed.
 
 import type { Logger } from 'pino';
@@ -30,7 +33,9 @@ import type { AppServices } from '../services.js';
 import { alertEventData } from './alert-map.js';
 import { apiMessageFromUser, chatMessageData, moderationEvent } from './chat-map.js';
 import { appsForProfile, publicApp } from './hub.js';
+import { IssueTracker, type IssueHolds } from './issues.js';
 import { deepEqual } from './json.js';
+import { obsStoreFor } from './obs.js';
 import { apiProfile } from './profiles.js';
 import { apiDestination, apiFeed, apiSession, buildStatus, totalViewers } from './status.js';
 import {
@@ -44,6 +49,8 @@ import {
   type ApiDestinationUp,
   type ApiEventType,
   type ApiFeed,
+  type ApiIssueCleared,
+  type ApiIssueRaised,
   type ApiNotice,
   type ApiProfile,
   type ApiSession,
@@ -79,6 +86,13 @@ export interface EventHubDeps {
   summaries?(): ProfileSummary[];
   /** Every connected app, unfiltered (AppRegistry.list()). Default: none. */
   apps?(): ConnectedApp[];
+  /**
+   * An OBS app's issues were cleared because it went offline ('stale') or unregistered ('removed'): drop what the
+   * OBS state store remembers of them, so its next report counts as a change. Default: nothing.
+   */
+  obsAppForgotten?(profileId: string, appId: string, resolution: 'stale' | 'removed'): void;
+  /** Issue hold times (tests). Default: ISSUE_HOLDS. */
+  issueHolds?: Partial<IssueHolds>;
   log: Pick<Logger, 'warn'>;
   now?: () => number;
   ulid?: UlidGenerator;
@@ -151,6 +165,10 @@ export function profileOf(dest: Pick<Destination, 'profileId'>): string {
   return dest.profileId ?? DEFAULT_PROFILE_ID;
 }
 
+function isRunning(session: Pick<SessionState, 'status'>): boolean {
+  return session.status === 'starting' || session.status === 'live';
+}
+
 function offlineSession(): SessionLike {
   return { status: 'offline', startedAt: null, title: '', autoGoLive: true, testMode: false };
 }
@@ -203,6 +221,7 @@ export class EventHub {
   private readonly tracks = new Map<string, ProfileTrack>();
   private readonly destinations = new Map<string, DestinationTrack>();
   private readonly summaries = new Map<string, ApiProfile>();
+  private readonly issues: IssueTracker;
   private closed = false;
 
   constructor(deps: EventHubDeps) {
@@ -214,11 +233,25 @@ export class EventHub {
     this.chatBufferSize = deps.chatBufferSize ?? CHAT_BUFFER_SIZE;
     this.throttleMs = deps.throttleMs ?? STATS_THROTTLE_MS;
     this.floor = ulidFloor(this.now());
+    this.issues = new IssueTracker({
+      now: this.now,
+      raised: (profile, src, data) => this.publish<ApiIssueRaised>('issue.raised', source(src.connection, src.platform, profile), data),
+      cleared: (profile, src, data) => this.publish<ApiIssueCleared>('issue.cleared', source(src.connection, src.platform, profile), data),
+      run: (fn) => this.guard(fn),
+      ...(deps.obsAppForgotten ? { obsAppForgotten: deps.obsAppForgotten } : {}),
+      ...(deps.issueHolds ? { holds: deps.issueHolds } : {}),
+    });
 
     // Baseline: what clients would see right now, so the first real change is detected as one.
-    for (const id of this.profileIds()) this.tracks.set(id, this.newTrack(id, true));
+    for (const id of this.profileIds()) {
+      const track = this.newTrack(id, true);
+      this.tracks.set(id, track);
+      this.issues.session(id, isRunning(track.session));
+      for (const [feed, item] of track.latestFeeds) this.issues.feed(id, feed, item.online);
+    }
     for (const dest of this.safeDestinations() ?? []) {
       const item = this.buildDestination(dest);
+      this.issues.destination(profileOf(dest), item);
       this.destinations.set(dest.id, {
         profileId: profileOf(dest),
         sent: item,
@@ -327,11 +360,12 @@ export class EventHub {
 
   /** GET /status of one profile. */
   status(profileId: string = DEFAULT_PROFILE_ID): ApiStatus {
-    return buildStatus({
+    const status = buildStatus({
       state: () => this.deps.state(profileId),
       destinations: () => this.deps.destinations().filter((d) => profileOf(d) === profileId),
       platformInfo: (platform) => this.deps.platformInfo(platform),
     });
+    return { ...status, issues: this.issues.list(profileId) };
   }
 
   /**
@@ -376,6 +410,7 @@ export class EventHub {
     for (const unsubscribe of this.unsubscribers.splice(0)) unsubscribe();
     for (const t of this.destinations.values()) if (t.timer) clearTimeout(t.timer);
     for (const track of this.tracks.values()) this.stopTimers(track);
+    this.issues.close();
     this.listeners.clear();
   }
 
@@ -510,6 +545,7 @@ export class EventHub {
         if (keep.has(id)) continue;
         this.stopTimers(track);
         this.tracks.delete(id); // its chat backfill goes with it
+        this.issues.forgetProfile(id);
       }
       for (const id of ids) this.track(id);
     }
@@ -540,6 +576,8 @@ export class EventHub {
   private onAppsChanged(): void {
     const apps = this.deps.apps ? this.deps.apps() : [];
     this.publish<ApiAppsChanged>('apps.changed', coreSource(null), { apps: apps.map(publicApp) });
+    // An OBS app that left or went quiet takes its issues with it (removed / stale).
+    this.issues.apps(apps);
   }
 
   private onAppMessage(m: AppMessage): void {
@@ -555,6 +593,8 @@ export class EventHub {
   /** obs.* from a connected app: its data plus who sent it (`appId`), its id and its time (`at`). */
   private onObsEvent(e: ObsEvent): void {
     this.publish(e.type as ApiEventType, source(e.appId, 'obs', e.profileId), { ...e.data, appId: e.appId, eventId: e.id, at: e.ts });
+    // After the obs.* event itself: its issue (obs.issue.*, obs.output) follows it on the stream.
+    this.issues.obsEvent(e.profileId, e.appId, e.type, e.data);
   }
 
   // -------------------------------------------------------------------------
@@ -619,6 +659,9 @@ export class EventHub {
     const track = this.track(profile, false);
     track.session = s;
     track.states = new Map(s.destinations.map((st) => [st.destinationId, st]));
+    // Before the destinations are refreshed: a stopped session ends its issues ("ended"), it doesn't "recover" them.
+    this.issues.session(profile, isRunning(s));
+    for (const f of s.feeds) this.issues.feed(profile, f.feed, f.online);
     this.sendSession(profile, track, true);
     this.refreshAll(profile);
     this.refreshSummaries();
@@ -661,6 +704,7 @@ export class EventHub {
       if (profile !== undefined && track.profileId !== profile) continue;
       if (track.timer) clearTimeout(track.timer);
       this.destinations.delete(id);
+      this.issues.destinationRemoved(track.profileId, id);
       // A deleted destination isn't down any more: close its down edge so clients don't keep a red row.
       if (track.down && track.sent) {
         const now = this.now();
@@ -690,6 +734,7 @@ export class EventHub {
     track.profileId = profile;
     const item = this.buildDestination(dest);
     const src = source(dest.id, dest.platform, profile);
+    this.issues.destination(profile, item);
     this.update(track, item, DESTINATION_STATS_KEYS, (d) => this.publish('destination.status', src, d), () => {
       const current = this.deps.destination(dest.id);
       return current ? this.buildDestination(current) : null;
@@ -731,6 +776,7 @@ export class EventHub {
     }
     const item = apiFeed(f);
     profileTrack.latestFeeds.set(f.feed, item);
+    this.issues.feed(profile, f.feed, f.online);
     // A trailing (throttled) send uses the newest state of that feed.
     this.update(
       track,
@@ -837,6 +883,11 @@ export function eventHubDeps(services: AppServices): EventHubDeps {
     profiles: () => services.repos.profiles.list(),
     summaries: () => services.orchestrators.summaries(),
     apps: () => services.apps.list(),
+    obsAppForgotten: (profileId, appId, resolution) => {
+      const store = obsStoreFor(services);
+      if (resolution === 'removed') store.forgetApp(appId);
+      else store.forgetReported(profileId, appId);
+    },
   };
 }
 

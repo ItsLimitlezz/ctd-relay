@@ -6,7 +6,7 @@ import { CURRENCY_RE, DECIMAL_RE } from './alert-map.js';
 import { APP_ID_RE, APP_KIND_RE, CAPABILITY_RE, MAX_CAPABILITIES, MAX_META_BYTES, MAX_SCENES, MAX_SCENES_BYTES, MAX_RESOURCES, RESOURCE_TYPE_RE } from './hub.js';
 import { PROBLEM_CODES, PROBLEM_TYPE } from './http.js';
 import { MAX_PENDING_PAIRINGS, MAX_PENDING_PAIRINGS_INTERNET, MAX_PENDING_PAIRINGS_PER_ADDRESS, PAIRING_CODE_RE, PAIRING_POLL_INTERVAL_SEC, PAIRING_TTL_MS } from './pairing.js';
-import { ALERT_COUNT_UNITS, ALERT_KINDS, API_ROLES, EVENT_TYPES } from './types.js';
+import { ALERT_COUNT_UNITS, ALERT_KINDS, API_ROLES, EVENT_TYPES, ISSUE_SEVERITIES } from './types.js';
 import { CLAIMS_PER_MINUTE_PER_IP, MESSAGE_DATA_MAX_BYTES, MESSAGE_TYPE_RE, MESSAGES_PER_MINUTE, PAIRINGS_PER_MINUTE_PER_IP } from './v1-hub.js';
 import { OBS_BODY_LIMIT, OBS_DATA_MAX_BYTES, OBS_EVENT_TYPES, OBS_MAX_EVENTS, OBS_POSTS_PER_MINUTE } from './obs.js';
 import { PREVIEW_MAX_AGE_MS } from './previews.js';
@@ -16,7 +16,7 @@ import { platformPaths, platformSchemas } from './openapi-platforms.js';
 import { showPaths, showSchemas } from './openapi-show.js';
 
 /** Minor revision of the v1 contract (additive changes only; see the changelog in docs/API.md). */
-export const API_REVISION = '1.11';
+export const API_REVISION = '1.12';
 
 const ref = (name: string) => ({ $ref: `#/components/schemas/${name}` });
 const nullable = (schema: object) => ({ oneOf: [schema, { type: 'null' }] });
@@ -607,12 +607,13 @@ export function openApiDocument(version: string): Record<string, unknown> {
         },
         Status: {
           type: 'object',
-          required: ['session', 'feeds', 'destinations', 'platforms'],
+          required: ['session', 'feeds', 'destinations', 'platforms', 'issues'],
           properties: {
             session: ref('Session'),
             feeds: { type: 'array', items: ref('Feed') },
             destinations: { type: 'array', items: ref('Destination') },
             platforms: { type: 'array', items: ref('PlatformRollup') },
+            issues: { type: 'array', items: ref('Issue'), description: 'Open issues of the profile, oldest first (v1.12, docs/API.md §16)' },
           },
         },
         Envelope: {
@@ -645,6 +646,8 @@ export function openApiDocument(version: string): Record<string, unknown> {
                 ref('DestinationDown'),
                 ref('DestinationUp'),
                 ref('Notice'),
+                ref('IssueRaised'),
+                ref('IssueCleared'),
                 ref('Profile'),
                 ref('AppsChanged'),
                 ref('AppMessage'),
@@ -806,6 +809,7 @@ export function openApiDocument(version: string): Record<string, unknown> {
           properties: { destinationId: str, name: str, platform: ref('Platform'), downForSec: int, recoveries: int },
         },
         Notice: { type: 'object', properties: { level: { enum: ['info', 'warn', 'error'] }, message: str } },
+        ...issueSchemas,
         ChatResponse: {
           type: 'object',
           required: ['items', 'next'],
@@ -1076,6 +1080,69 @@ export function openApiDocument(version: string): Record<string, unknown> {
     },
   };
 }
+
+/** v1.12: issue.raised / issue.cleared and GET /status → issues (docs/API.md §16). */
+const issueSubject = {
+  description: 'What the problem is about, by `type`',
+  oneOf: [
+    { type: 'object', required: ['type', 'feed'], properties: { type: { const: 'feed' }, feed: { enum: ['landscape', 'vertical'] } } },
+    {
+      type: 'object',
+      required: ['type', 'destinationId', 'platform', 'name'],
+      properties: { type: { const: 'destination' }, destinationId: str, platform: ref('Platform'), name: str },
+    },
+    { type: 'object', required: ['type'], properties: { type: { const: 'stream' } } },
+    {
+      type: 'object',
+      required: ['type', 'appId', 'output', 'canvas'],
+      properties: { type: { const: 'obs.output' }, appId: str, output: str, canvas: nullable(str) },
+    },
+    {
+      type: 'object',
+      required: ['type', 'appId', 'source', 'path'],
+      properties: { type: { const: 'obs.source' }, appId: str, source: str, path: nullable(str) },
+    },
+  ],
+};
+const issueKind = { enum: ['feed.offline', 'destination.down', 'stream.down', 'obs.output.down', 'obs.issue'], description: 'Treat a kind you do not know by its severity and title' };
+const issueProperties = {
+  id: { ...str, description: '<kind>|<subject key>: the one key for raise, update, clear and dedupe. Opaque' },
+  kind: issueKind,
+  rule: { ...nullable(str), description: "obs.issue only: the plugin's rule (camera-offline, …)" },
+  severity: { enum: [...ISSUE_SEVERITIES] },
+  title: str,
+  message: nullable(str),
+  subject: issueSubject,
+  onProgram: { ...nullable({ type: 'boolean' }), description: 'OBS sources: visible on a program scene; null = unknown or not an OBS source' },
+  scene: { ...nullable(str), description: 'The program scene the source is on when onProgram' },
+  firstSeen: { type: 'integer', description: 'Epoch ms the problem started (after its hold time)' },
+  updatedAt: { type: 'integer', description: 'Epoch ms of the latest change' },
+};
+const issueRequired = ['id', 'kind', 'rule', 'severity', 'title', 'message', 'subject', 'onProgram', 'scene', 'firstSeen', 'updatedAt'];
+const issueSchemas = {
+  Issue: { type: 'object', required: issueRequired, properties: issueProperties },
+  IssueRaised: {
+    type: 'object',
+    description: 'issue.raised',
+    required: [...issueRequired, 'update'],
+    properties: { ...issueProperties, update: { type: 'boolean', description: 'false = a new problem (notify); true = the open issue with this id changed' } },
+  },
+  IssueCleared: {
+    type: 'object',
+    description: 'issue.cleared',
+    required: ['id', 'kind', 'rule', 'subject', 'title', 'firstSeen', 'durationMs', 'resolution'],
+    properties: {
+      id: str,
+      kind: issueKind,
+      rule: nullable(str),
+      subject: issueSubject,
+      title: str,
+      firstSeen: { type: 'integer' },
+      durationMs: { type: 'integer' },
+      resolution: { enum: ['recovered', 'ended', 'removed', 'stale'], description: 'recovered = works again; ended = its session or output stopped; removed = its destination, app or profile was deleted; stale = the reporting OBS app went offline' },
+    },
+  },
+};
 
 /** v1.10: GET /system/transcode-capabilities (shared/api.ts TranscodeCapabilities). */
 function transcodeCapabilitiesSchema(): object {

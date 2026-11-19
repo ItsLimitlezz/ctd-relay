@@ -48,7 +48,7 @@ describe('auth', () => {
       name: 'ctd-multi-stream',
       version: '9.9.9',
       build: { commit: null, date: null },
-      apiRevision: '1.11',
+      apiRevision: '1.12',
       apiVersion: 1,
       token: { name: 'test', scopes: ['chat:read', 'status:read'], profileId: null },
     });
@@ -195,7 +195,8 @@ describe('GET /status', () => {
     expect(res.statusCode).toBe(200);
     expect(res.headers['cache-control']).toBe('no-store');
     const body = res.json();
-    expect(Object.keys(body)).toEqual(['session', 'feeds', 'destinations', 'platforms']);
+    expect(Object.keys(body)).toEqual(['session', 'feeds', 'destinations', 'platforms', 'issues']);
+    expect(body.issues).toEqual([]); // no session event reached the hub in this fixture: nothing is open
     expect(body.destinations[0]).toMatchObject({ id: d.id, name: 'Twitch', phase: 'error', down: true, message: 'Stream key rejected' });
     expect(body.platforms[0]).toMatchObject({ platform: 'twitch', error: 'Stream key rejected' });
   });
@@ -365,7 +366,7 @@ describe('alert.*', () => {
     const doc = (await get('/api/v1/openapi.json')).json();
     expect(doc.components.schemas.Envelope.properties.type.enum).toEqual(expect.arrayContaining(['alert.superchat', 'alert.subscription', 'alert.tip']));
     expect(doc.components.schemas.Alert.properties.kind.enum).toHaveLength(9);
-    expect(doc.info.version).toMatch(/^1\.11 /);
+    expect(doc.info.version).toMatch(/^1\.12 /);
   });
 });
 

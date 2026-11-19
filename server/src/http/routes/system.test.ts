@@ -82,7 +82,7 @@ describe('GET /api/v1/system/transcode-capabilities', () => {
 
   it('is in the OpenAPI document', async () => {
     const doc = (await t.app.inject({ method: 'GET', url: '/api/v1/openapi.json' })).json<{ info: { version: string }; paths: Record<string, unknown>; components: { schemas: Record<string, unknown> } }>();
-    expect(doc.info.version).toMatch(/^1\.11 /);
+    expect(doc.info.version).toMatch(/^1\.12 /);
     expect(doc.paths['/system/transcode-capabilities']).toBeDefined();
     expect(doc.components.schemas.TranscodeCapabilities).toBeDefined();
   });

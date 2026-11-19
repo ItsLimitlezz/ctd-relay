@@ -58,7 +58,7 @@ Authorization: Bearer ctd_pat_3fK9wQ1v…
 | Scope | Grants |
 |---|---|
 | `chat:read` | `GET /chat`, `chat.*` and `alert.*` events |
-| `status:read` | `GET /status`, `GET /profiles`, `stream.*`, `feed.*`, `destination.*`, `profile.status`, `profiles.changed`, `system.notice` events |
+| `status:read` | `GET /status`, `GET /profiles`, `stream.*`, `feed.*`, `destination.*`, `issue.*` (v1.12), `profile.status`, `profiles.changed`, `system.notice` events |
 | `ingest:read` | `GET /profiles/{id}/ingest`: OBS server URL and **stream keys** (only for apps that configure OBS) |
 | `apps:read` | `GET /apps`, `GET /profiles/{id}/overlays`, `apps.changed` and `app.message` events |
 | `apps:write` | `PUT`/`DELETE /apps/{id}`, `POST /apps/{id}/heartbeat`, `POST /messages` |
@@ -202,10 +202,17 @@ event stream.
       "startedAt": 1791831609000, "viewers": 214, "error": null },
     { "platform": "instagram", "destinations": ["9e2f…"], "live": false, "title": "DPRTMNT Saturday",
       "startedAt": null, "viewers": null, "error": "Instagram ended the live (copyright). Starting a new one…" }
+  ],
+  "issues": [
+    { "id": "destination.down|9e2f…", "kind": "destination.down", "rule": null, "severity": "warning",
+      "title": "Instagram is down", "message": "Instagram ended the live (copyright). Starting a new one…",
+      "subject": { "type": "destination", "destinationId": "9e2f…", "platform": "instagram", "name": "Instagram" },
+      "onProgram": null, "scene": null, "firstSeen": 1791836365000, "updatedAt": 1791836365000 }
   ]
 }
 ```
 
+- `issues` (v1.12): the profile's open issues, oldest first (§16.1). Empty `[]` when all is well.
 - `session.viewers` (v1.3): **total viewers across every platform** of the profile — the sum of the
   destinations whose count is known (`null` when none is). It rides on `stream.status`, which is
   sent whenever the total changes, so an overlay's "watching now" counter needs only that event.
@@ -549,6 +556,11 @@ Messages the web UI shows as toasts (takedown detected, live again, session stop
 
 `src.profile` is the profile concerned, or `null` for server-wide notices.
 
+### `issue.raised` / `issue.cleared` — `status:read` (v1.12)
+Something is wrong with a feed, a destination, the whole stream, an OBS output or a source inside
+OBS / it is fixed. One stable `id` per problem, a `severity`, a `subject` and, on clear, a
+`resolution`. **The alert contract of the suite: §16.** Open issues are in `GET /status` → `issues`.
+
 ### `profile.status`, `profiles.changed` — `status:read`
 A profile's summary changed / profiles were created, renamed or deleted (§9.1).
 
@@ -629,7 +641,9 @@ run();
 **Settings → API → OBS dock** creates a token (`status:read` + `chat:read`) and gives a URL like
 `http://192.168.1.20:30080/dock#token=ctd_pat_…`. In OBS: **Docks → Custom Browser Docks**, paste
 it. The dock shows live status (with a TEST badge in test mode), feed bitrates, every destination
-(red when down, with the reason), viewers, and the merged chat. The token stays in the URL
+(red when down, with the reason), viewers, and the merged chat. Since v1.12 it also lists the open
+issues that aren't a down destination — a lost feed, the whole stream down, a source or output in
+OBS (§16) — and flashes and beeps for a new critical one when **Alert** is ticked. The token stays in the URL
 fragment, so it is never sent to the server in the URL — the page sends it as a header.
 
 **Profiles (v1.2):** the dock shows one profile, with its name and colour in the header: the
@@ -938,12 +952,15 @@ the server's time.
 | `obs.output` | `{ output: "main" \| "vertical" \| "record" \| <name>, canvas?, state: starting \| live \| reconnecting \| stopped, error? }` | the output's state |
 | `obs.scene` | `{ canvas: "landscape" \| "vertical", scene, sceneUuid?, previous?, atMs?, scenes?: [{ name, uuid }] }` — `previous` only on a real change; `atMs` = the OBS host's clock, for ordering; `scenes` = the canvas's full scene list in OBS order | the canvas's program scene, and its scene list (kept when an event leaves it out) |
 | `obs.sync.status` | `{ group, sourceName, state, previous?, lost?, offsetMs?, delayMs? }` | the sync group member's status |
-| `obs.issue.raised` | `{ id: "<rule>\|<subject>", rule, severity: info \| warning \| critical, source, path?, title, cause?, firstSeen }` | an open issue, until cleared |
+| `obs.issue.raised` | `{ id: "<rule>\|<subject>", rule, severity: info \| warning \| critical, source, path?, title, cause?, firstSeen, onProgram?, scene? }` — `onProgram` / `scene` since v1.12 (§16.6) | an open issue, until cleared; also an `obs.issue` issue (§16) |
 | `obs.issue.cleared` | `{ id, rule? }` | removes the open issue |
+| `obs.failover` | `{ canvas, from, to, reason, issueId?, source?, mode: target \| list \| return, title? }` (v1.12, §16.6) | nothing: re-emitted as it is |
 
 Issue rules from the plugin so far: `camera-offline`, `upstream-loss`, `upstream-slow`,
 `bitrate-collapsed`, `frequent-snaps`, `av-drift`, `audio-rate`, `audio-missing` — raised after a
-hold time, cleared 10 s after the condition ends (low volume); show `title` to people.
+hold time, cleared 10 s after the condition ends (low volume); show `title` to people. Since v1.12
+Relay also raises each one as an `issue.raised` of kind `obs.issue` (§16): apps that only want
+alerts can follow `issue.*` alone.
 
 **Overlays that follow the OBS scene** (CTD Overlay): subscribe to `/events?types=obs.scene`
 (`status:read`). The plugin sends a scene change within ~100 ms (a transition counts from its
@@ -987,7 +1004,7 @@ the frame was taken). `404 feed_offline` while OBS isn't sending that feed; `503
 ### Typical set-up: CTD Live mobile
 
 Connect with the QR code (§11) → `GET /profiles` → per profile: `/events?profile=<id>` for
-`stream.status` (live, total viewers), `destination.down/up`, `obs.*` and chat → `GET
+`stream.status` (live, total viewers), `destination.down/up`, `issue.*` (alerts, §16), `obs.*` and chat → `GET
 /profiles/{id}/obs` once on start → poll `/profiles/{id}/previews/landscape|vertical` every few
 seconds while the screen shows them.
 
@@ -1535,11 +1552,181 @@ or anything typed into a field. What it keeps, so a pack can be written from it:
 
 The capture reads the page; it does not click or change anything.
 
+## 16. Issues: alerts when a feed, a stream or a scene has a problem (v1.12)
+
+One event pair tells every CTD app that something is wrong and when it is fixed: **`issue.raised`**
+and **`issue.cleared`** (`status:read`). Relay raises them from what it sees itself (its ingest
+feeds, its destinations) and from what the CTD OBS plugin reports (sources inside OBS, OBS outputs).
+CTD Live Studio and Live Mobile show them as alerts; the CTD OBS plugin reports its own issues and
+the failovers it makes (`obs.failover`, §10). This is the one alert contract of the suite: new
+detectors add a `kind`, not a new event.
+
+### 16.1 The issue object
+
+```json
+{
+  "id": "feed.offline|landscape",
+  "kind": "feed.offline",
+  "rule": null,
+  "severity": "critical",
+  "title": "Landscape feed lost",
+  "message": "OBS stopped sending the landscape feed to Relay during the live.",
+  "subject": { "type": "feed", "feed": "landscape" },
+  "onProgram": null,
+  "scene": null,
+  "firstSeen": 1791830000123,
+  "updatedAt": 1791830000123
+}
+```
+
+| Field | Meaning |
+|---|---|
+| `id` | Stable key of the problem, unique among the profile's open issues: `<kind>\|<subject key>` (table below). **The raise/clear pair and every dedupe use it.** Opaque: don't parse it, use `kind` and `subject`. |
+| `kind` | What kind of problem (table below). Treat a kind you don't know by its `severity` and `title`. |
+| `rule` | `obs.issue` only: the plugin's rule (`camera-offline`, `upstream-loss`, …, `image-match`); `null` otherwise. |
+| `severity` | `info`, `warning` or `critical`. **critical** = viewers are (or are about to be) affected: alert loudly. **warning** = something is degraded or recovering: show it. **info** = for the record. |
+| `title` | Short text for people ("Twitch is down"). English, ≤ 120 characters. |
+| `message` | One more line of detail (the platform's reason, the plugin's cause), or `null`. |
+| `subject` | What the problem is about (below). |
+| `onProgram` | OBS subjects: `true` when the source is visible on a program scene, `false` when it isn't, `null` when unknown or not an OBS source. |
+| `scene` | The program scene the source is on when `onProgram` is `true`, else `null`. |
+| `firstSeen` | Epoch ms the problem started (after its hold time). Unchanged by updates. |
+| `updatedAt` | Epoch ms of the latest change. |
+
+`subject`, by `type`:
+
+| `type` | Fields | Means |
+|---|---|---|
+| `feed` | `feed`: `landscape` \| `vertical` | One of Relay's ingest feeds (what OBS sends Relay; `feed.status`) |
+| `destination` | `destinationId`, `platform`, `name` | One destination (`destination.status`) |
+| `stream` | — | The profile's whole live session |
+| `obs.output` | `appId`, `output`, `canvas` (or `null`) | An OBS output (`obs.output`, §10) |
+| `obs.source` | `appId`, `source`, `path` (or `null`) | A source inside OBS: a camera, a CTD Live Source feed, a media source (`obs.feed.state`, §10) |
+
+### 16.2 Kinds (v1.12)
+
+| `kind` | `id` | Severity | Raised when | Cleared when |
+|---|---|---|---|---|
+| `feed.offline` | `feed.offline\|<feed>` | critical; **warning** when every feed went quiet and no CTD OBS app is there to say why | A running session's (`starting`/`live`) ingest feed goes from online to offline and stays offline **5 s** — unless OBS stopped that stream on purpose (below) | The feed is back (`recovered`), the session ends, or OBS reports a clean stop late (`ended`) |
+| `destination.down` | `destination.down\|<destinationId>` | warning; **critical** once the phase is `error` (Relay gave up) | The destination's `down` flag (§4) stays set **5 s**. While it only waits for a feed: **30 s** when that feed hasn't come yet (a show being set up), never when this session lost it (that is `feed.offline`'s) | `destination.up` (`recovered`), the session ends (`ended`), the destination is deleted (`removed`) |
+| `stream.down` | `stream.down` | critical | A running session has at least one counted destination (enabled, not skipped by test mode) and **every** one is down, for **5 s**. Not while every one only waits for a feed: this is for platforms failing | Any of them is up again (`recovered`), or the session ends (`ended`) |
+| `obs.output.down` | `obs.output.down\|<appId>\|<output>` | warning | An OBS output reports `reconnecting` for **3 s**, and no `feed.offline` already tells it (OBS streams elsewhere, or Relay isn't live) | It reports `live` (`recovered`) or `stopped` (`ended`); its app goes away (`removed` / `stale`) |
+| `obs.issue` | `obs.issue\|<appId>\|<plugin issue id>` | the plugin's | The plugin sends `obs.issue.raised` (it applies its own hold time) | The plugin sends `obs.issue.cleared` (`recovered`); its app unregisters (`removed`) or goes offline (`stale`) |
+
+Hold times keep a blip (OBS reconnecting in a second, a platform retry) from becoming an alert.
+They are fixed in v1.12.
+
+**Stopping on purpose is not an alert.** When the CTD OBS plugin reports that OBS stopped a stream
+cleanly — that output's `obs.output` going from `live` to `stopped` without `error`, within 15 s of
+the feed going offline, before or after — Relay raises no `feed.offline` (one already raised clears
+as `ended`), and the destinations that then wait for that feed raise nothing either while the
+session runs out its grace period. Any other `stopped` (with an `error`, from an output that wasn't
+live, or long after the loss) changes nothing. While an OBS app that reports on the profile is
+online and there is no such report, a lost feed is `critical` ("OBS stopped sending without stopping
+its stream": a crash or the network); when the plugin reports `reconnecting`, the message says so.
+With no OBS app online Relay can't tell a stop from a crash: one feed lost while the other stays is
+`critical`, every feed gone is a `warning`.
+
+At most 100 `obs.issue` issues are open per app; reports beyond that are dropped until some clear. `obs.issue` carries the plugin's `onProgram` / `scene` when the plugin
+sends them (CTD OBS F2 and later): that is how a dead source **on program** — a scene problem —
+becomes visible to the Live apps.
+
+### 16.3 Events
+
+**`issue.raised`** — `status:read`. `data` = the issue object plus `"update"`:
+
+- `update: false` — a new problem. **This is the one to notify on.**
+- `update: true` — the open issue with the same `id` changed: `severity`, `title`, `message`,
+  `onProgram` or `scene` (or, rarely, `rule` or `subject`: a destination renamed). Replace what you
+  show. Notify again only if `severity` went up.
+
+Relay sends at most one `issue.raised` per change; the plugin's 60 s state resend never repeats one.
+
+**`issue.cleared`** — `status:read`:
+
+```json
+{ "id": "feed.offline|landscape", "kind": "feed.offline", "rule": null,
+  "subject": { "type": "feed", "feed": "landscape" }, "title": "Landscape feed lost",
+  "firstSeen": 1791830000123, "durationMs": 4100, "resolution": "recovered" }
+```
+
+| `resolution` | Means |
+|---|---|
+| `recovered` | The thing works again (feed back, destination live, source has signal) |
+| `ended` | It no longer applies: the session or the output stopped. **A `feed.offline` that clears as `ended` means OBS's stream is over without the feed coming back**: the session ended (OBS stopped or crashed and the grace period ran out), or OBS reported, a little late, that it stopped on purpose. |
+| `removed` | Its destination, app or profile was deleted |
+| `stale` | The OBS app that reported it went offline (§9.2's 90 s rule); its state is unknown. Relay forgets what that app reported. When it returns, its own next report raises whatever is still wrong (`update: false`, a new `firstSeen`); a problem that ended while it was away never comes back |
+
+`src` is the usual envelope source: `core` for `feed` and `stream` subjects, the destination for
+`destination`, and `{ connection: <appId>, platform: "obs" }` for OBS subjects. `src.profile` is
+the profile.
+
+### 16.4 What is open right now
+
+`GET /status` (§4) carries `issues`: the profile's open issues, oldest first, in the issue-object
+shape (without `update`). The stream's opening snapshot doesn't repeat open issues.
+
+**Connecting without a gap:** open `/events` first, then read `/status` and take its `issues` as the
+open set, then apply the stream's events in the order they came. An `issue.raised` for an `id` you
+already hold with the same `firstSeen` is the same issue: replace it, don't notify. After
+`system.reset`, read `/status` again. Open issues live in memory: a Relay restart starts with none,
+and the plugin's next state resend raises its issues again.
+
+### 16.5 Rules for clients (Live Studio, Live Mobile, anything else)
+
+1. Key everything by `id`. `issue.raised` with `update: false` adds (or replaces), `update: true`
+   replaces, `issue.cleared` removes. An `issue.cleared` for an id you don't have is fine: ignore it.
+2. Notify (sound, banner, haptic, system notification) on `update: false`, and on an update whose
+   `severity` went up. Not on `issue.cleared`, except that a `feed.offline` / `stream.down` cleared
+   as `ended` is worth one "stream ended" line.
+3. Don't notify the same `id` more than once a minute: a camera that drops every 20 s is one
+   alert, not three. Keep showing it while it is open. A rise in severity is told even right after
+   the first alert, but also at most once a minute per `id`.
+4. Order by `severity`, then `firstSeen`. Show `title` (and `message` when there is room).
+5. Filter by `kind` / `subject` only for what your app can act on; show the rest.
+
+### 16.6 For the CTD OBS plugin (producer)
+
+- Keep sending `obs.issue.raised` / `obs.issue.cleared` as in §10. Since v1.12 the plugin may add
+  `onProgram` (boolean) and `scene` (the program scene's name) to `obs.issue.raised`, and should
+  resend the issue (same plugin `id`) when either changes, e.g. after a failover takes the source off
+  program.
+- **`obs.failover`** (new OBS event type, v1.12): the plugin switched program away from a dead
+  feed. Relay keeps no state for it and re-emits it on `/events` (`status:read`) like the other
+  `obs.*` events.
+
+```json
+{ "id": "f-17", "type": "obs.failover", "ts": 1791830004000,
+  "data": { "canvas": "landscape", "from": "Club cam", "to": "BRB", "reason": "camera-offline",
+            "issueId": "camera-offline|Club cam", "source": "Club cam", "mode": "target",
+            "title": "Switched to BRB: Club cam lost its signal" } }
+```
+
+| Field | Meaning |
+|---|---|
+| `canvas` | `landscape` (main) or `vertical` |
+| `from`, `to` | Program scene before and after |
+| `reason` | The rule that triggered it (`camera-offline`, `image-match`, …) |
+| `issueId` | The plugin issue id that triggered it (its `obs.issue` id is `obs.issue\|<appId>\|<issueId>`) |
+| `source` | The dead source |
+| `mode` | `target` (a set scene), `list` (the next healthy scene of a fallback list) or `return` (back to the original scene once the source recovered) |
+| `title` | Text for people |
+
+
 ## Changelog
 
 `apiVersion` stays `1`: every change below is additive, so clients written for an earlier v1
 keep working (ignore event types and fields you don't know). `GET /api/v1/openapi.json` reports
 the revision in `info.version`.
+
+### v1.12
+
+- **Issues (§16):** one alert contract for the suite. `issue.raised` / `issue.cleared`
+  (`status:read`): Relay raises `feed.offline`, `destination.down` and `stream.down` from its own
+  feeds and destinations, `obs.output.down` from OBS outputs, and `obs.issue` from the plugin's
+  `obs.issue.*`, with a stable `id`, `severity`, `subject`, hold times, and a `resolution` on clear.
+  `GET /status` carries `issues` (open issues). `obs.issue.raised` may carry `onProgram` and
+  `scene`; new OBS event type `obs.failover` (§10, §16.6).
 
 ### v1.11
 

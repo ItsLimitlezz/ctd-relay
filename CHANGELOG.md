@@ -2,6 +2,14 @@
 
 Versions follow the hub's CONVENTIONS.md → Versioning. Each release that ships to a TrueNAS install has a runbook in `docs/RELEASE-*.md` (backup, update, verify, rollback).
 
+## Unreleased
+
+API revision **1.12**. Database schema stays at **v4** (no migration).
+
+### Added
+- **Issues: one alert contract for the suite (Relay F2).** Two new events on `/api/v1/events`, `issue.raised` and `issue.cleared` (`status:read`), tell every CTD app that something is wrong and when it is fixed. Relay raises `feed.offline` (a live session's feed from OBS went away and OBS didn't stop on purpose), `destination.down` (a destination stayed down 5 s; critical once Relay gave up), `stream.down` (every destination is down) and `obs.output.down` (OBS reconnecting), and passes on the CTD OBS plugin's issues as `obs.issue`. Each issue has a stable `id`, a `severity` (`info` / `warning` / `critical`), a `subject`, and a `resolution` when it clears (`recovered`, `ended`, `removed`, `stale`). Hold times keep one-second blips from becoming alerts, an OBS stream stopped on purpose is not one, and a show still being set up (a session waiting for its first feed) gets 30 s before anything is said. `GET /api/v1/status` carries the open ones in `issues`. Kept in memory only. See docs/API.md §16 and docs/CONTRACTS.md → Alert contract.
+- **`obs.failover`**: a new OBS event type the CTD OBS plugin sends when it switches program away from a dead feed. Relay re-emits it on `/events` and keeps no state. `obs.issue.raised` may carry `onProgram` and `scene`.
+- **OBS dock:** lists the open issues that aren't a down destination, and flashes and beeps for a new critical one when Alert is ticked.
 ## 0.2.30 (2026-11-19)
 
 API revision **1.11**. Database schema stays at **v4** (no migration; the selector pack override is one row in the settings table). Runbook: [docs/RELEASE-v0.2.30.md](docs/RELEASE-v0.2.30.md).
