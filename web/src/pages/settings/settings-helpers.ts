@@ -20,6 +20,7 @@ export const SETTINGS_TABS = [
   { id: 'spotify', label: 'Spotify' },
   { id: 'api', label: 'API' },
   { id: 'audit', label: 'Audit log' },
+  { id: 'advanced', label: 'Advanced' },
   { id: 'about', label: 'About' },
 ] as const;
 
@@ -314,7 +315,17 @@ export const API_SCOPE_INFO: Readonly<Record<ApiScope, { label: string; help: st
     label: 'Read show-profile secrets',
     help: 'Keys and passwords found in saved OBS sources (e.g. a key in a browser-source URL), held encrypted on this server. Only for machines you trust; without it they must be re-entered.',
   },
+  'system:admin': {
+    label: 'Operator tools',
+    help: 'Changes how this server works: replace or revert the Instagram chat reader’s selector pack and take its debug capture (page structure only, no names or comments). Only for an operator or a support agent you trust.',
+  },
 };
+
+/** "Reading now" line of the Instagram chat reader card. */
+export function chatPackReaders(readers: number): string {
+  if (readers <= 0) return 'No Instagram live right now';
+  return readers === 1 ? '1 Instagram live' : `${readers} Instagram lives`;
+}
 
 /** Permissions a new token starts with (read-only basics; the others are opt-in). */
 export const DEFAULT_TOKEN_SCOPES: readonly ApiScope[] = ['chat:read', 'status:read'];
