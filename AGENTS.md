@@ -32,7 +32,7 @@ Open-source (AGPL-3.0), so prod builds may use GitHub Actions. Per `docs/DEVELOP
 - Contract files (`shared/types.ts`, `shared/api.ts`, `server/src/services.ts`, `server/src/platforms/types.ts`, `server/src/http/guards.ts`, `web/src/api.ts`, etc., full list in `docs/CONTRACTS.md`) are owned by the maintainer: propose changes, don't edit in a feature change.
 - Server imports use `.js` extensions (NodeNext). TypeScript 7, ESM.
 - Never log secrets (stream keys, ingest URLs with keys, tokens, cookies). Validate bodies with zod; admin routes use `requireAdmin`; audit state changes.
-- Platform drivers: only ever set the title, never the category/game. Browser-automated platforms (Instagram, TikTok, X, Facebook profile) are experimental. Keep selectors in `selectors.ts`.
+- Platform drivers: only ever set the title, never the category/game. Browser-automated platforms (Instagram, TikTok, X, Facebook profile) are experimental. Keep selectors in `selectors.ts`. Exception: the Instagram **chat reader's** selectors and patterns live in a JSON selector pack (`platforms/instagram/chat-pack.ts`) that an operator can replace on a running server (docs/PLATFORMS.md → Instagram); its fixtures (`platforms/instagram/fixtures/`) are synthetic, never markup or names from a real stream.
 - Never forward port 1935 (RTMP ingest) to the internet.
 - Tests never touch the network or real platform accounts.
 - `.claude/launch.json` is a PowerShell dev launch config (port 8443) for Windows.

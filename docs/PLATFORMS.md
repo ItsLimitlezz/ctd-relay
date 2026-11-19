@@ -165,6 +165,89 @@ Video goes out with the pasted source. The browser steps are best-effort.
 
 The title can't be changed after the live has started.
 
+### How the comments are read
+
+Instagram has no live chat API, so the app reads the **Comments** panel of Instagram's live page in its own browser, once a second:
+
+1. It opens the **Comments** tab when the panel is not showing, and again whenever the page goes back to another tab.
+2. It finds the comments container, then the comment rows in it, and reads each row: who wrote it and the text. Mentions, emoji and long comments come through as written.
+3. It decides which rows are new. A row is delivered once, also when Instagram re-renders the list, drops old rows from a long list, shows them again after scrolling, or reloads the page. The same words posted twice are two comments.
+
+What is not a comment:
+
+- "<name> joined" lines are delivered as **events** with `join: true` (docs/API.md → `chat.message`), so a chat box can hide them.
+- A **pinned** copy of a comment is not delivered again.
+- Instagram's own **notices** in the list ("We're telling your followers…") are dropped.
+- Whatever was already on screen when the reader started is not delivered. Comments written while the Comments tab was not open yet are delivered when it opens.
+
+### Tuning the chat reader live
+
+Instagram changes its page often. Everything the reader knows about the page is in a **selector pack**: CSS selectors, attribute names, text patterns and timings, as JSON. The pack built into the app is the default. An operator can put an **override** on top of it while a live is running. The reader uses it on its next poll (within a second), and it is kept across restarts. **Settings → Advanced → Instagram chat reader** shows which pack is active and has **Revert to built-in**.
+
+A pack is data only. It can't run code: selectors are only used to find elements, and patterns are only tested against short pieces of text. The server refuses a pack that is too large (16 KB), has unknown settings, has anything that is not a plain CSS selector, or has a pattern that is slow on long input.
+
+You need an API token with the **Operator tools** permission (`system:admin`). Create it in **Settings → API** for **every profile**, give it only to someone you trust, and revoke it when the work is done. Apps can't get this permission by pairing. The routes are in docs/API.md §15. In the examples, `$RELAY` is your Relay's address and `$TOKEN` the token.
+
+**1. Look at what the reader sees** (during a live):
+
+```bash
+curl -s -X POST "$RELAY/api/v1/platforms/instagram/chat/debug" \
+  -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" -d '{}'
+```
+
+The answer has, for each Instagram live being read:
+
+- `reader`: which container strategy matched (`container`), how many rows it found (`rows`), what happened with the Comments tab (`tab`), how many comments it kept and dropped, and pack entries the page could not use (`bad`).
+- `snapshot.tree`: the structure of the comments panel. Tag names, class names, roles and attribute names are there. **Text is not**: every text is replaced by its length, links by their depth (`path/1`), and other attribute values by their shape (`word/12`, `digits/5`). Labels such as `alt` and `aria-label` show interface words only, with every other word as `#` marks (`profile photo of ##########`). No user names, no comment text, no addresses, no cookies. Elements the reader tagged carry `"ctd": "container"` or `"ctd": "row"`.
+- `snapshot.selectors`: for every selector in the pack, how many elements it matches in the page and in the container. `snapshot.patterns`: how many labels each label pattern matches.
+- `decisions`: the last parse decisions. Each says `kept` or `dropped` and why (`new`, `late`, `baseline`, `rerender`, `pinned`, `system`, `duplicate-id`, `pack-changed`), with lengths only.
+
+When no panel is found, send `{"scope": "page"}` to get the whole page's structure, or `{"up": 2}` to start two parents above the container.
+
+**2. Send an override** with only the settings you change:
+
+```bash
+curl -s -X PUT "$RELAY/api/v1/platforms/instagram/chat/selector-pack" \
+  -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" -d '{
+    "schema": 1,
+    "version": "2026-11-20 a",
+    "note": "comment rows moved to data-comment-id",
+    "container": { "css": ["[data-testid=\"live-comments\"]"] },
+    "row": { "css": ["[data-comment-id]"], "idAttrs": ["data-comment-id"] },
+    "text": { "css": [".xtext"] }
+  }'
+```
+
+`version` is your own label. A list you send replaces the built-in list. A `400` answer lists every problem with its path (`row.css.0: …`). `GET` on the same address returns the active pack with every setting, which is the easiest way to see the built-in values.
+
+**3. Check** with the debug capture again: `reader.rows` should be above zero and `decisions` should show `kept` entries as comments arrive. When the old pack could not read anything, the comments on screen are delivered once the new pack works. When the old pack was reading, the first read under the new pack is a new baseline (nothing is delivered twice).
+
+**4. Go back** any time: `curl -X DELETE …/selector-pack`, or **Revert to built-in** in Settings → Advanced.
+
+What each part of a pack does:
+
+| Setting | What it is for |
+|---|---|
+| `tab.css`, `tab.roles`, `tab.name` | The **Comments** tab the reader clicks when no panel is showing: a selector, else an element with one of the roles whose name matches the pattern. |
+| `container.css` | The element that holds the comments. Tried first. |
+| `container.panelLabel` | Else: a tab panel, a labelled element or a heading whose label matches this pattern. |
+| `container.composerCss`, `composerHint` | Else: the area around the comment box (an input whose placeholder or label matches the hint). |
+| `row.css` | One comment row. When set, the avatar rule below is not used. |
+| `row.avatarCss`, `row.avatarAlt` | Else: a row is the smallest element around one avatar that also holds text. `avatarAlt` reads the user name from the avatar's alt text (capture group 1). |
+| `row.fallbackCss`, `row.excludeCss`, `row.maxAvatars` | Rows without an avatar; what a row never contains (the comment box); how many avatars a row may hold. |
+| `row.idAttrs` | Attributes that hold a comment id. With an id, a comment can never be delivered twice. |
+| `text.css` | The element holding the comment text. When set, only its text is the comment. |
+| `text.authorCss`, `text.skipCss`, `text.emojiCss` | Where the user name is when the avatar does not give it; elements whose text is never comment text; images read as emoji. |
+| `text.meta` | Patterns for labels inside a row that are not comment text ("Reply", "2m"). |
+| `classify.event`, `classify.join` | Text that makes a row an event, and which events are "joined" lines. |
+| `classify.system`, `systemCss` | Instagram's own notices, dropped. |
+| `classify.pinned`, `pinnedCss` | What marks a pinned copy, dropped. |
+| `composer.css`, `composer.post` | The comment box and its Post button, used only for the test comment of a Practice live. |
+| `timing.pollMs`, `tabRetryMs`, `backoffMaxMs` | How often the panel is read, how often the tab is tried again, and the longest wait between tries while the page is reloading. |
+| `limits.maxRows`, `limits.history` | How many rows are read at most, and how many delivered comments are remembered to recognise re-rendered rows. |
+
+Selector changes need no release. A change to how the reader *works* (not just where it looks) still does. Send the debug capture with the report: it is safe to share.
+
 ## TikTok
 
 **Experimental.** Vertical feed only.

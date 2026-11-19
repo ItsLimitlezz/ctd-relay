@@ -44,7 +44,7 @@ Every route file default-exports `FastifyPluginAsync<RouteOptions>` and receives
 
 ## Storage conventions
 
-- **Settings** (`repos.settings`, JSON): `'app'` → `Partial<AppSettings>`; `'session.title'` → string; `'session.autoGoLive'` → boolean (default `true`); `'session.testMode'` → boolean (default `false`, changeable only while offline); `'tls.acme'` → `{ identifier, failures, nextAttemptAt, lastError }` (Let's Encrypt backoff, survives restarts); `'assets.limits'` → `Partial<BlobLimits>` (v1.9: overrides the blob size limits, quota and revision count; read on every upload; defaults < `ASSETS_QUOTA_BYTES` < this setting).
+- **Settings** (`repos.settings`, JSON): `'app'` → `Partial<AppSettings>`; `'session.title'` → string; `'session.autoGoLive'` → boolean (default `true`); `'session.testMode'` → boolean (default `false`, changeable only while offline); `'tls.acme'` → `{ identifier, failures, nextAttemptAt, lastError }` (Let's Encrypt backoff, survives restarts); `'assets.limits'` → `Partial<BlobLimits>` (v1.9: overrides the blob size limits, quota and revision count; read on every upload; defaults < `ASSETS_QUOTA_BYTES` < this setting); `'instagram.chatPack'` → `{ override, updatedAt, updatedBy }` (the operator's override of the Instagram chat reader's selector pack, `platforms/instagram/chat-pack.ts`; loaded at start-up and validated again, an invalid one is ignored).
 - **Secrets** (`repos.secrets.scoped(scope)`, AES-256-GCM encrypted):
 
 | Scope | Key | Value |
@@ -98,6 +98,7 @@ the value they stored** — it's the CSRF defense for this endpoint.
 - Use `ctx.app` for developer-app credentials and throw `DriverError('...', 'misconfigured')` when missing.
 - Throw `DriverError` for user-fixable problems; messages are shown in the UI verbatim.
 - Browser drivers: get pages via `ctx.browser.page(accountId)`, prefer role/text locators (`getByRole`, `getByText`) over CSS classes, keep selectors in one `selectors.ts` per platform, save the session after successful flows (`ctx.browser.save(accountId)`), and throw `DriverError(..., 'needs-login')` when the session is gone.
+- Instagram's chat reader keeps its selectors in a **selector pack** (`platforms/instagram/chat-pack.ts`: built-in pack, schema, the active-pack store) instead of constants in `selectors.ts`, so they can be replaced on a running server. Page scripts (`chat-scan.ts`) are fixed strings that take the pack as JSON: never build script source from pack content. A new selector or pattern for the comments reader goes into the pack and its schema, with a fixture under `platforms/instagram/fixtures/` (synthetic markup only).
 - Never change a platform's category/game. Only the title.
 
 ## Commands
