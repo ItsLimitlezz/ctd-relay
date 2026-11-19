@@ -150,6 +150,17 @@ describe('parseChatPackOverride', () => {
     for (const junk of [null, 'pack', 42, [], undefined]) expect(problems(junk).length, String(junk)).toBeGreaterThan(0);
   });
 
+  it('bounds the time spent checking one pack, however many slow patterns it holds', () => {
+    const slow = Array.from({ length: 24 }, (_, i) => `^(a+)+${'b'.repeat(i)}$`);
+    const started = Date.now();
+    const found = problems({ schema: 1, version: 'v', text: { meta: slow }, classify: { event: slow, join: slow, system: slow, pinned: slow } });
+    expect(Date.now() - started).toBeLessThan(4_000);
+    expect(found.length).toBeGreaterThan(0);
+    expect(found[0]).toMatch(/too slow/);
+    // A good pack right after is checked normally.
+    expect(problems(BUILTIN_CHAT_PACK)).toEqual([]);
+  });
+
   it('refuses a pack over the size cap before looking at it', () => {
     const big = { schema: 1, version: 'v', note: 'x'.repeat(CHAT_PACK_MAX_BYTES) };
     expect(problems(big)).toEqual([`body: larger than ${CHAT_PACK_MAX_BYTES} bytes`]);

@@ -254,6 +254,13 @@ function regexProbes(source: string): string[] {
 const PROBE_SCRIPT = new vm.Script('for (const p of probes) re.test(p);');
 /** Time one regex may take over all its probes. */
 const PROBE_BUDGET_MS = 150;
+/**
+ * Time all the regexes of one pack may take together. The probes run on the server's event loop,
+ * so a pack full of slow patterns must not be able to stall it for long.
+ */
+const PACK_PROBE_BUDGET_MS = 1_500;
+/** When the pack being validated runs out of probe time (set by parseChatPackOverride). */
+let probeDeadline: number | null = null;
 
 /**
  * Why `source` is not accepted as a pack regex, or null: it must compile (flag `i`), must not use
@@ -271,8 +278,10 @@ export function regexProblem(source: string): string | null {
     return `not a valid regular expression (${err instanceof Error ? err.message : String(err)})`.slice(0, 200);
   }
   if (/\\(?:[1-9]|k<)/.test(source.replace(/\\\\/g, ''))) return 'backreferences are not allowed';
+  const left = probeDeadline === null ? PROBE_BUDGET_MS : Math.min(PROBE_BUDGET_MS, probeDeadline - Date.now());
+  if (left < 1) return 'not checked: the patterns before it used up the time allowed for checking a pack';
   try {
-    PROBE_SCRIPT.runInNewContext({ re, probes: regexProbes(source) }, { timeout: PROBE_BUDGET_MS });
+    PROBE_SCRIPT.runInNewContext({ re, probes: regexProbes(source) }, { timeout: Math.ceil(left) });
   } catch {
     return 'too slow on long input (catastrophic backtracking); simplify nested repetitions';
   }
@@ -351,7 +360,13 @@ export function parseChatPackOverride(value: unknown): ParsedOverride {
     return { ok: false, problems: ['body: not JSON'] };
   }
   if (bytes > CHAT_PACK_MAX_BYTES) return { ok: false, problems: [`body: larger than ${CHAT_PACK_MAX_BYTES} bytes`] };
-  const parsed = chatPackOverrideSchema.safeParse(value);
+  probeDeadline = Date.now() + PACK_PROBE_BUDGET_MS;
+  let parsed: ReturnType<typeof chatPackOverrideSchema.safeParse>;
+  try {
+    parsed = chatPackOverrideSchema.safeParse(value);
+  } finally {
+    probeDeadline = null;
+  }
   if (!parsed.success) {
     return { ok: false, problems: parsed.error.issues.slice(0, 20).map((i) => `${i.path.join('.') || 'body'}: ${i.message}`) };
   }

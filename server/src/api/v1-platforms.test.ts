@@ -126,7 +126,7 @@ describe('GET/PUT/DELETE /platforms/instagram/chat/selector-pack', () => {
 
     const log = audited().reverse();
     expect(log.map((e) => e.action)).toEqual(['instagram.chat_pack.update', 'instagram.chat_pack.revert']);
-    expect(log[0]!.detail).toMatch(/^version "tuned-1" \(\d+ bytes; changes row\), by API token "Support agent" \(ctd_pat_\w+…\)$/);
+    expect(log[0]!.detail).toMatch(/^version "tuned-1" \(\d+ bytes; changes row\), by API token "Support agent" \(ctd_pat_[\w-]+…\)$/);
     expect(log[1]!.detail).toContain(`back to the built-in pack ${BUILTIN_CHAT_PACK.version}`);
     // The audit log says who and what, never the token itself.
     expect(JSON.stringify(log)).not.toMatch(/ctd_pat_[\w-]{20,}/);
