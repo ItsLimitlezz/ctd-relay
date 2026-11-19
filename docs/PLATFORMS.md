@@ -178,7 +178,11 @@ What is not a comment:
 - "<name> joined" lines are delivered as **events** with `join: true` (docs/API.md → `chat.message`), so a chat box can hide them.
 - A **pinned** copy of a comment is not delivered again.
 - Instagram's own **notices** in the list ("We're telling your followers…") are dropped.
-- Whatever was already on screen when the reader started is not delivered. Comments written while the Comments tab was not open yet are delivered when it opens.
+- **Comments that were already on screen when the reader first gets to read them are history**: remembered, so they are never sent later, but not delivered. That is the case when the reader starts during a live, when the comments panel only opens or renders later, and when a changed selector pack makes the panel readable. Before 0.2.40 the last two delivered everything on screen at once, as one burst (25 comments in the same second during a live run).
+- A live that started **less than 60 seconds ago** has no history: what is on screen then are new comments, and they are delivered. So are comments in a panel the reader has already seen empty for 5 seconds.
+- Both rules are pack settings (`timing.backlogAsHistory`, `timing.liveStartGraceMs`, below). The log says how many rows were taken as history: `Instagram chat reader: comments already on screen taken as history (not delivered)`.
+
+Where the comments are: a tab panel or element labelled "Comments" when the page has one. Otherwise the reader starts at the comment box and climbs to the first parent that is tall enough to be the panel (`container.climbLevels`, `climbMinHeight`). In the layout met in November 2026 the comment box sits in a 76 px footer, four parents down from a 400x600 box that holds the tabs, the comment rows and that footer; the built-in pack `builtin-3` climbs up to 10 parents and stops at one at least 320 px tall. When the box it stops at holds no comment rows but a parent a little further up does, that parent is taken (`container.climbPreferRows`), so a small change around the comment box does not leave the chat empty.
 
 ### Tuning the chat reader live
 
@@ -220,9 +224,11 @@ curl -s -X PUT "$RELAY/api/v1/platforms/instagram/chat/selector-pack" \
 
 `version` is your own label. A list you send replaces the built-in list. A `400` answer lists every problem with its path (`row.css.0: …`). `GET` on the same address returns the active pack with every setting, which is the easiest way to see the built-in values.
 
-**3. Check** with the debug capture again: `reader.rows` should be above zero and `decisions` should show `kept` entries as comments arrive. When the old pack could not read anything, the comments on screen are delivered once the new pack works. When the old pack was reading, the first read under the new pack is a new baseline (nothing is delivered twice).
+**3. Check** with the debug capture again: `reader.rows` should be above zero and `decisions` should show `kept` entries as comments arrive. The comments on screen at the first read under the new pack are history (`decisions` shows them as `dropped` / `pack-changed`, `reader.backlog` counts them): they are not delivered, and nothing is delivered twice. The exception is a live in its first 60 seconds, where a pack that makes the panel readable delivers what is on screen.
 
 **4. Go back** any time: `curl -X DELETE …/selector-pack`, or **Revert to built-in** in Settings → Advanced.
+
+**After an update.** A stored override stays active across updates and is put on top of the new built-in pack, so it keeps working. When a release ships the values an override was setting, the override changes nothing any more, and the reader says so in the log when a live starts (`the stored selector pack override only repeats built-in values; it can be deleted`). Delete it then, so the next built-in pack is not held back by it. This is the case for the override `live-1-climb` (`container.climbLevels` 10, `climbMinHeight` 320) from the November 2026 run: `builtin-3` in 0.2.40 has those values, so **delete `live-1-climb` after updating to 0.2.40**. Deleting it during a live is safe: the settings are the same, so nothing is delivered again.
 
 What each part of a pack does:
 
@@ -232,6 +238,8 @@ What each part of a pack does:
 | `container.css` | The element that holds the comments. Tried first. |
 | `container.panelLabel` | Else: a tab panel, a labelled element or a heading whose label matches this pattern. |
 | `container.composerCss`, `composerHint` | Else: the area around the comment box (an input whose placeholder or label matches the hint). |
+| `container.climbLevels`, `climbMinHeight` | From the comment box (or a "Comments" heading) the reader climbs at most this many parents and stops at the first one at least this tall, in px. Built-in: 10 and 320. |
+| `container.climbPreferRows` | From the comment box only: when the box the climb stopped at holds no comment rows, take a parent further up that does. It must be within `climbLevels`, at most half again as wide (the same column) and hold at least two rows with an avatar. `false` switches this off. |
 | `row.css` | One comment row. When set, the avatar rule below is not used. |
 | `row.avatarCss`, `row.avatarAlt` | Else: a row is the smallest element around one avatar that also holds text. `avatarAlt` reads the user name from the avatar's alt text (capture group 1). |
 | `row.fallbackCss`, `row.excludeCss`, `row.maxAvatars` | Rows without an avatar; what a row never contains (the comment box); how many avatars a row may hold. |
@@ -244,9 +252,24 @@ What each part of a pack does:
 | `classify.pinned`, `pinnedCss` | What marks a pinned copy, dropped. |
 | `composer.css`, `composer.post` | The comment box and its Post button, used only for the test comment of a Practice live. |
 | `timing.pollMs`, `tabRetryMs`, `backoffMaxMs` | How often the panel is read, how often the tab is tried again, and the longest wait between tries while the page is reloading. |
+| `timing.backlogAsHistory` | `true` (built-in): comments already on screen when the reader first gets to read them are history, not delivered. `false`: they are delivered at once, as 0.2.30 did. |
+| `timing.liveStartGraceMs` | With `backlogAsHistory`: a live younger than this (built-in 60000) has no history, so what is on screen is delivered. 0 to 600000. |
 | `limits.maxRows`, `limits.history` | How many rows are read at most, and how many delivered comments are remembered to recognise re-rendered rows. |
 
 Selector changes need no release. A change to how the reader *works* (not just where it looks) still does. Send the debug capture with the report: it is safe to share.
+
+### When Instagram ends the live by itself
+
+Instagram can end a live on its own: a copyright or Community Guidelines takedown, a stream it stopped receiving, or a length limit. The app notices from Instagram's page (a "live ended / removed" notice, or the producer leaving the live state) and, with **Auto-recover takedowns** on, starts a new live with a new key; viewers have to rejoin it.
+
+What is known about a length limit: Meta announced a 4-hour limit in October 2020, for accounts without earlier violations. StreamYard's and Restream's help pages for stream-key (Live Producer) broadcasts say Instagram ends them at about **one hour**. A live through Relay was ended by Instagram after 70 minutes with a notice starting "Live video ended". No source gives the wording of that notice, and no source describes an "are you still live?" prompt, so the app has nothing to answer and does not click anything it does not know. Plan a stream longer than an hour with a restart in mind until the log shows why Instagram ended it.
+
+To find the reason, the app logs at that moment, before it closes the notice:
+
+- `Instagram ended the live` (warning): `reason` (the short text also shown on the dashboard), `rule` (`notice`, `setup-back`, `live-lost` or `zero-viewers`), `liveForSec`, `viewers`, and `page`: every notice, alert and heading on the page with its **full text** (up to 600 characters) and its buttons, whether the page was visible and focused, whether the browser was online, and whether the preview video was still playing. Never comments, addresses or cookies.
+- `Instagram shows a dialog the health watcher does not know (not answered)` (info), during a live: the wording and buttons of a dialog that is none of the known notices, once per wording. A dialog that holds a field, an avatar or a link is never logged.
+
+The page Relay keeps open is not throttled: in headless Chromium it stays visible and focused, and its timers run at full rate also when another account's page is in front.
 
 ## TikTok
 

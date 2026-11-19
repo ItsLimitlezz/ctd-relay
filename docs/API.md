@@ -1414,7 +1414,7 @@ The web UI has the same four operations for signed-in admins under
 {
   "source": "override",
   "version": "2026-11-20 a",
-  "builtinVersion": "builtin-2",
+  "builtinVersion": "builtin-3",
   "note": "comment rows moved to data-comment-id",
   "updatedAt": "2026-11-20T10:00:00.000Z",
   "updatedBy": "token Support agent",
@@ -1448,7 +1448,8 @@ lists every problem with its path, e.g. `row.css.0: CSS selector: …`):
 | CSS selectors | Plain CSS, at most 200 characters, at most 12 per list. No selector engine prefixes (`xpath=`, `text=`), no `>>` chains, no `{ } ; @ <` or comments |
 | Attribute names | `[A-Za-z_][A-Za-z0-9_.:-]*`, at most 64 characters |
 | Patterns | Regular-expression source, at most 300 characters, at most 24 per list, compiled with the `i` flag. No backreferences. A pattern that is slow on long input (catastrophic backtracking) is refused |
-| Numbers | `timing.pollMs` 500–10000, `timing.tabRetryMs` 3000–120000, `timing.backoffMaxMs` 1000–60000, `limits.maxRows` 20–500, `limits.history` 50–2000, `row.maxAvatars` 1–4, `container.climbLevels` 0–12, `container.climbMinHeight` 0–2000 |
+| Numbers | `timing.pollMs` 500–10000, `timing.tabRetryMs` 3000–120000, `timing.backoffMaxMs` 1000–60000, `timing.liveStartGraceMs` 0–600000 (v1.12), `limits.maxRows` 20–500, `limits.history` 50–2000, `row.maxAvatars` 1–4, `container.climbLevels` 0–12, `container.climbMinHeight` 0–2000 |
+| Switches (v1.12) | `timing.backlogAsHistory`, `container.climbPreferRows`: `true` or `false` |
 
 Nothing in a pack is run as code: selectors go to `querySelectorAll`, attribute names to
 `getAttribute`, and patterns are tested against at most 400 characters of text. A selector the
@@ -1476,10 +1477,10 @@ A **sanitised** picture of what each running reader sees. Optional JSON body:
 ```json
 {
   "capturedAt": "2026-11-20T10:05:00.000Z",
-  "pack": { "source": "builtin", "version": "builtin-2", "builtinVersion": "builtin-2" },
+  "pack": { "source": "builtin", "version": "builtin-3", "builtinVersion": "builtin-3" },
   "readers": [
     {
-      "reader": { "packVersion": "builtin-2", "container": "tabpanel", "rows": 12, "truncated": 0, "failures": 0, "tab": "selected", "tabClicks": 1, "kept": 41, "dropped": 9, "newestFirst": false, "bad": [], "lastReadAt": "2026-11-20T10:04:59.400Z" },
+      "reader": { "packVersion": "builtin-3", "container": "tabpanel", "rows": 12, "truncated": 0, "failures": 0, "tab": "selected", "tabClicks": 1, "kept": 41, "dropped": 9, "backlog": 0, "newestFirst": false, "bad": [], "lastReadAt": "2026-11-20T10:04:59.400Z" },
       "tab": { "matches": 1, "visible": true, "ariaSelected": "true" },
       "composer": { "matches": 1 },
       "snapshot": {
@@ -1529,9 +1530,11 @@ or anything typed into a field. What it keeps, so a pack can be written from it:
 - **`selectors`:** per pack selector, how many elements match in the page, in the container, and
   how many of them are visible; `"invalid"` when the browser rejects it.
 - **`decisions`:** newest last. `verdict` `kept` (`reason` `new`, or `late`: a row that was not at
-  the newest end of the list) or `dropped` (`baseline`: on screen when the reader started;
-  `rerender`: a re-created row of a comment already delivered; `duplicate-id`; `pinned`; `system`;
-  `pack-changed`: the first read under a new pack). Lengths only.
+  the newest end of the list) or `dropped` (`baseline`: already on screen when the reader first
+  read the comments of this live; `rerender`: a re-created row of a comment already delivered;
+  `duplicate-id`; `pinned`; `system`; `pack-changed`: on screen at the first read with rows under
+  a new pack). Lengths only. `reader.backlog` (v1.12) counts the `baseline` and `pack-changed`
+  rows: comments taken as history instead of delivered.
 
 The capture reads the page; it does not click or change anything.
 
@@ -1540,6 +1543,17 @@ The capture reads the page; it does not click or change anything.
 `apiVersion` stays `1`: every change below is additive, so clients written for an earlier v1
 keep working (ignore event types and fields you don't know). `GET /api/v1/openapi.json` reports
 the revision in `info.version`.
+
+### v1.12
+
+- **Instagram selector pack (§15):** three more optional settings in a pack override:
+  `timing.backlogAsHistory` and `timing.liveStartGraceMs` (comments already on screen when the
+  reader first gets to read them are history, not delivered, unless the live is younger than the
+  grace), and `container.climbPreferRows`. The built-in pack is `builtin-3` (`builtinVersion`).
+  The debug capture's `reader` has `backlog`. An override stored on v1.11 is still accepted.
+- **Instagram comments** (`chat.message` from `instagram`): when the reader starts during a live,
+  or a changed pack makes the comments readable, the comments on screen are no longer delivered
+  all at once. No change to the shape of any event. Nothing to change in apps that read the chat.
 
 ### v1.11
 

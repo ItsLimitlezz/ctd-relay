@@ -2,6 +2,24 @@
 
 Versions follow the hub's CONVENTIONS.md → Versioning. Each release that ships to a TrueNAS install has a runbook in `docs/RELEASE-*.md` (backup, update, verify, rollback).
 
+## 0.2.40 (2026-11-19)
+
+Instagram comments: fixes from the first live run on 0.2.30. API revision **1.12** (additive). Database schema stays at **v4** (no migration). Runbook: [docs/RELEASE-v0.2.40.md](docs/RELEASE-v0.2.40.md).
+
+### Fixed (Instagram comments)
+- **No comments were read on Instagram's current page.** The comment box sits in a 76 px footer, four parents down from the box that holds the tabs, the comment rows and that footer. The reader climbed four parents, stopped at the footer and found no rows ("no Instagram comment rows found yet" in the log). The built-in pack, now **`builtin-3`**, climbs up to 10 parents and stops at one at least 320 px tall (`container.climbLevels`, `climbMinHeight`): the values of the override that fixed it during the live.
+- **A small change around the comment box no longer empties the chat.** When the box the climb stops at holds no comment rows but a parent a little further up does (within the climb, in the same column, at least two rows with an avatar), that parent is the container. Pack setting `container.climbPreferRows`, on by default; `false` switches it off.
+- **No burst of old comments.** When a changed pack made the panel readable during a live, everything on screen was delivered in the same second (25 comments at once). Comments already on screen when the reader first gets to read them are now history: remembered, never delivered later, not delivered now. This also covers a reader that starts during a live and a panel that opens or renders late. A live younger than 60 seconds has no history, so what is on screen then is delivered, also at the reader's very first read (0.2.30 skipped those). A panel the reader saw empty for 5 seconds has no backlog either. Pack settings `timing.backlogAsHistory` (on by default; off = 0.2.30's behaviour) and `timing.liveStartGraceMs` (60000). The log counts the rows taken as history, and the debug capture has `reader.backlog`.
+
+### Added
+- **What Instagram shows when it ends a live.** The `Instagram ended the live` log line now carries the full text of every notice on the page (up to 600 characters, with its buttons), which rule fired, how long the live ran, the viewer count, and whether the page was visible, focused and online and its preview still playing. It is read before the notice is closed. Never comments, addresses or cookies.
+- **Unknown dialogs during a live** are logged once per wording, with their buttons (`Instagram shows a dialog the health watcher does not know (not answered)`). Nothing is clicked. A dialog that holds a field, an avatar or a link is never logged.
+- The reader says in the log when a stored selector pack override only repeats built-in values and can be deleted.
+
+### Changed
+- A selector pack override stored on 0.2.30 keeps working and is put on top of `builtin-3`. The override `live-1-climb` from the live run sets values `builtin-3` now has: **delete it after updating** (Settings → Advanced → Revert to built-in). See docs/PLATFORMS.md → Instagram → "After an update".
+- docs/PLATFORMS.md → Instagram → "When Instagram ends the live by itself": what is known about Instagram ending Live Producer broadcasts (third-party help pages say about one hour), and what the app logs.
+
 ## 0.2.30 (2026-11-19)
 
 API revision **1.11**. Database schema stays at **v4** (no migration; the selector pack override is one row in the settings table). Runbook: [docs/RELEASE-v0.2.30.md](docs/RELEASE-v0.2.30.md).
