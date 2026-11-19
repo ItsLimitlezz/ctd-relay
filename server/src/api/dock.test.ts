@@ -340,6 +340,61 @@ describe('dock script', () => {
     expect(chat.all().some((e) => e.tag === 'img')).toBe(false);
   });
 
+  it('an HEVC feed reads "Landscape: HEVC ⚠" and its destination is DOWN with what to change; it clears when the feed is H.264', async () => {
+    const message = 'Landscape feed is HEVC. YouTube gets the stream unchanged and needs H.264. In CTD OBS: Relay dock → Send stream (switches to H.264), or Settings → Output → Video encoder: H.264.';
+    const hevc = {
+      feed: 'landscape',
+      online: true,
+      video: { codec: 'hevc', width: 1920, height: 1080 },
+      bitrateKbps: 6012,
+      problem: { reason: 'feed-video-codec', codec: 'hevc', label: 'HEVC', blocking: true, message: 'Landscape feed is HEVC. …' },
+    };
+    const blocked = {
+      id: 'y1',
+      name: 'YouTube',
+      platform: 'youtube',
+      feed: 'landscape',
+      enabled: true,
+      phase: 'waiting-for-feed',
+      live: false,
+      down: true,
+      waitingFor: ['landscape'],
+      blocked: { reason: 'feed-video-codec', feed: 'landscape', codec: 'hevc' },
+      message,
+      stats: null,
+      viewers: null,
+      watchUrl: null,
+      recoveries: 0,
+      lastRecovery: null,
+      since: '2026-11-19T01:00:00Z',
+    };
+    const h = harness(`#token=${TOKEN}`, {
+      '/api/v1/': () => ({ status: 200, body: { token: { scopes: ['status:read'], profileId: null } } }),
+      '/api/v1/events/poll': () => ({ status: 200, body: { items: [], next: '01JA7Q8M9X2V4C6B8N0P2R4T00', reset: false } }),
+      '/api/v1/profiles/default': () => ({ status: 200, body: { id: 'default', name: 'Main', color: null } }),
+      '/api/v1/status': () => ({
+        status: 200,
+        body: { session: { status: 'live', startedAt: new Date().toISOString(), title: 'Show', testMode: false, autoGoLive: true }, feeds: [hevc], destinations: [blocked], platforms: [] },
+      }),
+      '/api/v1/events': () => ({
+        status: 200,
+        stream: sse([
+          { id: '01JA7Q8M9X2V4C6B8N0P2R4T11', type: 'feed.status', data: { ...hevc, feed: 'vertical', video: { codec: 'h264', width: 1080, height: 1920 }, problem: null } },
+        ]),
+      }),
+    });
+    await flush();
+    const [landscape, vertical] = h.byId.feeds!.children;
+    expect(landscape!.textContent).toBe('Landscape:HEVC ⚠ · 1920×1080 · 6012 kbps');
+    expect(landscape!.className).toContain('problem');
+    expect(vertical!.textContent).toBe('Vertical1080×1920 · 6012 kbps');
+    expect(vertical!.className).not.toContain('problem');
+    const row = h.byId.destinations!.children[0]!;
+    expect(row.className).toContain('down');
+    expect(row.textContent).toContain('DOWN');
+    expect(row.textContent).toContain(message);
+  });
+
   it('chat.user.cleared follows the server rule: two real user ids decide, names only without one', async () => {
     const chatEnv = (n: number, userId: string, name: string) => ({
       id: `01JA7Q8M9X2V4C6B8N0P2R4T${n}`,

@@ -18,6 +18,7 @@ import {
   DEFAULT_PROFILE_ID,
   FEEDS,
   type Destination,
+  type DestinationBlock,
   type DestinationPhase,
   type DestinationState,
   type Feed,
@@ -30,7 +31,9 @@ import {
   type SessionStatus,
   type TitleResult,
 } from '../../../shared/types.js';
+import { blockMessage, codecLabel, feedProblem, sameBlock } from '../../../shared/feed-codec.js';
 import { isDown } from '../api/status.js';
+import type { NoticeAbout } from '../events.js';
 import { profileSettingKey, type AppServices, type Orchestrator } from '../services.js';
 import { awaitBounded, errorMessage, SerialQueue, stableStringify, textLength } from './async-utils.js';
 import {
@@ -40,6 +43,7 @@ import {
   type RunnerHost,
   type StatePatch,
 } from './destination-runner.js';
+import { requiredFeedsOf } from './feeds.js';
 import { TEST_MODE_CHANNEL_TITLE, TEST_MODE_SETTING, testModeLockedError } from './test-mode.js';
 
 export { DEFAULT_TIMINGS, type OrchestratorTimings } from './destination-runner.js';
@@ -98,7 +102,7 @@ function effectiveOption(field: FieldSpec, raw: unknown): unknown {
   }
 }
 
-const RESET: StatePatch = { message: null, stats: null, watchUrl: null, retries: 0, viewers: null };
+const RESET: StatePatch = { message: null, stats: null, watchUrl: null, retries: 0, viewers: null, waitingFor: [], blocked: null };
 /** Per-session counters: cleared when a session starts (kept after it stops, for the record). */
 const SESSION_RESET: StatePatch = { recoveries: 0, lastRecovery: null };
 
@@ -151,6 +155,8 @@ export class SessionOrchestrator implements Orchestrator {
   private readonly cleanups = new Map<string, Promise<void>>();
   /** Removed via destinationRemoved() but possibly still in the repo for a moment. */
   private readonly removed = new Set<string>();
+  /** Codec problem last announced per feed (key: `<reason>|<codec>|<since>`), see announceFeedCodec. */
+  private readonly announcedCodec = new Map<Feed, { key: string; blocking: boolean }>();
 
   private obsGraceTimer: ReturnType<typeof setTimeout> | null = null;
   private unsubscribers: (() => void)[] = [];
@@ -173,6 +179,8 @@ export class SessionOrchestrator implements Orchestrator {
       title: () => this.title,
       testMode: () => this.testMode,
       feedOnline: (feed) => this.feeds.get(feed)?.online === true,
+      feedState: (feed) => this.feeds.get(feed) ?? null,
+      feedBlocked: (block) => this.onFeedBlocked(block),
       graceMs: () => this.graceSec() * 1000,
       endTimeoutMs: () => (this.shuttingDown ? timings.shutdownEndTimeoutMs : timings.endTimeoutMs),
       state: (id) => this.states.get(id) ?? null,
@@ -279,6 +287,8 @@ export class SessionOrchestrator implements Orchestrator {
       }
       this.status = 'live';
       this.emitSession();
+      // The feed that started this session was reported before any destination ran.
+      for (const feed of this.feeds.values()) this.checkFeedCodec(feed);
     });
   }
 
@@ -306,6 +316,7 @@ export class SessionOrchestrator implements Orchestrator {
       this.status = 'offline';
       this.sessionId = null;
       this.startedAt = null;
+      this.announcedCodec.clear();
       for (const dest of this.reconcile()) this.update(dest.id, { ...RESET, phase: offlinePhase(dest) });
       this.emitSession();
       this.notice('info', stopNotice(reason, this.graceSec()));
@@ -444,9 +455,18 @@ export class SessionOrchestrator implements Orchestrator {
     const feed: FeedState = { ...event, profileId: this.profileId };
     const prev = this.feeds.get(feed.feed);
     this.feeds.set(feed.feed, feed);
-    if (prev?.online === feed.online) return; // stats-only update; the UI gets 'feed' events directly
+    if (prev?.online === feed.online) {
+      // Stats-only updates need nothing (the UI gets 'feed' events directly), but a codec that
+      // became known or changed while online decides whether the feed can be sent (codec guard).
+      if (feed.online && codecKey(prev) !== codecKey(feed)) {
+        for (const runner of this.runners.values()) runner.feedsChanged();
+        this.checkFeedCodec(feed);
+      }
+      return;
+    }
     this.emitSession();
     for (const runner of this.runners.values()) runner.feedsChanged();
+    this.checkFeedCodec(feed);
 
     if (feed.online) {
       this.clearObsGrace();
@@ -455,6 +475,55 @@ export class SessionOrchestrator implements Orchestrator {
     } else if (!this.anyFeedOnline() && (this.status === 'live' || this.status === 'starting')) {
       this.armObsGrace();
     }
+  }
+
+  // Codec guard notices (shared/feed-codec.ts): one per feed and OBS connection, however many
+  // destinations it holds back, and one when the feed can be sent again.
+
+  /** A runner can't send this feed as it is. */
+  private onFeedBlocked(block: DestinationBlock): void {
+    const encodes = block.reason !== 'feed-video-codec'; // only Twitch Dual Format insists on audio
+    this.announceFeedCodec(block.feed, `${block.reason}|${block.codec ?? ''}`, true, blockMessage(block, encodes ? { encodes } : {}), block.codec);
+  }
+
+  /**
+   * A feed's tracks are (newly) known. Announces audio the platforms won't get (the destinations
+   * still run, so no runner reports it), and that a feed announced as unusable is fine again.
+   */
+  private checkFeedCodec(feed: FeedState): void {
+    if (!feed.online) return; // offline says nothing about the next connection: keep what was announced
+    const problem = feedProblem(feed);
+    if (problem) {
+      // A video codec nobody can send is announced by the runners it holds back (onFeedBlocked).
+      if (!problem.blocking && this.feedInUse(feed.feed)) {
+        this.announceFeedCodec(feed.feed, `${problem.reason}|${problem.codec}`, false, problem.message, problem.codec);
+      }
+      return;
+    }
+    const was = this.announcedCodec.get(feed.feed);
+    if (!was || !feed.video) return;
+    this.announcedCodec.delete(feed.feed);
+    const name = feed.feed === 'vertical' ? 'Vertical' : 'Landscape';
+    const about: NoticeAbout = { kind: 'feed.codec', subject: { type: 'feed', feed: feed.feed } };
+    if (was.blocking) {
+      const what = [feed.video.codec, feed.audio?.codec].filter((c): c is string => !!c).map(codecLabel).join(' + ');
+      this.notice('info', `${name} feed is ${what} now: its destinations start by themselves.`, { ...about, codec: feed.video.codec });
+    } else if (feed.audio) {
+      this.notice('info', `${name} feed audio is ${codecLabel(feed.audio.codec)} now: platforms get its sound again.`, { ...about, codec: feed.audio.codec });
+    }
+  }
+
+  private announceFeedCodec(feed: Feed, problem: string, blocking: boolean, message: string, codec: string | null): void {
+    const key = `${problem}|${this.feeds.get(feed)?.since ?? ''}`;
+    if (this.announcedCodec.get(feed)?.key === key) return;
+    this.announcedCodec.set(feed, { key, blocking });
+    this.notice('warn', message, { kind: 'feed.codec', subject: { type: 'feed', feed }, ...(codec ? { codec } : {}) });
+  }
+
+  /** A running session has an enabled destination that sends this feed. */
+  private feedInUse(feed: Feed): boolean {
+    for (const runner of this.runners.values()) if (requiredFeedsOf(runner.dest).includes(feed)) return true;
+    return false;
   }
 
   private maybeAutoStart(): void {
@@ -662,8 +731,8 @@ export class SessionOrchestrator implements Orchestrator {
    * User-facing notice for this profile. With several profiles the message names the profile
    * ("DPRTMNT · Instagram ended the live…"), since profiles can be live at the same time.
    */
-  private notice(level: 'info' | 'warn' | 'error', message: string): void {
-    this.services.bus.emit('notice', { level, message: this.withProfileName(message), profileId: this.profileId });
+  private notice(level: 'info' | 'warn' | 'error', message: string, about: NoticeAbout = {}): void {
+    this.services.bus.emit('notice', { level, message: this.withProfileName(message), profileId: this.profileId, ...about });
   }
 
   private withProfileName(message: string): string {
@@ -717,7 +786,9 @@ export class SessionOrchestrator implements Orchestrator {
       next.retries === cur.retries &&
       next.recoveries === cur.recoveries &&
       next.lastRecovery === cur.lastRecovery &&
-      (next.viewers ?? null) === (cur.viewers ?? null)
+      (next.viewers ?? null) === (cur.viewers ?? null) &&
+      sameBlock(next.blocked, cur.blocked) &&
+      (next.waitingFor ?? []).join() === (cur.waitingFor ?? []).join()
     ) {
       return;
     }
@@ -728,6 +799,11 @@ export class SessionOrchestrator implements Orchestrator {
   private emitSession(): void {
     this.services.bus.emit('session', this.state());
   }
+}
+
+/** The part of a feed that decides whether it can be sent: its video and audio codec. */
+function codecKey(feed: FeedState | undefined): string {
+  return `${feed?.video?.codec ?? ''}/${feed?.audio?.codec ?? ''}`;
 }
 
 function blankState(id: string, phase: DestinationPhase, profileId: string): DestinationState {

@@ -1,5 +1,16 @@
 import { useEffect, useId, useMemo, useState, type FormEvent } from 'react';
-import type { Account, Destination, DestinationPhase, DestinationState, Feed, FeedState, SessionState, TitleResult } from '@shared/types';
+import { codecLabel, feedProblem } from '@shared/feed-codec';
+import type {
+  Account,
+  Destination,
+  DestinationBlock,
+  DestinationPhase,
+  DestinationState,
+  Feed,
+  FeedState,
+  SessionState,
+  TitleResult,
+} from '@shared/types';
 import { FEEDS } from '@shared/types';
 import { api } from '../api';
 import { AlertToggle } from '../components/AlertToggle';
@@ -61,6 +72,11 @@ export function feedBadge(dest: Pick<Destination, 'platform' | 'feed' | 'options
   if (dual === 'relay-multitrack') return { text: 'Dual Format', title: 'Landscape + vertical: Relay encodes both feeds for Twitch' };
   if (dual === 'obs-direct') return { text: 'Dual Format (OBS)', title: 'OBS sends Dual Format to Twitch itself' };
   return { text: FEED_LABEL[dest.feed] };
+}
+/** Badge of a destination held back by the codec guard: "Blocked: HEVC feed", "Blocked: no AAC audio". */
+export function blockedLabel(block: DestinationBlock): string {
+  if (block.reason === 'feed-video-codec') return `Blocked: ${codecLabel(block.codec ?? 'unknown')} feed`;
+  return 'Blocked: no AAC audio';
 }
 const BANDWIDTH_TEST_TITLE =
   'This destination has "Bandwidth test" on: Twitch receives the video but nobody sees it and the channel stays offline. Turn it off in Destinations for a real stream.';
@@ -385,6 +401,8 @@ export function FeedCard({ feed, state, loading }: { feed: Feed; state: FeedStat
   const online = !!state?.online;
   const Icon = feed === 'landscape' ? LandscapeIcon : VerticalIcon;
   const keyframes = keyframeStatus(state?.video);
+  // HEVC/AV1 video (no destination can send it) or audio that isn't AAC (sent without sound).
+  const problem = online ? feedProblem(state) : null;
   return (
     <Card>
       <div className="feed-head">
@@ -396,9 +414,16 @@ export function FeedCard({ feed, state, loading }: { feed: Feed; state: FeedStat
         {loading ? (
           <Spinner size="sm" />
         ) : (
-          <Badge tone={online ? 'success' : 'neutral'} dot pulse={online}>
-            {online ? 'Online' : 'Offline'}
-          </Badge>
+          <>
+            {problem && (
+              <Badge tone={problem.blocking ? 'danger' : 'warn'} title={problem.message}>
+                {problem.label} ⚠
+              </Badge>
+            )}
+            <Badge tone={online ? 'success' : 'neutral'} dot pulse={online}>
+              {online ? 'Online' : 'Offline'}
+            </Badge>
+          </>
         )}
       </div>
       {online && state ? (
@@ -412,9 +437,14 @@ export function FeedCard({ feed, state, loading }: { feed: Feed; state: FeedStat
             {keyframes.text}
           </dd>
           <dt>Video</dt>
-          <dd>{state.video?.codec?.toUpperCase() || '—'}</dd>
+          <dd className={cx(problem?.reason === 'feed-video-codec' && 'text-warn')}>
+            {state.video?.codec ? `${codecLabel(state.video.codec)}${problem?.reason === 'feed-video-codec' ? ' ⚠' : ''}` : '—'}
+          </dd>
           <dt>Audio</dt>
-          <dd>{formatAudio(state.audio)}</dd>
+          <dd className={cx(problem?.reason === 'feed-audio-codec' && 'text-warn')}>
+            {formatAudio(state.audio)}
+            {problem?.reason === 'feed-audio-codec' ? ' ⚠' : ''}
+          </dd>
           <dt>Bitrate</dt>
           <dd>{formatBitrate(state.bitrateKbps)}</dd>
           {state.since && (
@@ -425,6 +455,11 @@ export function FeedCard({ feed, state, loading }: { feed: Feed; state: FeedStat
           )}
         </dl>
       ) : null}
+      {problem && (
+        <p className={cx('alert small', problem.blocking ? 'alert-danger' : 'alert-warn')} role="alert" style={{ marginTop: 10 }}>
+          {problem.message}
+        </p>
+      )}
       {online && state && keyframes.warn && (
         <p className="alert alert-warn small" style={{ marginTop: 10 }}>
           Keyframes {keyframes.text}: set them to 2 s. {KEYFRAME_FIX[feed]}
@@ -676,6 +711,8 @@ export function DestinationCard({
   const [toggling, setToggling] = useState(false);
   const [retrying, setRetrying] = useState(false);
   const phase: DestinationPhase = state?.phase ?? (dest.enabled ? 'idle' : 'disabled');
+  // The feed is online but can't be sent (HEVC, AV1…): nothing runs until OBS sends H.264.
+  const blocked = phase === 'waiting-for-feed' ? (state?.blocked ?? null) : null;
   const watchUrl = safeHttpUrl(state?.watchUrl);
   const stats = state?.stats ?? null;
   // Not while 'recovering': the server is already building a fresh live.
@@ -721,7 +758,7 @@ export function DestinationCard({
         skipped && 'is-skipped',
         phase === 'live' && 'is-live',
         phase === 'recovering' && 'is-recovering',
-        phase === 'error' && 'is-error',
+        (phase === 'error' || blocked) && 'is-error',
       )}
       aria-label={`${dest.name} (${platformName(dest.platform)})`}
     >
@@ -743,6 +780,10 @@ export function DestinationCard({
           {skipped ? (
             <Badge tone="neutral" title={testMode?.text}>
               Skipped in test mode
+            </Badge>
+          ) : blocked ? (
+            <Badge tone="danger" dot title="Relay isn't sending anything here until the feed is H.264 with AAC audio. It starts by itself then.">
+              {blockedLabel(blocked)}
             </Badge>
           ) : (
             <PhaseBadge phase={phase} />
@@ -770,7 +811,7 @@ export function DestinationCard({
           {state && state.retries > 0 && phase !== 'live' && <span className="faint small">attempt {state.retries + 1}</span>}
         </div>
         {state?.message ? (
-          <p className={cx('dest-message', phase === 'error' && 'is-error')}>{state.message}</p>
+          <p className={cx('dest-message', (phase === 'error' || blocked) && 'is-error')}>{state.message}</p>
         ) : (
           skipped && testMode && <p className="dest-message">{testMode.text}</p>
         )}

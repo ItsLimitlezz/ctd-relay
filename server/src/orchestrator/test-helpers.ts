@@ -83,6 +83,13 @@ export class FakeMedia {
     this.states.set(`${profileId}/${f}`, s);
     this.bus.emit('feed', s);
   }
+  /** Emit a full feed state (e.g. with its codecs, media/test-helpers.ts feedWith). */
+  put(state: FeedState): void {
+    const profileId = state.profileId ?? DEFAULT_PROFILE_ID;
+    const s: FeedState = { ...state, profileId };
+    this.states.set(`${profileId}/${s.feed}`, s);
+    this.bus.emit('feed', s);
+  }
 }
 
 export class FakePushes implements PushSupervisor {
@@ -297,7 +304,7 @@ export function harness(opts: HarnessOptions) {
 
   const destEvents: DestinationState[] = [];
   const sessionEvents: SessionState[] = [];
-  const notices: { level: string; message: string; profileId?: string }[] = [];
+  const notices: { level: string; message: string; profileId?: string; kind?: string; subject?: { type: string; feed: Feed }; codec?: string }[] = [];
   bus.on('destination', (s) => destEvents.push(s));
   bus.on('session', (s) => sessionEvents.push(s));
   bus.on('notice', (n) => notices.push(n));
