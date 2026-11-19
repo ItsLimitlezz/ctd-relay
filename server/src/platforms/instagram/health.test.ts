@@ -52,6 +52,29 @@ describe('HealthMonitor', () => {
     expect(m.step({ ...LIVE, endedText: 'again' }, 5_000)).toEqual([]); // nothing after an end
   });
 
+  it('remembers which rule ended the live and how long it ran (for the log)', () => {
+    const notice = monitor({}, { liveAt: 10_000, sawLive: false });
+    expect(notice.endRule).toBeNull();
+    notice.step({ ...LIVE, endedText: 'Live video ended' }, 4_256_000);
+    expect(notice.endRule).toBe('notice');
+    expect(notice.liveForMs(4_256_000)).toBe(4_246_000); // from going live, not from when health started
+    expect(monitor({ startedAt: 2_000 }, { liveAt: null, sawLive: false }).liveForMs(5_000)).toBe(3_000);
+
+    const setup = monitor({}, { liveAt: 0, sawLive: true });
+    run(setup, { live: false, setup: true }, 0, 4_000);
+    expect(setup.endRule).toBe('setup-back');
+    const lost = monitor({}, { liveAt: 0, sawLive: true });
+    run(lost, { live: false }, 0, 20_000);
+    expect(lost.endRule).toBe('live-lost');
+    const zero = monitor();
+    run(zero, { viewers: 0 }, 60_000, 66_000);
+    expect(zero.endRule).toBe('zero-viewers');
+    // A dialog nobody knows is not a signal.
+    const unknown = monitor();
+    expect(unknown.step({ ...LIVE, dialog: { text: 'Made-up prompt', buttons: ['Keep going'] } }, 1_000)).toEqual([]);
+    expect(unknown.endRule).toBeNull();
+  });
+
   it('producer back at setup after being live → ended after setupBackMs', () => {
     const marks = { liveAt: 0, sawLive: false };
     const m = monitor({ zeroViewerSec: 0 }, marks);

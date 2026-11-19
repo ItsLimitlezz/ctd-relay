@@ -8,15 +8,18 @@
 // - logged out → `warning` (never `ended`: a recovery would only hit the login page);
 // - softer notices ("will be removed if you continue", "interrupted") → `warning`, `ok` when gone.
 // The runner's push-down rule is the primary signal; this only adds what Instagram shows.
+// When the live ends on Instagram's side, the watcher logs what the page shows at that moment (the
+// full notice text, its buttons, page visibility, the preview's state; see END_STATE_SOURCE) before
+// anything is clicked, and during the live it logs any dialog it does not know, once per wording.
 // It also reports the viewer count (`viewers`) on every change and at least every 30 s, null when
 // it can't be read (ViewerReporter) — for every audience, also with the 0-viewer rule off.
 
 import type { Logger } from 'pino';
 import type { Page } from 'playwright';
-import { humanPause } from '../../browser/helpers.js';
+import { humanPause, withTimeout } from '../../browser/helpers.js';
 import type { LiveHealthEvent } from '../types.js';
 import { checkpointError, hasSessionCookie, isLoginUrl, visibleNow, type FlowConfig } from './flow.js';
-import { HEALTH_PROBE_ARGS, HEALTH_PROBE_SOURCE, sel } from './selectors.js';
+import { END_STATE_ARGS, END_STATE_SOURCE, HEALTH_PROBE_ARGS, HEALTH_PROBE_SOURCE, sel } from './selectors.js';
 import { parseViewerCount, type Audience } from './util.js';
 
 export interface HealthTimings {
@@ -60,7 +63,12 @@ export interface HealthSnapshot {
   setup: boolean;
   /** Viewer count, null when unreadable. */
   viewers: number | null;
+  /** A visible dialog that is none of the notices above (text without its buttons, and the buttons' names). */
+  dialog?: { text: string; buttons: string[] } | null;
 }
+
+/** Which rule ended the live. */
+export type EndRule = 'notice' | 'setup-back' | 'live-lost' | 'zero-viewers';
 
 export const SESSION_EXPIRED_WARNING =
   "Instagram session expired — log in again from Accounts. Takedowns can't be detected on Instagram's side until then.";
@@ -98,8 +106,19 @@ export class HealthMonitor {
   private unreadableSince: number | null = null;
   private current: string | null = null;
   private done = false;
+  private rule: EndRule | null = null;
 
   constructor(private readonly cfg: MonitorConfig) {}
+
+  /** The rule behind the `ended` event, once there was one. */
+  get endRule(): EndRule | null {
+    return this.rule;
+  }
+
+  /** How long the live has been running at `now` (from going live, else from when health started). */
+  liveForMs(now: number): number {
+    return Math.max(0, now - (this.cfg.marks.liveAt ?? this.cfg.startedAt));
+  }
 
   /** Events for one snapshot taken at `now`. After an `ended` the monitor yields nothing more. */
   step(s: HealthSnapshot, now: number): LiveHealthEvent[] {
@@ -137,7 +156,7 @@ export class HealthMonitor {
   }
 
   private endedReason(s: HealthSnapshot, now: number): string | null {
-    if (s.endedText) return shortNotice(s.endedText);
+    if (s.endedText) return this.endedBy('notice', shortNotice(s.endedText));
 
     const { timings, marks } = this.cfg;
     if (s.live) {
@@ -146,9 +165,9 @@ export class HealthMonitor {
     } else if (marks.sawLive) {
       this.notLiveSince ??= now;
       const gone = now - this.notLiveSince;
-      if (s.setup && gone >= timings.setupBackMs) return 'the Instagram producer is back at the setup screen';
+      if (s.setup && gone >= timings.setupBackMs) return this.endedBy('setup-back', 'the Instagram producer is back at the setup screen');
       if (gone >= timings.liveLostMs) {
-        return `the Instagram producer left the live (no "End live video" for ${Math.round(gone / 1000)} s)`;
+        return this.endedBy('live-lost', `the Instagram producer left the live (no "End live video" for ${Math.round(gone / 1000)} s)`);
       }
     }
 
@@ -170,7 +189,12 @@ export class HealthMonitor {
       return null;
     }
     this.zeroSince ??= now;
-    return now - this.zeroSince >= this.cfg.zeroViewerSec * 1000 ? `0 viewers for ${this.cfg.zeroViewerSec} s` : null;
+    return now - this.zeroSince >= this.cfg.zeroViewerSec * 1000 ? this.endedBy('zero-viewers', `0 viewers for ${this.cfg.zeroViewerSec} s`) : null;
+  }
+
+  private endedBy(rule: EndRule, reason: string): string {
+    this.rule = rule;
+    return reason;
   }
 
   private viewerWarning(s: HealthSnapshot, now: number): string | null {
@@ -238,6 +262,7 @@ export async function probeHealth(page: Page, cfg: FlowConfig): Promise<HealthSn
     ended?: unknown;
     warning?: unknown;
     viewers?: unknown;
+    dialog?: unknown;
   } | null;
   const live = (await visibleNow(sel.endLiveButton(page))) !== null;
   // Not the stream key: the producer may keep showing it during the live.
@@ -251,8 +276,44 @@ export async function probeHealth(page: Page, cfg: FlowConfig): Promise<HealthSn
     live,
     setup,
     viewers: parseViewerCount(text(scan?.viewers)),
+    dialog: dialogOf(scan?.dialog),
   };
 }
+
+function dialogOf(value: unknown): { text: string; buttons: string[] } | null {
+  if (!value || typeof value !== 'object') return null;
+  const { text: t, buttons } = value as { text?: unknown; buttons?: unknown };
+  const dialogText = text(t);
+  if (!dialogText) return null;
+  return { text: dialogText, buttons: Array.isArray(buttons) ? buttons.filter((b): b is string => typeof b === 'string').slice(0, 8) : [] };
+}
+
+/** What the producer page shows right after Instagram ended the live (see END_STATE_SOURCE). */
+export interface EndState {
+  notices: { role: string | null; text: string; length: number; buttons: string[] }[];
+  visibility: string;
+  focused: boolean;
+  online: boolean;
+  videos: { paused: boolean; ended: boolean; readyState: number; width: number; height: number }[];
+  pathDepth: number;
+}
+
+const END_STATE_EXPRESSION = `(${END_STATE_SOURCE})(${JSON.stringify(END_STATE_ARGS)})`;
+/** The capture runs before the `ended` event goes out (the recovery then clicks the notice away): keep it short. */
+const END_STATE_TIMEOUT_MS = 2_000;
+
+/** Read the page once for the log. Never throws; null when the page cannot be read in time. */
+export async function captureEndState(page: Page): Promise<EndState | null> {
+  if (page.isClosed()) return null;
+  try {
+    return (await withTimeout(page.evaluate(END_STATE_EXPRESSION), END_STATE_TIMEOUT_MS, 'end state capture timed out')) as EndState;
+  } catch {
+    return null;
+  }
+}
+
+/** Dialogs logged per live at most (one line per wording). */
+const MAX_LOGGED_DIALOGS = 12;
 
 function untilAborted(signal: AbortSignal): Promise<void> {
   if (signal.aborted) return Promise.resolve();
@@ -277,6 +338,7 @@ export interface WatchOptions {
  * never sees an early end.
  */
 export async function* watchHealth(page: Page, signal: AbortSignal, opts: WatchOptions): AsyncGenerator<LiveHealthEvent> {
+  const loggedDialogs = new Set<string>();
   while (!signal.aborted) {
     if (!opts.isCurrent()) {
       await untilAborted(signal);
@@ -285,9 +347,34 @@ export async function* watchHealth(page: Page, signal: AbortSignal, opts: WatchO
     const snapshot = await probeHealth(page, opts.cfg);
     if (signal.aborted || !opts.isCurrent()) continue;
     const now = opts.now();
-    for (const ev of opts.monitor.step(snapshot, now)) {
-      if (ev.type === 'ended') opts.log.warn({ reason: ev.reason }, 'Instagram ended the live');
-      else if (ev.type === 'warning') opts.log.info({ message: ev.message }, 'Instagram live warning');
+    const events = opts.monitor.step(snapshot, now);
+    // A dialog that is no notice the watcher knows (a prompt that wants an answer?): its wording
+    // and buttons, once, so the next release can handle it. Nothing is clicked.
+    const dialog = snapshot.dialog;
+    if (dialog && !loggedDialogs.has(dialog.text) && loggedDialogs.size < MAX_LOGGED_DIALOGS) {
+      loggedDialogs.add(dialog.text);
+      opts.log.info(
+        { text: dialog.text, buttons: dialog.buttons, liveForSec: Math.round(opts.monitor.liveForMs(now) / 1000) },
+        'Instagram shows a dialog the health watcher does not know (not answered)',
+      );
+    }
+    for (const ev of events) {
+      if (ev.type === 'ended') {
+        // Before the event goes out: the runner's recovery closes the notice and leaves the page.
+        const state = await captureEndState(page);
+        opts.log.warn(
+          {
+            reason: ev.reason,
+            rule: opts.monitor.endRule,
+            liveForSec: Math.round(opts.monitor.liveForMs(now) / 1000),
+            viewers: snapshot.viewers,
+            endButton: snapshot.live,
+            setupShown: snapshot.setup,
+            page: state,
+          },
+          'Instagram ended the live',
+        );
+      } else if (ev.type === 'warning') opts.log.info({ message: ev.message }, 'Instagram live warning');
       yield ev;
       if (ev.type === 'ended') {
         await untilAborted(signal);
