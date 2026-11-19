@@ -56,6 +56,12 @@ export interface IgChatPack {
     /** Strategies 3 and 4 climb up to this many parents, stopping at one at least `climbMinHeight` px tall. */
     climbLevels: number;
     climbMinHeight: number;
+    /**
+     * Strategy 3 only: when the box the climb stopped at holds no comment rows, a parent further up
+     * (still within `climbLevels`, in the same column) that holds at least two avatar rows is taken
+     * instead. Keeps the comments readable when Instagram puts a tall box around the comment box.
+     */
+    climbPreferRows: boolean;
   };
   /** What one comment row is. */
   row: {
@@ -112,6 +118,17 @@ export interface IgChatPack {
     tabRetryMs: number;
     /** Longest wait between reads while reads keep failing (page reloading). */
     backoffMaxMs: number;
+    /**
+     * The comments already on screen when the reader first gets to read them (it started during a
+     * live, or a changed pack made the panel readable) are history: remembered, not delivered.
+     * Off: they are delivered at once, as one burst (how 0.2.30 worked).
+     */
+    backlogAsHistory: boolean;
+    /**
+     * With `backlogAsHistory`: a live younger than this has no history yet, so what is on screen
+     * are new comments and is delivered.
+     */
+    liveStartGraceMs: number;
   };
   limits: {
     /** Only the newest this-many rows are read. */
@@ -129,7 +146,7 @@ const namesSource = (...labels: string[]): string => {
 
 export const BUILTIN_CHAT_PACK: IgChatPack = {
   schema: CHAT_PACK_SCHEMA,
-  version: 'builtin-2',
+  version: 'builtin-3',
   tab: { css: [], roles: ['tab', 'button'], name: namesSource('comments', 'comment') },
   container: {
     css: [],
@@ -137,8 +154,11 @@ export const BUILTIN_CHAT_PACK: IgChatPack = {
     composerCss: ['textarea', 'input[type="text"]', '[contenteditable="true"]'],
     composerHint: 'comment',
     headingCss: ['h1', 'h2', 'h3', 'h4', 'span', 'div'],
-    climbLevels: 4,
-    climbMinHeight: 200,
+    // Live run, November 2026: the comment box sits in a 76 px footer more than four parents down
+    // from the panel (a 600 px box holding the tabs, the comment rows and that footer).
+    climbLevels: 10,
+    climbMinHeight: 320,
+    climbPreferRows: true,
   },
   row: {
     css: [],
@@ -187,7 +207,7 @@ export const BUILTIN_CHAT_PACK: IgChatPack = {
     css: ['[placeholder*="comment" i]', '[aria-label*="comment" i]'],
     post: namesSource('post', 'send'),
   },
-  timing: { pollMs: 1_000, tabRetryMs: 15_000, backoffMaxMs: 10_000 },
+  timing: { pollMs: 1_000, tabRetryMs: 15_000, backoffMaxMs: 10_000, backlogAsHistory: true, liveStartGraceMs: 60_000 },
   limits: { maxRows: 200, history: 500 },
 };
 
@@ -347,6 +367,7 @@ export const chatPackOverrideSchema = z
         headingCss: selectors,
         climbLevels: int(0, 12),
         climbMinHeight: int(0, 2_000),
+        climbPreferRows: z.boolean(),
       })
       .partial()
       .strict()
@@ -371,7 +392,17 @@ export const chatPackOverrideSchema = z
       .strict()
       .optional(),
     composer: z.object({ css: selectors, post: regex }).partial().strict().optional(),
-    timing: z.object({ pollMs: int(500, 10_000), tabRetryMs: int(3_000, 120_000), backoffMaxMs: int(1_000, 60_000) }).partial().strict().optional(),
+    timing: z
+      .object({
+        pollMs: int(500, 10_000),
+        tabRetryMs: int(3_000, 120_000),
+        backoffMaxMs: int(1_000, 60_000),
+        backlogAsHistory: z.boolean(),
+        liveStartGraceMs: int(0, 600_000),
+      })
+      .partial()
+      .strict()
+      .optional(),
     limits: z.object({ maxRows: int(20, 500), history: int(50, 2_000) }).partial().strict().optional(),
   })
   .strict();
@@ -427,6 +458,23 @@ export function mergeChatPack(override: ChatPackOverride | null, base: IgChatPac
     }
   }
   return pack;
+}
+
+/**
+ * True when every setting of `override` equals the built-in one: it changes nothing but the
+ * version label. What a live-tuning override becomes once a release ships its values (it keeps
+ * working, and can be deleted).
+ */
+export function overrideIsRedundant(override: ChatPackOverride, base: IgChatPack = BUILTIN_CHAT_PACK): boolean {
+  for (const section of SECTIONS) {
+    const patch = override[section];
+    if (!patch) continue;
+    const target = base[section] as Record<string, unknown>;
+    for (const [key, value] of Object.entries(patch)) {
+      if (value !== undefined && JSON.stringify(value) !== JSON.stringify(target[key])) return false;
+    }
+  }
+  return true;
 }
 
 // ---- the active pack ----

@@ -263,6 +263,7 @@ export function createInstagramDriver(opts: InstagramDriverOptions = {}): Platfo
     // Practice test lives: one test comment per live (only the account sees it), once the reader runs.
     const chatTest = { comment: testMode && options.audience === 'practice' ? TEST_COMMENT : null, posted: false };
     // What the comments reader remembers for this live, kept across restarts of the chat source.
+    // When the live started is set in confirm(): until then it counts as unknown (no grace).
     const chatMemory = newChatMemory();
     let ending: Promise<void> | null = null;
     return {
@@ -281,6 +282,8 @@ export function createInstagramDriver(opts: InstagramDriverOptions = {}): Platfo
           throw toDriverError(err, 'Instagram automation failed', signal); // the runner prefixes "Couldn't go live"
         }
         marks.liveAt = now();
+        // The comments reader's clock: a live this young has no comments from before the reader started.
+        chatMemory.liveStartedAt = Date.now();
         if (await visibleNow(sel.endLiveButton(page))) marks.sawLive = true;
         log.info({ audience: options.audience }, 'Instagram live started');
         await addLinkAfterGoLive(parts, signal, started);

@@ -12,4 +12,5 @@ the chat reader live"), which carries structure only.
 |---|---|
 | `comments-panel.html` | A labelled "Comments" tab panel: avatars with `…'s profile picture` alts, mentions, emoji, a pinned copy, system notices, join lines, labels such as "Reply" and "2m". The built-in pack reads it. |
 | `comments-obfuscated.html` | A page after a redesign: hashed class names, no tab panel or labels, a different avatar alt, comment ids in a data attribute. The built-in pack finds nothing; `pack-obfuscated.json` reads it. |
+| `comments-footer-composer.html` | The layout met in a live run (November 2026), rebuilt from the sanitised debug capture's sizes: a 400x600 box holding a tab list (tabs that do not say which is selected), a section of comment rows and a 76 px footer with the comment box four parents down. No tab panel, no labels. `builtin-2` stopped at the footer and read nothing; `builtin-3` reads it. |
 | `pack-obfuscated.json` | The selector pack override for `comments-obfuscated.html` (an example of live tuning). |

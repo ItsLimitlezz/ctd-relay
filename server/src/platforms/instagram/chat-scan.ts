@@ -41,7 +41,8 @@ export interface ScanResult {
   doc: string;
   /** document.readyState is 'complete'. */
   ready: boolean;
-  container: { strategy: ContainerStrategy; tag: string; role: string | null } | null;
+  /** `n`: number of the container's element in this document (like ScanRow.n). */
+  container: { strategy: ContainerStrategy; tag: string; role: string | null; n: number } | null;
   rows: ScanRow[];
   /** Rows left out because there were more than limits.maxRows. */
   truncated: number;
@@ -121,7 +122,9 @@ const PAGE_HELPERS = String.raw`
  * Container (kept while it is visible and has rows; looked for again otherwise): the pack's
  * explicit selector, a tabpanel labelled "Comments", any element so labelled, the area around the
  * comment box, the area around a "Comments" heading. The first two are exact; of the others, one
- * with rows wins over an earlier one without.
+ * with rows wins over an earlier one without. Around the comment box the reader climbs to the
+ * first parent that is tall enough; when that box holds no rows and a parent further up (within the
+ * climb, about as wide) holds avatar rows, that parent is the container (`climbPreferRows`).
  *
  * Rows: the pack's explicit selector, else the smallest ancestor of one avatar that also holds
  * text besides the username, plus list items without an avatar. A row never contains the comment
@@ -150,14 +153,26 @@ ${PAGE_HELPERS}
   }
 
   const ORDER = ['css', 'tabpanel', 'label', 'composer', 'heading'];
-  const climb = (el) => {
+  // The parents of el, nearest first: at most climbLevels of them, never the body.
+  const climbPath = (el) => {
+    const path = [];
     let node = el;
     for (let i = 0; i < P.container.climbLevels && node.parentElement && node.parentElement !== document.body; i++) {
       node = node.parentElement;
-      if (node.getBoundingClientRect().height >= P.container.climbMinHeight) return node;
+      path.push(node);
     }
-    return node;
+    return path;
   };
+  const tall = (el) => el.getBoundingClientRect().height >= P.container.climbMinHeight;
+  // The first parent that is tall enough, else the last one reached.
+  const climb = (el) => {
+    const path = climbPath(el);
+    return path.find(tall) || path[path.length - 1] || el;
+  };
+  // climbPreferRows: a parent further up is in the same column while it is at most this much wider,
+  // and it needs this many rows (one avatar next to some text is also what a page header looks like).
+  const SAME_COLUMN = 1.5;
+  const MIN_ROWS_FURTHER_UP = 2;
   const FIND = {
     css: () => qsa(document, P.container.css, 'container.css').find(visible) || null,
     tabpanel: () => {
@@ -180,7 +195,20 @@ ${PAGE_HELPERS}
     composer: () => {
       for (const box of qsa(document, P.container.composerCss, 'container.composerCss')) {
         const hint = (box.getAttribute('placeholder') || box.getAttribute('aria-label') || '').trim();
-        if (visible(box) && test(RX.composerHint, hint)) return climb(box);
+        if (!visible(box) || !test(RX.composerHint, hint)) continue;
+        const path = climbPath(box);
+        const at = path.findIndex(tall);
+        const base = at >= 0 ? path[at] : path[path.length - 1] || box;
+        if (!P.container.climbPreferRows || at < 0 || sureRows(base) > 0) return base;
+        // The box the climb stopped at holds no comment row. It may be the empty panel, or a tall
+        // box around the comment box only (the panel is further up). Take a parent that holds
+        // comment rows, but only a near one: within the climb, in the same column, with enough rows.
+        const limit = base.getBoundingClientRect().width * SAME_COLUMN;
+        for (let i = at + 1; i < path.length; i++) {
+          if (path[i].getBoundingClientRect().width > limit) break;
+          if (sureRows(path[i]) >= MIN_ROWS_FURTHER_UP) return path[i];
+        }
+        return base;
       }
       return null;
     },
@@ -227,6 +255,15 @@ ${PAGE_HELPERS}
     // Of two nested rows only the inner one is a row.
     return list.filter((el, i) => !(i + 1 < list.length && el.contains(list[i + 1])));
   };
+  // One search per element and read: looking for the container asks for the same rows more than once.
+  const rowsFound = new Map();
+  const rowsIn = (el) => {
+    let list = rowsFound.get(el);
+    if (!list) { list = rowsOf(el); rowsFound.set(el, list); }
+    return list;
+  };
+  // Rows that say "comment" on their own: around an avatar, or matched by the pack's row selector.
+  const sureRows = (el) => rowsIn(el).filter((r) => P.row.css.length > 0 || qsa(r, P.row.avatarCss, 'row.avatarCss').length > 0).length;
 
   // The explicit selector and a labelled tab panel are exact: the first of them that hits is the
   // container, with or without rows. The other strategies are guesses: one that has rows is
@@ -236,7 +273,7 @@ ${PAGE_HELPERS}
     for (const name of ORDER) {
       const el = FIND[name]();
       if (!el) continue;
-      const found = { name: name, el: el, rows: rowsOf(el) };
+      const found = { name: name, el: el, rows: rowsIn(el) };
       if (found.rows.length > 0 || name === 'css' || name === 'tabpanel') return first && found.rows.length === 0 ? first : found;
       if (!first) first = found;
     }
@@ -381,10 +418,14 @@ ${PAGE_HELPERS}
     });
   };
 
-  const out = [];
-  for (const el of rows) {
+  const numberOf = (el) => {
     let n = st.ids.get(el);
     if (!n) { n = st.next++; st.ids.set(el, n); }
+    return n;
+  };
+  const out = [];
+  for (const el of rows) {
+    const n = numberOf(el);
     const content = String(el.textContent || '');
     const sig = content.length + ':' + el.getElementsByTagName('img').length + ':' + content;
     let cached = st.cache.get(el);
@@ -403,7 +444,7 @@ ${PAGE_HELPERS}
   return {
     doc: st.doc,
     ready: document.readyState === 'complete',
-    container: container ? { strategy: strategy, tag: container.tagName.toLowerCase(), role: container.getAttribute('role') } : null,
+    container: container ? { strategy: strategy, tag: container.tagName.toLowerCase(), role: container.getAttribute('role'), n: numberOf(container) } : null,
     rows: out,
     truncated: truncated,
     bad: Array.from(st.bad).slice(0, 40),
@@ -694,9 +735,9 @@ export type DecisionReason =
   | 'new'
   /** Delivered: a row elsewhere in the list whose content was never delivered. */
   | 'late'
-  /** Not delivered: already on screen when the reader started. */
+  /** Not delivered: already on screen when the reader first read the comments of this live. */
   | 'baseline'
-  /** Not delivered: the first read under a changed selector pack. */
+  /** Not delivered: on screen at the first read with rows under a changed selector pack. */
   | 'pack-changed'
   /** Not delivered: a re-created row of a comment that was already delivered. */
   | 'rerender'
@@ -738,6 +779,20 @@ export interface ChatMemory {
   firstScanAt: number | null;
   /** Pack revision the rows were last parsed with. */
   packRevision: number | null;
+  /** When the live went live (ms), when the driver knows it: a live this young has no backlog. */
+  liveStartedAt: number | null;
+  /**
+   * Set while the reader has not read a single row since it started ('start') or since the selector
+   * pack changed ('pack': the old pack read nothing; 'pack-reading': it was reading). The rows of
+   * the first read that has some are the backlog. Cleared by that read, or once the panel has been
+   * seen empty for EMPTY_SETTLE_MS (then there is no backlog, and what shows up later is new).
+   */
+  pending: 'start' | 'pack' | 'pack-reading' | null;
+  /** The container seen without rows while `pending`, and since when (ms). */
+  emptyContainer: number | null;
+  emptySince: number | null;
+  /** Rows taken as history instead of delivered (the baseline and backlogs), in total. */
+  backlog: number;
   /** Element number → the key last accounted for (this document only). */
   elements: Map<number, string>;
   /** Keys of the rows accounted for (delivered or baseline), oldest first. */
@@ -753,8 +808,28 @@ export interface ChatMemory {
   dropped: number;
 }
 
-export function newChatMemory(): ChatMemory {
-  return { stateKey: `__ctdIgChat_${randomBytes(6).toString('hex')}`, doc: null, baselined: false, firstScanAt: null, packRevision: null, elements: new Map(), history: [], ids: new Set(), tailNew: 0, headNew: 0, lastRows: 0, decisions: [], kept: 0, dropped: 0 };
+export function newChatMemory(liveStartedAt: number | null = null): ChatMemory {
+  return {
+    stateKey: `__ctdIgChat_${randomBytes(6).toString('hex')}`,
+    doc: null,
+    baselined: false,
+    firstScanAt: null,
+    packRevision: null,
+    liveStartedAt,
+    pending: null,
+    emptyContainer: null,
+    emptySince: null,
+    backlog: 0,
+    elements: new Map(),
+    history: [],
+    ids: new Set(),
+    tailNew: 0,
+    headNew: 0,
+    lastRows: 0,
+    decisions: [],
+    kept: 0,
+    dropped: 0,
+  };
 }
 
 /** Rows are newest-first when the evidence clearly says so. */
@@ -795,10 +870,17 @@ export interface ReconcileOptions {
   packRevision: number;
   historySize: number;
   now?: Date;
+  /** Pack setting timing.backlogAsHistory (default on). */
+  backlogAsHistory?: boolean;
+  /** Pack setting timing.liveStartGraceMs. */
+  liveStartGraceMs?: number;
 }
 
 /** Longest wait for a still-loading page before an empty first read is taken as "no comments yet". */
 export const MAX_SETTLE_MS = 10_000;
+/** A comments panel seen without rows for this long is empty: there is no backlog to wait for. */
+export const EMPTY_SETTLE_MS = 5_000;
+export const DEFAULT_LIVE_START_GRACE_MS = 60_000;
 /** With nothing lining up, repeats are only counted against this many recent comments (at least). */
 const RECENT_WINDOW = 50;
 
@@ -806,11 +888,15 @@ const RECENT_WINDOW = 50;
  * Decide which rows of one scan are new comments, and remember them. Returns the rows to deliver,
  * oldest first.
  *
- * - The rows on screen at the first read are the baseline (not delivered), as are the rows of the
- *   first read after the selector pack changed (their text may be parsed differently now), unless
- *   the old pack could not read any row. A first
- *   read without rows is an empty baseline, also when the comments panel is not open yet: comments
- *   that show up when it opens later were never delivered, so they are new.
+ * - The comments on screen when the reader first gets to read them are history (remembered, not
+ *   delivered): at the first read of a live, at the first read with rows after the selector pack
+ *   changed, and when the panel only becomes readable later (the tab was closed, the page was still
+ *   rendering). Two exceptions. A live younger than `liveStartGraceMs` has no history, so what is
+ *   on screen is new and is delivered. And a panel that was seen empty for EMPTY_SETTLE_MS had no
+ *   backlog: what shows up in it later is new.
+ * - With `backlogAsHistory` off (how 0.2.30 worked): only the rows of the first read are the
+ *   baseline, and those of the first read after a pack change when the old pack was reading. Rows
+ *   that become readable later are delivered at once.
  * - An element seen before with the same content is never delivered again.
  * - With some known rows on screen: a new row past the newest known one is new. A new row among or
  *   before the known ones is a re-created row when its content was delivered before, else a late one.
@@ -867,32 +953,66 @@ export function reconcile(memory: ChatMemory, scan: ScanResult, opts: ReconcileO
     }
   }
 
-  // A changed pack may parse the rows on screen differently, so they become a new baseline rather
-  // than new comments. Not when the old pack read nothing: then the new pack is the fix, and what
-  // it finds was never delivered (the history still keeps a re-mounted list from repeating).
+  const nowMs = now.getTime();
+  const guard = opts.backlogAsHistory ?? true;
+  const age = memory.liveStartedAt === null ? null : nowMs - memory.liveStartedAt;
+  const young = age !== null && age >= 0 && age < (opts.liveStartGraceMs ?? DEFAULT_LIVE_START_GRACE_MS);
   const blind = memory.lastRows === 0;
   memory.lastRows = rows.length;
-  if (memory.baselined && memory.packRevision !== opts.packRevision && blind) memory.packRevision = opts.packRevision;
-  const rebaseline = !memory.baselined || memory.packRevision !== opts.packRevision;
-  if (rebaseline) {
-    if (!memory.baselined) {
-      // Nothing to read in a page that is still loading: the existing comments may not have
-      // rendered yet, and an empty baseline now would deliver them all as new. Wait (bounded).
-      memory.firstScanAt ??= now.getTime();
-      if (rows.length === 0 && !scan.ready && now.getTime() - memory.firstScanAt < MAX_SETTLE_MS) return [];
-    }
-    const reason: DecisionReason = memory.baselined ? 'pack-changed' : 'baseline';
-    for (const row of rows) {
-      const key = rowKey(row);
-      if (memory.elements.get(row.n) === key) continue;
-      memory.elements.set(row.n, key);
-      remember(row, key);
-      decide(row, 'dropped', reason);
-    }
+
+  let first = false;
+  if (!memory.baselined) {
+    // Nothing to read in a page that is still loading: the existing comments may not have
+    // rendered yet, and an empty baseline now would deliver them all as new. Wait (bounded).
+    memory.firstScanAt ??= nowMs;
+    if (rows.length === 0 && !scan.ready && nowMs - memory.firstScanAt < MAX_SETTLE_MS) return [];
     memory.baselined = true;
     memory.packRevision = opts.packRevision;
-    trim(memory, opts.historySize);
-    return [];
+    memory.pending = 'start';
+    memory.emptyContainer = null;
+    memory.emptySince = null;
+    first = true;
+  } else if (memory.packRevision !== opts.packRevision) {
+    // A changed pack may parse the rows on screen differently, and may be the first one that can
+    // read them at all.
+    memory.packRevision = opts.packRevision;
+    memory.pending = blind ? 'pack' : 'pack-reading';
+    memory.emptyContainer = null;
+    memory.emptySince = null;
+  }
+
+  if (memory.pending) {
+    if (rows.length === 0) {
+      // No rows yet. A panel that stays empty has no backlog; a "Comments" heading without rows is
+      // only a guess that the panel exists, and no container means it is not showing.
+      const panel = scan.container && scan.container.strategy !== 'heading' ? scan.container.n : null;
+      if (panel === null || panel !== memory.emptyContainer) {
+        memory.emptyContainer = panel;
+        memory.emptySince = panel === null ? null : nowMs;
+      } else if (memory.emptySince !== null && nowMs - memory.emptySince >= EMPTY_SETTLE_MS) {
+        memory.pending = null;
+      }
+      trim(memory, opts.historySize);
+      return [];
+    }
+    const kind = memory.pending;
+    memory.pending = null;
+    // The first rows this reader gets to see. History, unless the live is too young to have one;
+    // rows the old pack was already delivering are always history (they may parse differently now).
+    const asHistory = first ? !(guard && young) : kind === 'pack-reading' ? true : guard && !young;
+    if (asHistory) {
+      const reason: DecisionReason = kind === 'start' ? 'baseline' : 'pack-changed';
+      for (const row of rows) {
+        const key = rowKey(row);
+        if (memory.elements.get(row.n) === key) continue;
+        memory.elements.set(row.n, key);
+        remember(row, key);
+        decide(row, 'dropped', reason);
+        memory.backlog++;
+      }
+      trim(memory, opts.historySize);
+      return [];
+    }
   }
 
   const keys = rows.map(rowKey);

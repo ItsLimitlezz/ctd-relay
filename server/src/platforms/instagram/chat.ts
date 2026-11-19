@@ -10,7 +10,7 @@ import type { Logger } from 'pino';
 import type { Page } from 'playwright';
 import { abortable, fillField, humanPause, withTimeout } from '../../browser/helpers.js';
 import { DriverError, type ChatMessageInput } from '../types.js';
-import { chatPackStore, type IgChatPack } from './chat-pack.js';
+import { chatPackStore, overrideIsRedundant, type IgChatPack } from './chat-pack.js';
 import {
   newChatMemory,
   newestFirst,
@@ -84,6 +84,8 @@ export interface ReaderStatus {
   tabClicks: number;
   kept: number;
   dropped: number;
+  /** Comments that were already on screen when the reader first read them: history, not delivered. */
+  backlog: number;
   newestFirst: boolean;
 }
 
@@ -201,10 +203,18 @@ export async function* instagramChat(
     tabClicks: 0,
     kept: memory.kept,
     dropped: memory.dropped,
+    backlog: memory.backlog,
     newestFirst: newestFirst(memory),
   };
   const reader: ActiveReader = { page, memory, status };
   readers.add(reader);
+  const stored = chatPackStore.state();
+  if (stored.override && overrideIsRedundant(stored.override)) {
+    log.info(
+      { version: pack.version, builtin: stored.builtinVersion },
+      'Instagram chat reader: the stored selector pack override only repeats built-in values; it can be deleted (Settings → Advanced → Revert to built-in)',
+    );
+  }
   let read = 0;
   const tester = runChatTest(page, test, ctl.signal, log, () => read, () => ({ ...status }));
   try {
@@ -262,9 +272,20 @@ export async function* instagramChat(
           if (scan.container.strategy !== 'heading') blindLeft = MAX_BLIND_TAB_CLICKS;
         }
         if (scan.rows.length > 0) sawRows = true;
-        const fresh = reconcile(memory, scan, { packRevision: revision, historySize: pack.limits.history });
+        const backlogBefore = memory.backlog;
+        const fresh = reconcile(memory, scan, {
+          packRevision: revision,
+          historySize: pack.limits.history,
+          backlogAsHistory: pack.timing.backlogAsHistory,
+          liveStartGraceMs: pack.timing.liveStartGraceMs,
+        });
+        if (memory.backlog > backlogBefore) {
+          // Counts only. They were written before the reader could read them, so they are not sent out as new.
+          log.info({ rows: memory.backlog - backlogBefore, version: pack.version }, 'Instagram chat reader: comments already on screen taken as history (not delivered)');
+        }
         status.kept = memory.kept;
         status.dropped = memory.dropped;
+        status.backlog = memory.backlog;
         status.newestFirst = newestFirst(memory);
         for (const row of fresh) {
           if (ctl.signal.aborted) break;
