@@ -523,6 +523,8 @@ ${PAGE_HELPERS}
     'aria-multiline', 'aria-orientation', 'aria-pressed', 'aria-busy', 'aria-current', 'aria-level']);
   const LABELS = new Set(['alt', 'aria-label', 'placeholder', 'title', 'aria-placeholder', 'aria-description', 'aria-roledescription', 'aria-valuetext']);
   const SAFE_VALUE = /^[a-z0-9_-]{0,24}$/i;
+  // In "name:rest" the name is only a scheme when it is one of these; anything else could be a word someone wrote.
+  const SCHEMES = new Set(['http', 'https', 'data', 'blob', 'about', 'javascript', 'mailto', 'tel', 'sms', 'intent', 'instagram']);
   const interfaceWords = (v) => {
     const words = v.toLowerCase().split(/[^\p{L}\p{N}]+/u).filter(Boolean);
     return v.length <= 60 && words.length > 0 && words.every((x) => VOCAB.has(x));
@@ -533,7 +535,7 @@ ${PAGE_HELPERS}
     if (v === 'true' || v === 'false') return v;
     if (name === 'href' || name === 'src' || name === 'srcset' || name === 'poster' || name === 'action') {
       const m = /^([a-z][a-z0-9+.-]*):/i.exec(v);
-      if (m) return m[1].toLowerCase();
+      if (m) return SCHEMES.has(m[1].toLowerCase()) ? m[1].toLowerCase() : 'scheme';
       if (v[0] === '#') return 'hash';
       if (v[0] === '/') return 'path/' + v.split('?')[0].split('/').filter(Boolean).length;
       return 'relative';
@@ -674,7 +676,7 @@ ${PAGE_HELPERS}
 
   return {
     page: { host: location.host, pathSegments: location.pathname.split('/').filter(Boolean).length, ready: document.readyState === 'complete', title: document.title.length },
-    container: container ? { strategy: container.getAttribute(CATTR) || null, tag: container.tagName.toLowerCase(), role: container.getAttribute('role'), box: box(container), rows: container.querySelectorAll('[' + RATTR + ']').length } : null,
+    container: container ? { strategy: container.getAttribute(CATTR) || null, tag: container.tagName.toLowerCase(), role: SAFE_VALUE.test(container.getAttribute('role') || '') ? container.getAttribute('role') : null, box: box(container), rows: container.querySelectorAll('[' + RATTR + ']').length } : null,
     root: rootKind,
     tree: tree,
     nodes: nodes,

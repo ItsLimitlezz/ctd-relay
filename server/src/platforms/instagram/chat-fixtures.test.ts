@@ -306,6 +306,21 @@ describe.skipIf(!!process.env.CI_NO_BROWSER)('instagram chat reader (Chromium + 
       expect(snap.bad).toEqual([]);
     });
 
+    it('never passes on a made-up link scheme or a role that is not a plain word', async () => {
+      await page.goto(`${ORIGIN}/panel`);
+      await scanOnce(page);
+      await page.evaluate(`(() => {
+        const c = document.querySelector('[data-ctd-ig-comments]');
+        c.setAttribute('role', 'fixture_user_b said hi');
+        c.querySelector('a').setAttribute('href', 'someviewer:secret');
+      })()`);
+      const snap = await snapshot(page);
+      const json = JSON.stringify(snap);
+      for (const secret of [...PRIVATE, 'someviewer', 'said hi']) expect(json, secret).not.toContain(secret);
+      expect(snap.container!.role).toBeNull();
+      expect([...nodesOf(snap.tree!)].find((n) => n.tag === 'a')!.data).toEqual({ href: 'scheme' });
+    });
+
     it('shows a page the reader cannot read: masked labels, attribute names, selector counts of zero', async () => {
       await page.goto(`${ORIGIN}/obfuscated`);
       await scanOnce(page);
