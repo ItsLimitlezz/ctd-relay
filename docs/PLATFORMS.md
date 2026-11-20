@@ -75,12 +75,13 @@ Sending HEVC or AV1 on to platforms that accept it (Enhanced RTMP) and convertin
 
 ### Connect
 
-**Accounts → Add account → Twitch → Connect.** The app shows a code. Open [twitch.tv/activate](https://www.twitch.tv/activate), enter it and approve. The app asks for permission to edit your broadcast (title), read your stream key and read your followers (for follow alerts).
+**Accounts → Add account → Twitch → Connect.** The app shows a code. Open [twitch.tv/activate](https://www.twitch.tv/activate), enter it and approve. The app asks for permission to edit your broadcast (title), read your stream key, read your followers (for follow alerts) and read the chatters list (for watch time in [stream reports](REPORTS.md)).
 
 ### Notes
 
 - **Alerts:** subs, gifted subs, Bits and raids come from chat; **follows** come from Twitch EventSub while the destination is live. An account connected before follow alerts existed shows "Reconnect this account to turn on follow alerts": click **Connect** on it once.
 - **Dual Format** modes per destination: "Relay one feed" (default), "OBS sends Dual Format directly", or "Relay both feeds as Dual Format": the app encodes the tracks Twitch's Enhanced Broadcasting asks for (two per feed) on the server and publishes them with the required performance metrics. See [OBS setup](OBS-SETUP.md#twitch-dual-format).
+- **Watch time in reports** comes from Twitch's chatters list (`moderator:read:chatters`), read every 5 minutes while live. Accounts connected before stream reports existed don't have that permission: reports show "No watch time" until you click **Connect** on the account once.
 - **Bandwidth test** (destination option) streams to Twitch without going live publicly, which is handy for testing.
 - Twitch expires the sign-in of a public-client app after about 30 days without use. If you haven't streamed for a month, the account may ask you to connect again.
 

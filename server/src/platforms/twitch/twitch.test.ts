@@ -242,7 +242,7 @@ describe('connect', () => {
       expiresIn: 1800,
       interval: 5,
     });
-    expect(form(calls[0]!)).toEqual({ client_id: 'cid123', scopes: 'channel:manage:broadcast channel:read:stream_key moderator:read:followers' });
+    expect(form(calls[0]!)).toEqual({ client_id: 'cid123', scopes: 'channel:manage:broadcast channel:read:stream_key moderator:read:followers moderator:read:chatters' });
     const state = JSON.parse(secrets.data.get('device')!);
     expect(state).toMatchObject({ deviceCode: 'dev-code', clientId: 'cid123', interval: 5 });
   });
@@ -282,7 +282,7 @@ describe('connect', () => {
       client_id: 'cid123',
       device_code: 'dev-code',
       grant_type: 'urn:ietf:params:oauth:grant-type:device_code',
-      scopes: 'channel:manage:broadcast channel:read:stream_key moderator:read:followers',
+      scopes: 'channel:manage:broadcast channel:read:stream_key moderator:read:followers moderator:read:chatters',
     });
     expect(secrets.data.has('device')).toBe(true);
   });

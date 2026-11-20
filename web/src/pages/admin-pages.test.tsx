@@ -426,7 +426,7 @@ describe('Settings → API (static render)', () => {
 
   it('new token form: name, profile and a checkbox per scope (read-only basics checked)', () => {
     const out = html(<NewTokenForm onCreated={noop} onCancel={noop} />);
-    expect(out.match(/type="checkbox"/g)).toHaveLength(11);
+    expect(out.match(/type="checkbox"/g)).toHaveLength(12);
     // Only chat:read and status:read start checked; stream keys, the hub, OBS access and the operator tools are opt-in.
     expect(out.match(/type="checkbox" checked=""/g)).toHaveLength(2);
     for (const s of ['chat:read', 'status:read', 'ingest:read', 'apps:read', 'apps:write', 'obs:write', 'obs:control', 'show:read', 'show:write', 'show:secrets', 'system:admin']) {
@@ -482,7 +482,7 @@ describe('Settings → API (static render)', () => {
     expect(out.match(/requested/g)?.length).toBeGreaterThanOrEqual(3);
     expect(out).toContain('read the OBS stream keys of every profile');
     // Operator tools are never offered when approving a code: one checkbox fewer than a new token has.
-    expect(out.match(/type="checkbox"/g)).toHaveLength(10);
+    expect(out.match(/type="checkbox"/g)).toHaveLength(11);
     expect(out).not.toContain('system:admin');
   });
 
