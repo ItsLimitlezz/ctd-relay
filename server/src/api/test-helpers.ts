@@ -43,6 +43,7 @@ import { lanHttpPlugin } from './lan.js';
 import { createPairingService, type PairingServiceHandle } from './pairing.js';
 import { isDown } from './status.js';
 import type { PreviewService } from './previews.js';
+import type { LivePreviewService } from '../media/live-preview.js';
 import v1Routes, { API_PREFIX } from './v1.js';
 
 export function dest(id: string, over: Partial<Destination> = {}): Destination {
@@ -242,7 +243,14 @@ export interface TestApi {
 }
 
 export async function createTestApi(
-  opts: { tlsMode?: AppConfig['tlsMode']; heartbeatMs?: number; now?: () => number; previews?: PreviewService; blobLimits?: () => BlobLimits } = {},
+  opts: {
+    tlsMode?: AppConfig['tlsMode'];
+    heartbeatMs?: number;
+    now?: () => number;
+    previews?: PreviewService;
+    live?: LivePreviewService;
+    blobLimits?: () => BlobLimits;
+  } = {},
 ): Promise<TestApi> {
   const now = opts.now ?? Date.now;
   const secretBox = createSecretBox(crypto.randomBytes(32));
@@ -318,6 +326,7 @@ export async function createTestApi(
     ...(opts.heartbeatMs ? { heartbeatMs: opts.heartbeatMs } : {}),
     ...(opts.now ? { now: opts.now } : {}),
     ...(opts.previews ? { previews: opts.previews } : {}),
+    ...(opts.live ? { live: opts.live } : {}),
   });
   await app.register(dockRoutes, { services });
   await app.ready();
