@@ -6,7 +6,7 @@ import pino from 'pino';
 import type { ChatMessage, DestinationPhase, DestinationState, Feed, FeedState, PlatformId, SessionState } from '../../../shared/types.js';
 import { openDatabase, type Db } from '../db/database.js';
 import { createRepos } from '../db/repos.js';
-import { EventBus } from '../events.js';
+import { EventBus, type AppEvents } from '../events.js';
 import { createSecretBox } from '../security/secretbox.js';
 import type { AppServices, Repos } from '../services.js';
 import { createReportsService, type ReportsService } from './index.js';
@@ -52,6 +52,11 @@ export function createRig(opts: { presence?: PresenceProvider | null; db?: Db } 
     },
   } as unknown as Pick<AppServices, 'bus' | 'log' | 'repos' | 'orchestrators' | 'driverContext'>;
   const reports = createReportsService(services, db, { presence: opts.presence ?? null, now: () => clock.now, timers: false });
+  /** The recorder writes after the event-loop turn; tests read right away, so write now. */
+  const emit = <K extends 'session' | 'destination' | 'feed' | 'chat'>(type: K, ...args: AppEvents[K]) => {
+    bus.emit(type, ...args);
+    reports.recorder.drain();
+  };
   let current: SessionState = { profileId: 'default', status: 'offline', sessionId: null, startedAt: null, title: 'Test stream', autoGoLive: true, feeds: [], destinations: [] };
   let n = 0;
   const rig: Rig = {
@@ -75,7 +80,7 @@ export function createRig(opts: { presence?: PresenceProvider | null; db?: Db } 
     },
     session(patch = {}) {
       current = { ...current, ...patch };
-      bus.emit('session', current);
+      emit('session', current);
       return current;
     },
     startSession(id = 'sess-1', extra = {}) {
@@ -85,7 +90,7 @@ export function createRig(opts: { presence?: PresenceProvider | null; db?: Db } 
       rig.session({ status: 'offline', sessionId: null, startedAt: null });
     },
     dest(id, phase, extra = {}) {
-      bus.emit('destination', {
+      emit('destination', {
         destinationId: id,
         profileId: 'default',
         phase,
@@ -100,7 +105,7 @@ export function createRig(opts: { presence?: PresenceProvider | null; db?: Db } 
       });
     },
     feed(feed, online, extra = {}) {
-      bus.emit('feed', {
+      emit('feed', {
         profileId: 'default',
         feed,
         online,
@@ -113,7 +118,7 @@ export function createRig(opts: { presence?: PresenceProvider | null; db?: Db } 
     },
     chat(platform, destinationId, author, extra = {}) {
       n++;
-      bus.emit('chat', {
+      emit('chat', {
         id: `m${n}`,
         platform,
         destinationId,

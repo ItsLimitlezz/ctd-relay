@@ -8,6 +8,7 @@ import { MIGRATIONS, migrate, openDatabase, schemaVersion } from '../db/database
 import { collect, renderExport, tables, toCsv, wallClock } from './export.js';
 import { HOLD_MS, seriesStats, stepSeries, sumSeries, unionMs, valueAt } from './math.js';
 import { PRESENCE_MAX_CREDIT_SEC, PRESENCE_SAMPLE_MS, VIEWER_SAMPLE_MS, othersCount } from './recorder.js';
+import { normalizeChatMessage } from '../chat/normalize.js';
 import { leaderboard, listSessions, rangeSummary, sessionDetail, userDetail } from './report.js';
 import { REPORT_MIGRATIONS, migrateReports, reportSchemaVersion } from './schema.js';
 import { createRig, T0, type Rig } from './test-helpers.js';
@@ -51,7 +52,7 @@ describe('report tables (schema.ts)', () => {
     const rig = createRig({ db: openDatabase(file) });
     rig.startSession('old-check');
     rig.db.close();
-    // What 0.2.30 does at start-up: open + migrate with its own list. It must not refuse the file.
+    // What 0.2.40 does at start-up: open + migrate with its own list. It must not refuse the file.
     const old = new DatabaseSync(file);
     expect(() => migrate(old, MIGRATIONS)).not.toThrow();
     expect(schemaVersion(old)).toBe(MIGRATIONS.length);
@@ -188,7 +189,7 @@ describe('recording', () => {
     rig.chat('twitch', tw, { name: 'Viewer A', id: '11' });
     rig.chat('twitch', tw, { name: 'Viewer A', id: '11' });
     rig.chat('twitch', tw, { name: 'Viewer B', id: '12' });
-    rig.chat('instagram', ig, { name: 'fan_one' }, { kind: 'event', join: true, text: 'fan_one and 3 others joined', othersCount: 3 } as never);
+    rig.chat('instagram', ig, { name: 'fan_one' }, { kind: 'event', join: true, text: 'fan_one and 3 others joined', othersCount: 3 });
     rig.clock.advance(MIN);
     rig.chat('twitch', tw, { name: 'Viewer B', id: '12' });
     rig.reports.recorder.tick();
@@ -481,6 +482,192 @@ describe('report math over a recorded stream', () => {
     const t = Date.parse('2026-07-01T12:00:00.000Z');
     expect(new Date(wallClock(t, 'America/New_York')).toISOString()).toBe('2026-07-01T08:00:00.000Z');
     expect(wallClock(t, 'UTC')).toBe(t);
+  });
+});
+
+describe('SR check 0.2.50: live path, privacy, scale', () => {
+  it('chat costs no database write in the emitter: people and counts are written with the tick', () => {
+    const rig = createRig();
+    const { tw } = liveStream(rig);
+    const calls: string[] = [];
+    const store = rig.reports.store as unknown as Record<string, (...a: unknown[]) => unknown>;
+    for (const k of ['addAudience', 'audienceActivity', 'addChatMinute', 'addChatTotals', 'addEvent', 'addViewerSample', 'markAudience']) {
+      const orig = store[k]!.bind(store);
+      store[k] = (...a: unknown[]) => {
+        calls.push(k);
+        return orig(...a);
+      };
+    }
+    // Straight on the bus (the rig's helper would write right away).
+    for (let i = 0; i < 500; i++) {
+      rig.bus.emit('chat', { id: `b${i}`, platform: 'twitch', destinationId: tw, profileId: 'default', author: { name: `Viewer ${i % 50}`, id: String(i % 50) }, text: 'x', ts: '', kind: 'message' });
+    }
+    rig.bus.emit('destination', { destinationId: tw, profileId: 'default', phase: 'live', message: null, stats: null, watchUrl: null, retries: 0, since: '', recoveries: 0, lastRecovery: null, viewers: 99 });
+    expect(calls).toEqual([]);
+    rig.reports.recorder.tick();
+    // One batch: the 50 people in one addAudience call, the chat minute and totals once.
+    expect(calls.filter((c) => c === 'addAudience')).toHaveLength(1);
+    expect(calls.filter((c) => c === 'addChatMinute')).toHaveLength(1);
+    expect(calls).not.toContain('audienceActivity');
+    expect(rig.reports.store.audienceStreams(['s1']).filter((r) => r.platform === 'twitch')).toHaveLength(50);
+    expect(rig.reports.store.chatTotals(['s1']).find((t) => t.platform === 'twitch')).toMatchObject({ messages: 500, uniqueChatters: 50 });
+    expect(rig.reports.store.viewerSamples(['s1']).some((x) => x.destinationId === tw && x.viewers === 99)).toBe(true);
+  });
+
+  it('queued writes land after the event-loop turn without a tick', async () => {
+    const rig = createRig();
+    const tw = rig.destination('twitch');
+    rig.bus.emit('session', { profileId: 'default', status: 'live', sessionId: 'q1', startedAt: iso(rig.clock.now), title: 'Queued', autoGoLive: true, feeds: [], destinations: [] });
+    rig.bus.emit('destination', { destinationId: tw, profileId: 'default', phase: 'live', message: null, stats: null, watchUrl: null, retries: 0, since: '', recoveries: 0, lastRecovery: null, viewers: 5 });
+    expect(rig.db.prepare("SELECT COUNT(*) AS c FROM report_sessions WHERE id = 'q1'").get()).toEqual({ c: 0 });
+    await new Promise((r) => setImmediate(r));
+    expect(rig.reports.store.getSession('q1')).not.toBeNull();
+    expect(rig.reports.store.viewerSamples(['q1']).map((x) => x.viewers)).toEqual([5]);
+  });
+
+  it('a failing write is skipped; the rest of the batch is kept and streaming is not affected', () => {
+    const rig = createRig();
+    const { tw } = liveStream(rig);
+    const store = rig.reports.store as unknown as Record<string, (...a: unknown[]) => unknown>;
+    store.addEvent = () => {
+      throw new Error('disk full');
+    };
+    rig.dest(tw, 'error', { message: 'boom' });
+    rig.dest(tw, 'live', { viewers: 3 });
+    expect(rig.reports.store.viewerSamples(['s1']).some((x) => x.destinationId === tw && x.viewers === 3)).toBe(true);
+  });
+
+  it('Instagram "<name> and N others joined" from the chat normaliser: the named user is a join, N are anonymous joins', () => {
+    const rig = createRig();
+    rig.startSession('ig1');
+    const ig = rig.destination('instagram', { feed: 'vertical' });
+    rig.dest(ig, 'live', { viewers: 40 });
+    const line = normalizeChatMessage({ author: { name: 'fan_two' }, text: 'fan_two and 12 others joined', kind: 'event', join: true, othersCount: 12 }, 'instagram', ig);
+    expect(line).toMatchObject({ join: true, othersCount: 12 });
+    rig.bus.emit('chat', { ...line!, profileId: 'default' });
+    rig.chat('instagram', ig, { name: 'fan_three' }, { kind: 'event', join: true, text: 'fan_three joined' });
+    rig.stopSession();
+    const totals = rig.reports.store.chatTotals(['ig1'])[0]!;
+    expect(totals).toMatchObject({ platform: 'instagram', joins: 2, anonymousJoins: 12, messages: 0 });
+    expect(rig.reports.store.audienceStreams(['ig1']).map((r) => [r.userId, r.joins])).toEqual(
+      expect.arrayContaining([
+        ['instagram:name:fan_two', 1],
+        ['instagram:name:fan_three', 1],
+      ]),
+    );
+    const d = sessionDetail(rig.reports.context(), 'ig1')!;
+    expect(d.stats.find((x) => x.platform === 'instagram')).toMatchObject({ joins: 2, anonymousJoins: 12 });
+    const bundle = collect(rig.reports.context(), { sessionId: 'ig1' }, 'UTC')!;
+    expect(bundle.anonymousJoins).toEqual([{ sessionId: 'ig1', platform: 'instagram', count: 12 }]);
+  });
+
+  it('forget this user: the name is gone from app.db and its write-ahead log on disk', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ctd-reports-'));
+    dirs.push(dir);
+    const file = path.join(dir, 'app.db');
+    const rig = createRig({ db: openDatabase(file) });
+    const { tw } = liveStream(rig);
+    const name = 'ZqxForgetMeViewer';
+    for (let i = 0; i < 3; i++) rig.chat('twitch', tw, { name, id: '777' });
+    rig.chat('twitch', tw, { name: 'Viewer Kept', id: '778' });
+    rig.reports.recorder.tick();
+    rig.db.prepare('PRAGMA wal_checkpoint(TRUNCATE)').get(); // the name is in app.db itself now
+    const onDisk = () => [file, `${file}-wal`].filter((f) => fs.existsSync(f)).some((f) => fs.readFileSync(f).includes(name));
+    expect(onDisk()).toBe(true);
+    expect(rig.reports.forgetUser('twitch:777')).toBe(true);
+    expect(onDisk()).toBe(false);
+    expect(rig.reports.store.user('twitch:778')).not.toBeNull();
+  });
+
+  it('forget this user during a live: what the recorder holds about them is not written back', async () => {
+    let users = [{ id: '777', login: 'forget_me', name: 'Forget Me' }];
+    const rig = createRig({ presence: async () => ({ ok: true, users }) });
+    const tw = rig.destination('twitch');
+    rig.startSession('f1');
+    rig.dest(tw, 'live');
+    await rig.reports.recorder.presenceTick();
+    rig.chat('twitch', tw, { name: 'Forget Me', id: '777' }); // in memory, not written yet
+    expect(rig.reports.forgetUser('twitch:777')).toBe(true);
+    rig.reports.recorder.tick();
+    expect(rig.reports.store.user('twitch:777')).toBeNull();
+    // Still in the chatters list at the next sample: a new first sample, no watch time from before.
+    rig.clock.advance(PRESENCE_SAMPLE_MS);
+    await rig.reports.recorder.presenceTick();
+    expect(rig.reports.store.audienceStreams(['f1']).find((r) => r.userId === 'twitch:777')).toMatchObject({ watchSec: 0, presenceSamples: 1, messages: 0 });
+    users = [];
+  });
+
+  it('audience tracking turned off during a live: nothing more is written about people', () => {
+    const rig = createRig();
+    const { tw } = liveStream(rig);
+    rig.chat('twitch', tw, { name: 'Viewer A', id: '11' }); // added up, not yet written
+    rig.reports.saveSettings({ recording: true, audience: false, retentionDays: 0 });
+    rig.chat('twitch', tw, { name: 'Viewer B', id: '12' });
+    rig.reports.recorder.tick();
+    rig.stopSession();
+    expect(rig.db.prepare('SELECT COUNT(*) AS c FROM audience_users').get()).toEqual({ c: 0 });
+    expect(rig.db.prepare('SELECT COUNT(*) AS c FROM audience_stream').get()).toEqual({ c: 0 });
+    expect(rig.reports.store.chatTotals(['s1']).find((t) => t.platform === 'twitch')).toMatchObject({ messages: 2 });
+  });
+
+  it('event details never keep a stream key or an ingest URL path', () => {
+    const rig = createRig();
+    const { tw } = liveStream(rig);
+    rig.dest(tw, 'error', { message: 'Error opening output rtmp://live.example.com/app/live_123456_SECRETKEY?bandwidthtest=true' });
+    rig.dest(tw, 'retrying', { message: 'publish failed key=SECRETKEY2 (retrying in 5 s)' });
+    const details = rig.reports.store.events(['s1']).map((e) => e.detail ?? '').join('\n');
+    expect(details).toContain('rtmp://live.example.com');
+    expect(details).not.toContain('SECRETKEY');
+  });
+
+  it('a name cut in the middle of an emoji still gives valid XML in the .xlsx', () => {
+    const rig = createRig();
+    const { tw } = liveStream(rig);
+    const name = `${'a'.repeat(199)}😀`; // the 200-character cut falls inside the emoji
+    rig.chat('twitch', tw, { name, id: '55' });
+    rig.dest(tw, 'error', { message: `${'b'.repeat(299)}😀 tail` });
+    rig.stopSession();
+    const user = rig.reports.store.user('twitch:55')!;
+    expect(user.displayName).toBe('a'.repeat(199));
+    const files = unzip(renderExport(collect(rig.reports.context(), { sessionId: 's1' }, 'UTC')!, 'xlsx', 'r').body);
+    const lone = /[\ud800-\udbff](?![\udc00-\udfff])|(?<![\ud800-\udbff])[\udc00-\udfff]/;
+    for (const [n, data] of files) if (n.endsWith('.xml')) expect(lone.test(data.toString('utf8')), n).toBe(false);
+  });
+
+  it('retention deletes in small transactions and finishes', () => {
+    const rig = createRig();
+    const tw = rig.destination('twitch');
+    for (let i = 0; i < 45; i++) {
+      rig.startSession(`old${i}`);
+      rig.dest(tw, 'live', { viewers: i });
+      rig.chat('twitch', tw, { name: `Viewer ${i}`, id: String(i) });
+      rig.clock.advance(MIN);
+      rig.stopSession();
+    }
+    const r1 = rig.reports.store.purgeBefore(iso(rig.clock.now + 1), 20);
+    expect(r1).toEqual({ sessions: 20, users: 0, done: false });
+    rig.clock.advance(400 * 86_400_000);
+    rig.reports.saveSettings({ recording: true, audience: true, retentionDays: 365 });
+    expect(rig.db.prepare('SELECT COUNT(*) AS c FROM report_sessions').get()).toEqual({ c: 0 });
+    expect(rig.db.prepare('SELECT COUNT(*) AS c FROM audience_users').get()).toEqual({ c: 0 });
+  });
+
+  it('lists keep the numbers of ended streams, and forgetting someone updates them', () => {
+    const rig = createRig();
+    const { tw } = liveStream(rig);
+    rig.chat('twitch', tw, { name: 'Viewer A', id: '11' });
+    rig.chat('twitch', tw, { name: 'Viewer B', id: '12' });
+    rig.clock.advance(MIN);
+    rig.reports.recorder.tick();
+    rig.stopSession();
+    const first = listSessions(rig.reports.context(), {});
+    const detail = sessionDetail(rig.reports.context(), 's1')!;
+    expect(listSessions(rig.reports.context(), {})).toEqual(first);
+    expect(first[0]).toMatchObject({ peakViewers: detail.peakViewers, viewerMinutes: detail.viewerMinutes, chatMessages: 2 });
+    expect(rangeSummary(rig.reports.context(), {}).stats).toEqual(rangeSummary(rig.reports.context(), {}).stats);
+    rig.reports.forgetUser('twitch:11');
+    const lb = leaderboard(rig.reports.context(), { sessionIds: ['s1'] }, 'chatters', null);
+    expect(lb.rows.map((r) => r.id)).toEqual(['twitch:12']);
   });
 });
 

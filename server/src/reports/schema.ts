@@ -2,7 +2,7 @@
 // their own migration track: the version is kept in `reports_meta`, NOT in PRAGMA user_version.
 //
 // Why: db/database.ts refuses to open a database whose user_version is newer than the app knows.
-// Bumping it for reports would stop an older Relay (0.2.30 and earlier) from starting after a
+// Bumping it for reports would stop an older Relay (0.2.40 and earlier) from starting after a
 // rollback. With a separate track the main schema stays at v4, an older version opens the file
 // and simply never looks at these tables, and a newer one picks up where it left off.
 //

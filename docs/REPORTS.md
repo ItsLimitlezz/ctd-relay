@@ -36,7 +36,11 @@ restart is a new report.
 Messages' **text is never stored** in reports, only counts and times.
 
 Recording listens to Relay's internal events and never sits in the go-live path: if writing a
-report fails, it is logged and streaming carries on.
+report fails, it is logged and streaming carries on. Its event handlers only update memory; the
+database writes are queued and written together in one transaction right after (chat counts and
+people every 30 s with the viewer sample), so a busy chat costs no database work while messages are
+passed on. If Relay stops abruptly, up to the last 30 s of chat counts can be missing from that
+report.
 
 ## Audience
 
@@ -63,11 +67,20 @@ With **Audience tracking** on (the default), Relay keeps, per person and per str
 - **Record stream reports**: off stops recording; a stream being recorded ends its report now.
 - **Audience tracking**: off records counts only (no names or ids in report tables) from the next
   message on. Distinct-chatter counts are still worked out in memory, never stored per person.
+- **Audience tracking** turned off during a live also drops what was added up about people since
+  the last write (at most 30 s); nothing more about people is written.
 - **Keep reports for**: keep everything, 90 days or 365 days. Older streams are deleted (checked at
-  start-up and every 6 hours), and so is everyone only seen in them.
-- **Forget this user** (on a viewer's page): deletes every report row about them. The audit log
-  says "reports.forget_user: a twitch viewer", without the name. If they chat again later they are
-  recorded again as a new viewer (turn audience tracking off to stop that for everyone).
+  start-up, when you change the setting and every 6 hours), and so is everyone only seen in them.
+  Deleting goes 20 streams per transaction and pauses every 50 ms, so a large clean-up never holds
+  the database or the server for long.
+- **Forget this user** (on a viewer's page): deletes every report row about them, including what the
+  recorder holds in memory during a live (their counts since the last write, and their last
+  presence sample, so no watch time is credited from before). The deleted bytes are overwritten
+  and the database's write-ahead log is emptied, so the name is not left behind in `app.db` or
+  `app.db-wal`. **Backups and dataset snapshots taken before keep their copy**: forgetting can't
+  reach them. The audit log says "reports.forget_user: a twitch viewer", without the name. If they
+  chat again later they are recorded again as a new viewer (turn audience tracking off to stop that
+  for everyone).
 
 Reports hold personal data about your viewers (names and when they were there). Treat exports and
 `reports:read` tokens accordingly.
@@ -137,11 +150,20 @@ spreadsheet formula (`=`, `+`, `-`, `@`) are prefixed with `'` so a spreadsheet 
 
 Reports live in `app.db` (DATA_DIR) in tables named `report_*` and `audience_*`, with their own
 schema version in `reports_meta`. The main schema (`PRAGMA user_version`) stays at **v4**, so
-rolling back to 0.2.30 or earlier still starts: older versions ignore these tables. Updating again
+rolling back to 0.2.40 or earlier still starts: older versions ignore these tables. Updating again
 continues where it left off. Back them up with `app.db` as usual.
 
-Rough size: one 3-hour stream on 3 platforms is about 1,100 viewer samples and a few hundred
-minute rows, well under 1 MB with a few hundred chatters.
+Size, measured on a simulated 90-minute stream on 6 destinations (`npx tsx scripts/report-sample.ts`):
+about 470 KiB in `app.db`, most of it viewer samples. Plan on **about 25–30 KiB per destination
+per hour** plus a little per chatter: a 4-hour stream on 5 destinations is roughly 0.6 MB, so
+streaming daily adds roughly 55 MB per 90 days or 220 MB per year. "Keep everything" (the default)
+grows by that much; 90 or 365 days keeps it bounded (freed space is reused, the file does not
+shrink).
+
+The report tables are created in a few milliseconds (new tables only; nothing existing is
+rewritten). Lists and date ranges keep the worked-out numbers of streams that have ended in memory,
+so after the first look (or a few seconds after start-up, when Relay works them out in the
+background one stream at a time) the Reports page does not read every viewer sample again.
 
 ## Past streams
 

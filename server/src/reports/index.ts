@@ -6,7 +6,7 @@ import type { Db } from '../db/database.js';
 import type { AppServices } from '../services.js';
 import { createPresenceProvider } from './presence.js';
 import { ReportRecorder, reportSettingsFrom, type PresenceProvider } from './recorder.js';
-import type { ReportContext } from './report.js';
+import { warmSession, type ReportContext } from './report.js';
 import { migrateReports } from './schema.js';
 import { createReportStore, type ReportStore } from './store.js';
 
@@ -17,7 +17,10 @@ export interface ReportsService {
   readonly available: boolean;
   readonly store: ReportStore;
   readonly recorder: ReportRecorder;
+  /** What reports read from; writes what the recorder holds first, so a read sees it. */
   context(): ReportContext;
+  /** "Forget this user" (also what the recorder holds about them in memory). */
+  forgetUser(userId: string): boolean;
   settings(): ReportSettings;
   saveSettings(next: ReportSettings): ReportSettings;
   start(): void;
@@ -63,6 +66,8 @@ export function createReportsService(
     now: opts.now,
     timers: opts.timers,
   });
+  let warm: ReturnType<typeof setImmediate> | null = null;
+  let closed = false;
   const profileName = (id: string): string | null => {
     try {
       return services.repos.profiles.get(id)?.name ?? null;
@@ -74,7 +79,11 @@ export function createReportsService(
     available,
     store,
     recorder,
-    context: () => ({ store, now: opts.now, profileName }),
+    context: () => {
+      if (available) recorder.sync();
+      return { store, now: opts.now, profileName };
+    },
+    forgetUser: (userId) => recorder.forgetUser(userId),
     settings,
     saveSettings(next) {
       const clean = reportSettingsFrom(next);
@@ -84,9 +93,35 @@ export function createReportsService(
       return clean;
     },
     start() {
-      if (available) recorder.start();
+      if (!available) return;
+      recorder.start();
+      // Work out the recent streams' numbers one per event-loop turn, so the first look at the
+      // Reports page (maybe during a live) does not read every viewer sample at once.
+      if (opts.timers === false) return;
+      let recent: ReturnType<ReportStore['listSessions']> = [];
+      try {
+        recent = store.listSessions({}, 100);
+      } catch {
+        return;
+      }
+      const next = () => {
+        warm = null;
+        const s = recent.shift();
+        if (!s || closed) return;
+        try {
+          warmSession({ store, now: opts.now, profileName }, s);
+        } catch {
+          // A report that can't be worked out now is worked out (or fails) when it is opened.
+        }
+        warm = setImmediate(next);
+        warm.unref?.();
+      };
+      warm = setImmediate(next);
+      warm.unref?.();
     },
     close() {
+      closed = true;
+      if (warm) clearImmediate(warm);
       recorder.close();
     },
   };

@@ -49,7 +49,7 @@ const reportRoutes: FastifyPluginAsync<RouteOptions> = async (app, { services })
     const userId = (req.params as { userId?: string }).userId ?? '';
     const r = reports();
     const user = userId.length <= 300 ? r.store.user(userId) : null;
-    if (!user || !r.store.forgetUser(userId)) return sendError(reply, 404, 'No one with this id in the reports.', 'not_found');
+    if (!user || !r.forgetUser(userId)) return sendError(reply, 404, 'No one with this id in the reports.', 'not_found');
     // The audit names the platform only: the point is to forget who it was.
     audit(services, req, 'reports.forget_user', `a ${user.platform} viewer`);
     return reply.code(204).send();

@@ -56,8 +56,11 @@ export function colName(index: number): string {
   return s;
 }
 
+// Characters XML 1.0 does not allow: C0 controls other than tab/LF/CR, U+FFFE/U+FFFF, and half of a
+// surrogate pair (a name cut in the middle of an emoji). Excel refuses ("we found a problem with
+// some content") a sheet that holds one.
 // eslint-disable-next-line no-control-regex
-const INVALID_XML = /[\u0000-\u0008\u000b\u000c\u000e-\u001f￾￿]/g;
+const INVALID_XML = /[\u0000-\u0008\u000b\u000c\u000e-\u001f\ufffe\uffff]|[\ud800-\udbff](?![\udc00-\udfff])|(?<![\ud800-\udbff])[\udc00-\udfff]/g;
 
 export function xmlEscape(s: string): string {
   return s
@@ -110,7 +113,7 @@ function cellXml(ref: string, value: CellValue, kind: ColumnKind): string {
     const style = kind === 'text' ? 0 : STYLE[kind];
     return `<c r="${ref}"${style ? ` s="${style}"` : ''}><v>${v}</v></c>`;
   }
-  const text = xmlEscape(String(value).slice(0, MAX_TEXT));
+  const text = xmlEscape(String(value).slice(0, MAX_TEXT)); // a cut pair is dropped by xmlEscape
   const space = /^\s|\s$/.test(text) ? ' xml:space="preserve"' : '';
   return `<c r="${ref}" t="inlineStr"><is><t${space}>${text}</t></is></c>`;
 }

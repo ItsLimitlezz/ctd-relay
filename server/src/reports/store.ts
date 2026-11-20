@@ -12,6 +12,14 @@ const sn = (row: Row, col: string): string | null => (typeof row[col] === 'strin
 const n = (row: Row, col: string): number => Number(row[col] ?? 0);
 const nn = (row: Row, col: string): number | null => (row[col] === null || row[col] === undefined ? null : Number(row[col]));
 
+/** At most `max` UTF-16 units, never half of a surrogate pair (that would not be valid XML in an export). */
+export function clip(text: string, max: number): string {
+  if (text.length <= max) return text;
+  const cut = text.slice(0, max);
+  const last = cut.charCodeAt(cut.length - 1);
+  return last >= 0xd800 && last <= 0xdbff ? cut.slice(0, -1) : cut;
+}
+
 export interface SessionRow {
   id: string;
   profileId: string;
@@ -80,6 +88,15 @@ export interface AudienceIdentity {
   login: string | null;
 }
 
+/** What one person did in a session since the last write (added up by the recorder). */
+export interface AudienceActivity extends ChatDelta {
+  user: AudienceIdentity;
+  firstSeenAt: string;
+  lastSeenAt: string;
+  firstMessageAt: string | null;
+  lastMessageAt: string | null;
+}
+
 /** Which sessions a query covers: explicit ids, or a profile and/or a time range. */
 export interface SessionFilter {
   sessionIds?: readonly string[];
@@ -145,6 +162,10 @@ export type ReportStore = ReturnType<typeof createReportStore>;
 
 export function createReportStore(db: Db) {
   const stmt = statementCache(db);
+  /** A transaction, or part of the one already open (the recorder writes its queue in one). */
+  const tx = <T>(fn: () => T): T => (db.isTransaction ? fn() : transaction(db, fn));
+  /** Changes when stored rows are deleted (report.ts drops what it worked out from them). */
+  let generation = 0;
   const inIds = (ids: readonly string[]): string => ids.map(() => '?').join(', ');
   /** Rows of `table` for these sessions, ordered. */
   const forSessions = (table: string, ids: readonly string[], order: string): Row[] =>
@@ -152,7 +173,11 @@ export function createReportStore(db: Db) {
 
   return {
     transaction<T>(fn: () => T): T {
-      return transaction(db, fn);
+      return tx(fn);
+    },
+
+    generation(): number {
+      return generation;
     },
 
     // ---------------------------------------------------------------- sessions
@@ -211,6 +236,7 @@ export function createReportStore(db: Db) {
 
     deleteSession(id: string): void {
       stmt('DELETE FROM report_sessions WHERE id = ?').run(id);
+      generation++;
     },
 
     // ---------------------------------------------------------------- what happened
@@ -274,7 +300,7 @@ export function createReportStore(db: Db) {
         e.kind,
         e.destinationId,
         e.platform,
-        e.detail === null ? null : e.detail.slice(0, 300),
+        e.detail === null ? null : clip(e.detail, 300),
       );
     },
 
@@ -378,22 +404,35 @@ export function createReportStore(db: Db) {
 
     /** A user did something in a session: chatted (`d.messages`), joined, or another chat event. */
     audienceActivity(sessionId: string, u: AudienceIdentity, ts: string, d: ChatDelta): void {
-      stmt(
-        `INSERT INTO audience_users (id, platform, platform_user_id, display_name, login, first_seen_at, last_seen_at) VALUES (?, ?, ?, ?, ?, ?, ?)
-         ON CONFLICT(id) DO UPDATE SET display_name = excluded.display_name, login = COALESCE(excluded.login, login),
-           platform_user_id = COALESCE(excluded.platform_user_id, platform_user_id),
-           first_seen_at = MIN(first_seen_at, excluded.first_seen_at), last_seen_at = MAX(last_seen_at, excluded.last_seen_at)`,
-      ).run(u.id, u.platform, u.platformUserId, u.displayName.slice(0, 200), u.login, ts, ts);
       const msgTs = d.messages > 0 ? ts : null;
-      stmt(
-        `INSERT INTO audience_stream (session_id, user_id, platform, messages, events, joins, first_message_at, last_message_at, first_seen_at, last_seen_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-         ON CONFLICT(session_id, user_id) DO UPDATE SET messages = messages + excluded.messages, events = events + excluded.events,
-           joins = joins + excluded.joins,
-           first_message_at = COALESCE(MIN(first_message_at, excluded.first_message_at), first_message_at, excluded.first_message_at),
-           last_message_at = COALESCE(MAX(last_message_at, excluded.last_message_at), last_message_at, excluded.last_message_at),
-           last_seen_at = MAX(last_seen_at, excluded.last_seen_at)`,
-      ).run(sessionId, u.id, u.platform, d.messages, d.events, d.joins, msgTs, msgTs, ts, ts);
+      this.addAudience(sessionId, [{ user: u, ...d, firstSeenAt: ts, lastSeenAt: ts, firstMessageAt: msgTs, lastMessageAt: msgTs }]);
+    },
+
+    /** Add what people did in a session (the recorder's batch since its last write). */
+    addAudience(sessionId: string, rows: readonly AudienceActivity[]): void {
+      if (rows.length === 0) return;
+      tx(() => {
+        const user = stmt(
+          `INSERT INTO audience_users (id, platform, platform_user_id, display_name, login, first_seen_at, last_seen_at) VALUES (?, ?, ?, ?, ?, ?, ?)
+           ON CONFLICT(id) DO UPDATE SET display_name = excluded.display_name, login = COALESCE(excluded.login, login),
+             platform_user_id = COALESCE(excluded.platform_user_id, platform_user_id),
+             first_seen_at = MIN(first_seen_at, excluded.first_seen_at), last_seen_at = MAX(last_seen_at, excluded.last_seen_at)`,
+        );
+        const stream = stmt(
+          `INSERT INTO audience_stream (session_id, user_id, platform, messages, events, joins, first_message_at, last_message_at, first_seen_at, last_seen_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+           ON CONFLICT(session_id, user_id) DO UPDATE SET messages = messages + excluded.messages, events = events + excluded.events,
+             joins = joins + excluded.joins,
+             first_message_at = COALESCE(MIN(first_message_at, excluded.first_message_at), first_message_at, excluded.first_message_at),
+             last_message_at = COALESCE(MAX(last_message_at, excluded.last_message_at), last_message_at, excluded.last_message_at),
+             last_seen_at = MAX(last_seen_at, excluded.last_seen_at)`,
+        );
+        for (const r of rows) {
+          const u = r.user;
+          user.run(u.id, u.platform, u.platformUserId, clip(u.displayName, 200), u.login === null ? null : clip(u.login, 200), r.firstSeenAt, r.lastSeenAt);
+          stream.run(sessionId, u.id, u.platform, r.messages, r.events, r.joins, r.firstMessageAt, r.lastMessageAt, r.firstSeenAt, r.lastSeenAt);
+        }
+      });
     },
 
     /**
@@ -401,7 +440,7 @@ export function createReportStore(db: Db) {
      * watch time of each user (0 for users who were not in the previous sample).
      */
     audiencePresence(sessionId: string, platform: PlatformId, ts: string, users: readonly { user: AudienceIdentity; creditSec: number }[]): void {
-      transaction(db, () => {
+      tx(() => {
         stmt(
           `INSERT INTO report_presence (session_id, platform, samples, last_sample_at) VALUES (?, ?, 1, ?)
            ON CONFLICT(session_id, platform) DO UPDATE SET samples = samples + 1, last_sample_at = excluded.last_sample_at`,
@@ -411,7 +450,7 @@ export function createReportStore(db: Db) {
             `INSERT INTO audience_users (id, platform, platform_user_id, display_name, login, first_seen_at, last_seen_at) VALUES (?, ?, ?, ?, ?, ?, ?)
              ON CONFLICT(id) DO UPDATE SET display_name = excluded.display_name, login = COALESCE(excluded.login, login),
                last_seen_at = MAX(last_seen_at, excluded.last_seen_at)`,
-          ).run(u.id, u.platform, u.platformUserId, u.displayName.slice(0, 200), u.login, ts, ts);
+          ).run(u.id, u.platform, u.platformUserId, clip(u.displayName, 200), u.login === null ? null : clip(u.login, 200), ts, ts);
           stmt(
             `INSERT INTO audience_stream (session_id, user_id, platform, first_seen_at, last_seen_at, presence_samples, watch_sec)
              VALUES (?, ?, ?, ?, ?, 1, ?)
@@ -522,24 +561,55 @@ export function createReportStore(db: Db) {
       return rows.map((r) => ({ ...toStreamRow(r), startedAt: s(r, 'session_started_at'), profileId: s(r, 'session_profile_id') }));
     },
 
-    /** "Forget this user": every report row about them. Returns whether they were known. */
+    /**
+     * "Forget this user": every report row about them. The deleted bytes are overwritten
+     * (secure_delete for this delete) and the write-ahead log is checkpointed and emptied, so the
+     * name is not left in free pages of app.db or in app.db-wal. Returns whether they were known.
+     * Backups and dataset snapshots taken before keep their copy.
+     */
     forgetUser(id: string): boolean {
-      return transaction(db, () => {
-        stmt('DELETE FROM audience_stream WHERE user_id = ?').run(id);
-        return Number(stmt('DELETE FROM audience_users WHERE id = ?').run(id).changes) > 0;
-      });
+      const before = Number((db.prepare('PRAGMA secure_delete').get() as Row | undefined)?.secure_delete ?? 0);
+      db.exec('PRAGMA secure_delete = ON');
+      let known: boolean;
+      try {
+        known = tx(() => {
+          stmt('DELETE FROM audience_stream WHERE user_id = ?').run(id);
+          return Number(stmt('DELETE FROM audience_users WHERE id = ?').run(id).changes) > 0;
+        });
+      } finally {
+        db.exec(`PRAGMA secure_delete = ${before === 1 ? 'ON' : before === 2 ? 'FAST' : 'OFF'}`);
+      }
+      generation++;
+      if (known) {
+        try {
+          db.prepare('PRAGMA wal_checkpoint(TRUNCATE)').get();
+        } catch {
+          // Not in WAL mode (tests) or busy: the next checkpoint copies the zeroed pages.
+        }
+      }
+      return known;
     },
 
-    /** Delete everything that started before `cutoff` (ISO). Users left with no stream are deleted too. */
-    purgeBefore(cutoff: string): { sessions: number; users: number } {
-      return transaction(db, () => {
-        const sessions = Number(stmt('DELETE FROM report_sessions WHERE started_at < ? AND ended_at IS NOT NULL').run(cutoff).changes);
+    /**
+     * Delete up to `limit` streams that started before `cutoff` (ISO), in one transaction; when
+     * none are left, also the people who were only seen in deleted streams. `done` = nothing left.
+     */
+    purgeBefore(cutoff: string, limit = 1_000_000): { sessions: number; users: number; done: boolean } {
+      return tx(() => {
+        const sessions = Number(
+          stmt(
+            'DELETE FROM report_sessions WHERE id IN (SELECT id FROM report_sessions WHERE started_at < ? AND ended_at IS NOT NULL ORDER BY started_at LIMIT ?)',
+          ).run(cutoff, limit).changes,
+        );
+        if (sessions > 0) generation++;
+        if (sessions >= limit) return { sessions, users: 0, done: false };
         const users = Number(
           stmt('DELETE FROM audience_users WHERE last_seen_at < ? AND NOT EXISTS (SELECT 1 FROM audience_stream a WHERE a.user_id = audience_users.id)').run(
             cutoff,
           ).changes,
         );
-        return { sessions, users };
+        if (users > 0) generation++;
+        return { sessions, users, done: true };
       });
     },
   };
