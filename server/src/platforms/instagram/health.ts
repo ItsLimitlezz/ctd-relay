@@ -19,7 +19,8 @@ import type { Page } from 'playwright';
 import { humanPause, withTimeout } from '../../browser/helpers.js';
 import type { LiveHealthEvent } from '../types.js';
 import { checkpointError, hasSessionCookie, isLoginUrl, visibleNow, type FlowConfig } from './flow.js';
-import { END_STATE_ARGS, END_STATE_SOURCE, HEALTH_PROBE_ARGS, HEALTH_PROBE_SOURCE, sel } from './selectors.js';
+import { LABEL_VOCABULARY } from './chat-scan.js';
+import { END_STATE_ARGS, END_STATE_SOURCE, HEALTH_PROBE_ARGS, HEALTH_PROBE_SOURCE, RE, sel } from './selectors.js';
 import { parseViewerCount, type Audience } from './util.js';
 
 export interface HealthTimings {
@@ -315,6 +316,60 @@ export async function captureEndState(page: Page): Promise<EndState | null> {
 /** Dialogs logged per live at most (one line per wording). */
 const MAX_LOGGED_DIALOGS = 12;
 
+/**
+ * Words a logged dialog or notice may show as they are: the chat debug capture's interface words
+ * plus the wording of Instagram's live notices and prompts. A name that happens to be one of these
+ * common words identifies nobody.
+ */
+const LOG_WORDS: ReadonlySet<string> = new Set([
+  ...LABEL_VOCABULARY,
+  'about', 'after', 'again', 'against', 'allow', 'another', 'any', 'are', 'as', 'at', 'be', 'because', 'been', 'before', 'broadcast', 'but',
+  'can', 'change', 'check', 'community', 'confirm', 'connected', 'connection', 'content', 'continue', 'copyright', 'could', 'couldn', 'd', 'didn',
+  'dismiss', 'do', 'don', 'download', 'ended', 'error', 'failed', 'from', 'get', 'going', 'got', 'guest', 'guests', 'guidelines', 'had', 'has',
+  'have', 'help', 'here', 'hour', 'hours', 'how', 'i', 'if', 'instagram', 'interrupted', 'invite', 'invited', 'is', 'isn', 'it', 'its', 'just',
+  'keep', 'key', 'later', 'learn', 'leave', 'limit', 'll', 'longer', 'lost', 'm', 'may', 'might', 'minute', 'minutes', 'music', 'muted', 'need',
+  'network', 'no', 'not', 'notice', 'ok', 'okay', 'only', 'or', 'our', 'out', 'paused', 'people', 'permission', 'please', 'policy', 'poor',
+  'problem', 'producer', 're', 'reconnect', 'reconnecting', 'receive', 'received', 'reel', 'reels', 'removed', 'requested', 'resume', 'review', 'rights',
+  's', 'save', 'second', 'seconds', 'signal', 'skip', 'software', 'someone', 'something', 'soon', 'sorry', 'standards', 'start', 'started',
+  'still', 'stop', 'stopped', 'story', 'streaming', 'sure', 't', 'taken', 'terminated', 'thanks', 'that', 'there', 'they', 'time', 'try', 'unable',
+  'unstable', 'until', 'up', 'us', 've', 'violates', 'violation', 'want', 'wants', 'was', 'we', 'weak', 'went', 'were', 'what', 'when', 'why', 'will',
+  'with', 'won', 'would', 'wrong', 'yes', 'you',
+]);
+
+/**
+ * Text for the log with whatever could be a name or something a person wrote taken out: interface
+ * words (LOG_WORDS) and short numbers stay, every other word becomes # marks of its length.
+ * "fixture_ann wants to go live with you" → "#######_### wants to go live with you".
+ */
+export function maskForLog(text: string): string {
+  return text.replace(/[\p{L}\p{N}]+/gu, (word) =>
+    LOG_WORDS.has(word.toLowerCase()) || /^\d{1,4}$/.test(word) ? word : '#'.repeat(word.length),
+  );
+}
+
+/** One of the notices the watcher acts on: Instagram's own wording, logged in full. */
+function isKnownNotice(text: string): boolean {
+  return (
+    RE.liveEnded.test(text) || RE.takedownWarning.test(text) || RE.liveInterrupted.test(text) || (RE.takedownPolicy.test(text) && /\blive\b/i.test(text))
+  );
+}
+
+/**
+ * The end-state capture as it goes to the log: a notice the watcher knows keeps its full text;
+ * any other notice or heading (it may name someone) only its interface words and its length.
+ */
+export function endStateForLog(state: EndState | null): EndState | null {
+  if (!state) return null;
+  return {
+    ...state,
+    notices: state.notices.map((n) => ({
+      ...n,
+      text: isKnownNotice(n.text) ? n.text : maskForLog(n.text),
+      buttons: n.buttons.map(maskForLog),
+    })),
+  };
+}
+
 function untilAborted(signal: AbortSignal): Promise<void> {
   if (signal.aborted) return Promise.resolve();
   return new Promise((resolve) => signal.addEventListener('abort', () => resolve(), { once: true }));
@@ -353,8 +408,14 @@ export async function* watchHealth(page: Page, signal: AbortSignal, opts: WatchO
     const dialog = snapshot.dialog;
     if (dialog && !loggedDialogs.has(dialog.text) && loggedDialogs.size < MAX_LOGGED_DIALOGS) {
       loggedDialogs.add(dialog.text);
+      // Its words may name someone: only the interface words and the length go to the log.
       opts.log.info(
-        { text: dialog.text, buttons: dialog.buttons, liveForSec: Math.round(opts.monitor.liveForMs(now) / 1000) },
+        {
+          text: maskForLog(dialog.text),
+          length: dialog.text.length,
+          buttons: dialog.buttons.map(maskForLog),
+          liveForSec: Math.round(opts.monitor.liveForMs(now) / 1000),
+        },
         'Instagram shows a dialog the health watcher does not know (not answered)',
       );
     }
@@ -370,7 +431,7 @@ export async function* watchHealth(page: Page, signal: AbortSignal, opts: WatchO
             viewers: snapshot.viewers,
             endButton: snapshot.live,
             setupShown: snapshot.setup,
-            page: state,
+            page: endStateForLog(state),
           },
           'Instagram ended the live',
         );

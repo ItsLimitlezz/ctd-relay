@@ -4,7 +4,9 @@ import { describe, expect, it } from 'vitest';
 import type { LiveHealthEvent } from '../types.js';
 import {
   DEFAULT_HEALTH_TIMINGS,
+  endStateForLog,
   HealthMonitor,
+  maskForLog,
   PAGE_CLOSED_WARNING,
   SESSION_EXPIRED_WARNING,
   VIEWERS_UNAVAILABLE_WARNING,
@@ -226,5 +228,39 @@ describe('ViewerReporter', () => {
     expect(r.step(null, 0)).toEqual({ type: 'viewers', count: null });
     expect(r.step(null, 2_000)).toBeNull();
     expect(r.step(0, 4_000)).toEqual({ type: 'viewers', count: 0 });
+  });
+});
+
+describe('what the health watcher logs (no names, no comment text)', () => {
+  it('keeps interface words and short numbers, masks every other word', () => {
+    expect(maskForLog('fixture_ann wants to go live with you')).toBe('#######_### wants to go live with you');
+    expect(maskForLog('Are you still there? Your live video has ended after 60 minutes.')).toBe(
+      'Are you still there? Your live video has ended after 60 minutes.',
+    );
+    expect(maskForLog('Hi fixture_bob, follow 5551234567')).toBe('## #######_###, ###### ##########');
+  });
+
+  it('end state: Instagram\'s own notice in full, any other notice or heading masked', () => {
+    const state = {
+      notices: [
+        { role: 'dialog', text: 'Live video ended. Your live video has ended.', length: 44, buttons: ['OK'] },
+        { role: 'heading', text: 'fixture_cat', length: 11, buttons: [] },
+        { role: 'dialog', text: 'fixture_dan requested to join', length: 29, buttons: ['Accept fixture_dan', 'Decline'] },
+      ],
+      visibility: 'visible',
+      focused: true,
+      online: true,
+      videos: [],
+      pathDepth: 2,
+    };
+    const logged = endStateForLog(state)!;
+    expect(logged.notices.map((n) => n.text)).toEqual([
+      'Live video ended. Your live video has ended.',
+      '#######_###',
+      '#######_### requested to join',
+    ]);
+    expect(logged.notices[2]!.buttons).toEqual(['###### #######_###', '#######']);
+    expect(logged.notices.map((n) => n.length)).toEqual([44, 11, 29]);
+    expect(endStateForLog(null)).toBeNull();
   });
 });
