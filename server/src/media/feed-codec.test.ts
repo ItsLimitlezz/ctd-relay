@@ -60,6 +60,20 @@ describe('videoBlock / audioBlock', () => {
     expect(feedProblemLine(f)).toBeNull();
   });
 
+  it('H.264 in any profile is fine (Main, Baseline, High 10): only the codec counts', () => {
+    for (const profile of ['Main', 'Baseline', 'Constrained Baseline', 'High 10', 'High 4:2:2']) {
+      const tracks = describeTracks([
+        { codec: 'H264', codecProps: { width: 1080, height: 1920, profile, level: '4.1' } },
+        { codec: 'MPEG-4 Audio', codecProps: { sampleRate: 48000, channelCount: 2 } },
+      ]);
+      const f = { ...feedWith('landscape', null), ...tracks };
+      expect(f.video?.codec).toBe('h264');
+      expect(videoBlock(f)).toBeNull();
+      expect(feedBlock([f], pushNeeds(COPY))).toBeNull();
+      expect(feedBlock([f, { ...f, feed: 'vertical' as const }], pushNeeds(IVS))).toBeNull();
+    }
+  });
+
   it('HEVC and AV1 video block the feed', () => {
     expect(videoBlock(feedWith('landscape', 'hevcAac'))).toEqual({ reason: 'feed-video-codec', feed: 'landscape', codec: 'hevc' });
     expect(videoBlock(feedWith('vertical', 'av1Aac'))).toEqual({ reason: 'feed-video-codec', feed: 'vertical', codec: 'av1' });
