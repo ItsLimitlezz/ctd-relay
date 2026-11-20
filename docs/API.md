@@ -218,6 +218,23 @@ event stream.
   `["landscape"]` or both); it is `[]` in every other phase. `message` reads "Waiting for vertical
   feed", "Waiting for landscape feed" or "Waiting for both feeds". Twitch Dual Format (relay) needs
   both feeds; a vertical-only platform needs only the vertical one.
+- `blocked` (additive, v1.12): set when the feed is **online but can't be sent**, because Relay passes
+  feeds on as classic RTMP (H.264 video, AAC audio):
+  `{ "reason": "feed-video-codec", "feed": "landscape", "codec": "hevc" }`. `reason` is
+  `feed-video-codec` (HEVC, AV1…), or for Twitch Dual Format through Relay `feed-audio-codec` /
+  `feed-audio-missing` (`codec` is `null` when there is no audio). While it is set Relay prepares no
+  live, starts no relay and retries nothing; `phase` is `waiting-for-feed` (no new phase value),
+  `waitingFor` names that feed, `down` is `true`, and `message` says what to change, for example
+  "Landscape feed is HEVC. YouTube gets the stream unchanged and needs H.264. In CTD OBS: Relay dock
+  → Send stream (switches to H.264), or Settings → Output → Video encoder: H.264. It starts by itself
+  once the feed is H.264." It goes back to `null` and the destination starts by itself when OBS sends
+  H.264. `null` in every other case.
+- `feeds[].video.codec` / `feeds[].audio.codec`: what OBS sends, from the ingest server's track list
+  (`h264`, `hevc`, `av1`, `aac`, `opus`…). `feeds[].problem` (additive, v1.12) is Relay's verdict on
+  it, or `null`: `{ "reason": "feed-video-codec", "codec": "hevc", "label": "HEVC", "blocking": true,
+  "message": "Landscape feed is HEVC. …" }`. `blocking: true` = no destination can send this feed;
+  `false` = it is sent without sound (audio that isn't AAC, `reason: "feed-audio-codec"`). Show it as
+  "Landscape: HEVC ⚠". It is `null` while the feed is offline or its tracks aren't known yet.
 - `down` = the session is running, the destination is enabled (and not skipped by test mode), and
   it isn't reaching the platform right now (`error`, `retrying`, `recovering`, or `waiting-for-feed`,
   and also `preparing` / `connecting` / `confirming` while a retry works its way back — it stays down
@@ -385,6 +402,7 @@ Without `after`: returns nothing but the current cursor (`next`), so you can sta
   "action": false,
   "kind": "message",
   "join": false,
+  "othersCount": null,
   "ts": 1791830000123
 }
 ```
@@ -411,6 +429,11 @@ Without `after`: returns nothing but the current cursor (`next`), so you can sta
   `kind: "event"`; `user.name` is who joined, `text` the line as shown ("dj_fan joined"). A chat box
   that should show only comments drops `join` lines (or shows them as a light "👋 joined" toast);
   they can be frequent at a busy live.
+- `othersCount` (v1.12) is set on a `join` line that names one user and a number of others:
+  Instagram shows "dj_fan and 3 others joined" (also "and 1 other", "and 12 more", "… joined the
+  live video"). `user.name` is the named user (`dj_fan`), `othersCount` the number (`3`), `text`
+  the line as shown. So that line stands for `othersCount + 1` people. `null` on every other line,
+  including a plain "dj_fan joined". An integer from 1.
 - `color` is `#RRGGBB` or `null`; `avatar` is an `https` URL or `null`. `channel` is the
   destination name.
 - `platformMessageId` and `user.login` are `null` when the chat source doesn't provide them
@@ -549,6 +572,17 @@ Messages the web UI shows as toasts (takedown detected, live again, session stop
 ```
 
 `src.profile` is the profile concerned, or `null` for server-wide notices.
+
+A notice may say what it is about (additive, v1.12): `kind` and `subject`, named like the fields of
+an issue so the same problem can become one. Today there is one kind:
+```json
+{ "level": "warn", "kind": "feed.codec", "subject": { "type": "feed", "feed": "landscape" }, "codec": "hevc",
+  "message": "Landscape feed is HEVC. Twitch, YouTube, Kick and the other platforms get the stream unchanged and need H.264. In CTD OBS: Relay dock → Send stream (switches to H.264), or Settings → Output → Video encoder: H.264. It starts by itself once the feed is H.264." }
+```
+`feed.codec` with `level: "warn"` is sent once per feed and OBS connection when a destination can't
+send the feed (HEVC, AV1) or will send it without sound (`codec: "opus"`). `level: "info"` with the
+same `subject` (`codec: "h264"`) follows when the feed can be sent again. Notices are events, not
+state: read `feeds[].problem` and `destinations[].blocked` from `/status` for what is true now.
 
 ### `profile.status`, `profiles.changed` — `status:read`
 A profile's summary changed / profiles were created, renamed or deleted (§9.1).
@@ -1415,7 +1449,7 @@ The web UI has the same four operations for signed-in admins under
 {
   "source": "override",
   "version": "2026-11-20 a",
-  "builtinVersion": "builtin-2",
+  "builtinVersion": "builtin-3",
   "note": "comment rows moved to data-comment-id",
   "updatedAt": "2026-11-20T10:00:00.000Z",
   "updatedBy": "token Support agent",
@@ -1448,8 +1482,9 @@ lists every problem with its path, e.g. `row.css.0: CSS selector: …`):
 | Settings | Only the known ones. An unknown key is refused |
 | CSS selectors | Plain CSS, at most 200 characters, at most 12 per list. No selector engine prefixes (`xpath=`, `text=`), no `>>` chains, no `{ } ; @ <` or comments |
 | Attribute names | `[A-Za-z_][A-Za-z0-9_.:-]*`, at most 64 characters |
-| Patterns | Regular-expression source, at most 300 characters, at most 24 per list, compiled with the `i` flag. No backreferences. A pattern that is slow on long input (catastrophic backtracking) is refused |
-| Numbers | `timing.pollMs` 500–10000, `timing.tabRetryMs` 3000–120000, `timing.backoffMaxMs` 1000–60000, `limits.maxRows` 20–500, `limits.history` 50–2000, `row.maxAvatars` 1–4, `container.climbLevels` 0–12, `container.climbMinHeight` 0–2000 |
+| Patterns | Regular-expression source, at most 300 characters, at most 24 per list, compiled with the `i` flag. No backreferences. A pattern that is slow on long input (catastrophic backtracking) is refused. Capture group 1 has a meaning in `row.avatarAlt` (the user name) and `classify.join` (the number of others, v1.12) |
+| Numbers | `timing.pollMs` 500–10000, `timing.tabRetryMs` 3000–120000, `timing.backoffMaxMs` 1000–60000, `timing.liveStartGraceMs` 0–600000 (v1.12), `limits.maxRows` 20–500, `limits.history` 50–2000, `row.maxAvatars` 1–4, `container.climbLevels` 0–12, `container.climbMinHeight` 0–2000 |
+| Switches (v1.12) | `timing.backlogAsHistory`, `container.climbPreferRows`: `true` or `false` |
 
 Nothing in a pack is run as code: selectors go to `querySelectorAll`, attribute names to
 `getAttribute`, and patterns are tested against at most 400 characters of text. A selector the
@@ -1477,10 +1512,10 @@ A **sanitised** picture of what each running reader sees. Optional JSON body:
 ```json
 {
   "capturedAt": "2026-11-20T10:05:00.000Z",
-  "pack": { "source": "builtin", "version": "builtin-2", "builtinVersion": "builtin-2" },
+  "pack": { "source": "builtin", "version": "builtin-3", "builtinVersion": "builtin-3" },
   "readers": [
     {
-      "reader": { "packVersion": "builtin-2", "container": "tabpanel", "rows": 12, "truncated": 0, "failures": 0, "tab": "selected", "tabClicks": 1, "kept": 41, "dropped": 9, "newestFirst": false, "bad": [], "lastReadAt": "2026-11-20T10:04:59.400Z" },
+      "reader": { "packVersion": "builtin-3", "container": "tabpanel", "rows": 12, "truncated": 0, "failures": 0, "tab": "selected", "tabClicks": 1, "kept": 41, "dropped": 9, "backlog": 0, "newestFirst": false, "bad": [], "lastReadAt": "2026-11-20T10:04:59.400Z" },
       "tab": { "matches": 1, "visible": true, "ariaSelected": "true" },
       "composer": { "matches": 1 },
       "snapshot": {
@@ -1530,9 +1565,11 @@ or anything typed into a field. What it keeps, so a pack can be written from it:
 - **`selectors`:** per pack selector, how many elements match in the page, in the container, and
   how many of them are visible; `"invalid"` when the browser rejects it.
 - **`decisions`:** newest last. `verdict` `kept` (`reason` `new`, or `late`: a row that was not at
-  the newest end of the list) or `dropped` (`baseline`: on screen when the reader started;
-  `rerender`: a re-created row of a comment already delivered; `duplicate-id`; `pinned`; `system`;
-  `pack-changed`: the first read under a new pack). Lengths only.
+  the newest end of the list) or `dropped` (`baseline`: already on screen when the reader first
+  read the comments of this live; `rerender`: a re-created row of a comment already delivered;
+  `duplicate-id`; `pinned`; `system`; `pack-changed`: on screen at the first read with rows under
+  a new pack). Lengths only. `reader.backlog` (v1.12) counts the `baseline` and `pack-changed`
+  rows: comments taken as history instead of delivered.
 
 The capture reads the page; it does not click or change anything.
 
@@ -1600,7 +1637,29 @@ the revision in `info.version`.
 - **Twitch:** connecting (or reconnecting) a Twitch account also asks for
   `moderator:read:chatters`, for reports' watch time. Accounts connected earlier keep working
   without it; their reports have no watch time until they reconnect.
-- (v1.12 is the Instagram chat reader revision of 0.2.40.)
+
+### v1.12
+
+- **Feed codec guard:** `destinations[].blocked`, `feeds[].problem` and `kind` / `subject` / `codec`
+  on `system.notice` (§4, §5). A feed that is online but HEVC or AV1 no longer leaves its
+  destinations in `retrying` with FFmpeg's "Invalid argument": they are `waiting-for-feed` with
+  `blocked` set and a `message` that says what to change in OBS, and they start by themselves when
+  the feed is H.264. No new `phase` value and no new event type.
+- **Instagram selector pack (§15):** three more optional settings in a pack override:
+  `timing.backlogAsHistory` and `timing.liveStartGraceMs` (comments already on screen when the
+  reader first gets to read them are history, not delivered, unless the live is younger than the
+  grace), and `container.climbPreferRows`. The built-in pack is `builtin-3` (`builtinVersion`).
+  The debug capture's `reader` has `backlog`. An override stored on v1.11 is still accepted.
+  `classify.join` patterns may capture the number of others in group 1 (the built-in ones do).
+- **Joins with others** (`chat.message`): a new field, `othersCount`. On a `join` line that names
+  one user and a number of others (Instagram's "dj_fan and 3 others joined"), `user.name` is the
+  named user and `othersCount` the number (`3`); `null` otherwise. A chat box that counts people
+  joining adds `othersCount + 1` for such a line.
+- **Instagram comments** (`chat.message` from `instagram`): when the reader starts during a live,
+  or a changed pack makes the comments readable, the comments on screen are no longer delivered
+  all at once. A presence line that is one piece of text with no avatar or link ("dj_fan joined
+  the live") is a `join` event by `dj_fan`, no longer a comment. Apps that read the chat need no
+  change; `othersCount` is there for those that want it.
 
 ### v1.11
 

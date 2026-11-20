@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { PlatformInfo } from '../../../shared/types.js';
-import { apiDestination, buildStatus, isDown, platformRollup, totalViewers } from './status.js';
+import { feedWith } from '../media/test-helpers.js';
+import { apiDestination, apiFeed, buildStatus, isDown, platformRollup, totalViewers } from './status.js';
 import { dest, dstate, session } from './test-helpers.js';
 
 const info = (supported: boolean): PlatformInfo => ({ testMode: { supported, description: '' } }) as PlatformInfo;
@@ -31,6 +32,36 @@ describe('down', () => {
     expect(isDown(running, { enabled: true }, 'live', null, 2)).toBe(false);
     expect(isDown(running, { enabled: true }, 'ending', null, 2)).toBe(false);
     expect(isDown(session({ status: 'offline' }), { enabled: true }, 'preparing', null, 2)).toBe(false);
+  });
+});
+
+describe('feed codec guard', () => {
+  it('feeds[].video.codec and feeds[].problem say what OBS sends and whether it can be sent', () => {
+    expect(apiFeed(feedWith('landscape', 'h264Aac'))).toMatchObject({ video: { codec: 'h264' }, audio: { codec: 'aac' }, problem: null });
+    const hevc = apiFeed(feedWith('landscape', 'hevcAac'));
+    expect(hevc.video?.codec).toBe('hevc');
+    expect(hevc.problem).toEqual({
+      reason: 'feed-video-codec',
+      codec: 'hevc',
+      label: 'HEVC',
+      blocking: true,
+      message: expect.stringMatching(/^Landscape feed is HEVC\. .*need H\.264\. In CTD OBS: Relay dock → Send stream/),
+    });
+    expect(apiFeed(feedWith('vertical', 'av1Aac')).problem).toMatchObject({ codec: 'av1', label: 'AV1', blocking: true });
+    expect(apiFeed(feedWith('vertical', 'h264Opus')).problem).toMatchObject({ reason: 'feed-audio-codec', codec: 'opus', blocking: false });
+    expect(apiFeed(feedWith('vertical', 'h264Only')).problem).toBeNull();
+    expect(apiFeed(feedWith('vertical', null)).problem).toBeNull();
+    expect(apiFeed(feedWith('vertical', 'hevcAac', { online: false })).problem).toBeNull();
+  });
+
+  it('a blocked destination is waiting-for-feed, down, and carries `blocked` + the message', () => {
+    const blocked = { reason: 'feed-video-codec', feed: 'landscape', codec: 'hevc' } as const;
+    const st = dstate('yt', 'waiting-for-feed', { message: 'Landscape feed is HEVC. …', waitingFor: ['landscape'], blocked });
+    const out = apiDestination(dest('yt'), st, session({ feeds: [feedWith('landscape', 'hevcAac')] }), null);
+    expect(out).toMatchObject({ phase: 'waiting-for-feed', live: false, down: true, waitingFor: ['landscape'], blocked, message: 'Landscape feed is HEVC. …' });
+    // Never left over on another phase.
+    expect(apiDestination(dest('yt'), dstate('yt', 'live', { blocked }), session(), null).blocked).toBeNull();
+    expect(apiDestination(dest('yt'), dstate('yt', 'waiting-for-feed'), session(), null).blocked).toBeNull();
   });
 });
 
@@ -128,6 +159,7 @@ describe('status builder', () => {
       live: true,
       down: false,
       waitingFor: [],
+      blocked: null,
       message: null,
       stats: { bitrateKbps: 6010, fps: 60, speed: 1, uptimeSec: 3605 },
       viewers: 214,

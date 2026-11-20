@@ -80,6 +80,7 @@ export function platformSchemas(): Record<string, unknown> {
       headingCss: selectors,
       climbLevels: { type: 'integer', minimum: 0, maximum: 12 },
       climbMinHeight: { type: 'integer', minimum: 0, maximum: 2000 },
+      climbPreferRows: { type: 'boolean', description: 'Take a parent that holds comment rows when the box around the comment box holds none (0.2.40)' },
     }),
     row: section({
       css: selectors,
@@ -97,6 +98,8 @@ export function platformSchemas(): Record<string, unknown> {
       pollMs: { type: 'integer', minimum: 500, maximum: 10000 },
       tabRetryMs: { type: 'integer', minimum: 3000, maximum: 120000 },
       backoffMaxMs: { type: 'integer', minimum: 1000, maximum: 60000 },
+      backlogAsHistory: { type: 'boolean', description: 'Comments already on screen when the reader first reads the panel are not delivered (0.2.40)' },
+      liveStartGraceMs: { type: 'integer', minimum: 0, maximum: 600000, description: 'A live younger than this has no backlog: what is on screen is delivered (0.2.40)' },
     }),
     limits: section({ maxRows: { type: 'integer', minimum: 20, maximum: 500 }, history: { type: 'integer', minimum: 50, maximum: 2000 } }),
   };
