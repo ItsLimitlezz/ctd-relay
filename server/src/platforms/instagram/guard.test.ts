@@ -178,7 +178,7 @@ describe.skipIf(!!process.env.CI_NO_BROWSER)('instagram stream guard (Chromium +
     expect(fx.events).toContainEqual({ type: 'end' });
   }, 90_000);
 
-  it('when Instagram ends the live, the log has the whole notice and the state of the page; an unknown dialog is logged once', async () => {
+  it('when Instagram ends the live, the log has the whole notice and the state of the page; an unknown dialog is logged once, without names', async () => {
     const live = await goLive();
     const p = await page();
     const lines: Record<string, unknown>[] = [];
@@ -203,11 +203,21 @@ describe.skipIf(!!process.env.CI_NO_BROWSER)('instagram stream guard (Chromium +
       await until('the unknown dialog in the log', () => logged(/dialog the health watcher does not know/).length > 0);
       await sleep(600); // several more reads
       expect(logged(/dialog the health watcher does not know/)).toEqual([
-        expect.objectContaining({ text: 'Made-up prompt nobody has seen Do you want to keep going?', buttons: ['Keep going', 'Stop'], liveForSec: 0 }),
+        // Only interface words and the length: any other word could be a name.
+        expect.objectContaining({ text: '####-up ###### ###### has #### Do you want to keep going?', length: 57, buttons: ['Keep going', 'Stop'], liveForSec: 0 }),
       ]);
       expect(events).toEqual([]); // an unknown dialog ends nothing, and nothing was clicked
       expect(await p.locator('#prompt').count()).toBe(1);
       await p.evaluate(`for (const id of ['named', 'linked', 'prompt']) document.getElementById(id).remove()`);
+      // A name in plain text (no avatar, no link) is masked too.
+      await p.evaluate(`(() => {
+        const d = document.createElement('div'); d.setAttribute('role', 'dialog'); d.id = 'plain';
+        d.innerHTML = '<p>fixture_zed wants to go live with you</p><button>Accept</button><button>Decline</button>';
+        document.body.appendChild(d);
+      })()`);
+      await until('the plain-text dialog in the log', () => logged(/dialog the health watcher does not know/).length > 1);
+      expect(logged(/dialog the health watcher does not know/)[1]).toMatchObject({ text: '#######_### wants to go live with you', length: 37, buttons: ['Accept', 'Decline'] });
+      await p.evaluate(`document.getElementById('plain').remove()`);
 
       clock = 70 * 60_000 + 46_000;
       const long = 'It was ended for a made-up reason. ' + 'More detail about that reason. '.repeat(8).trim();
@@ -230,6 +240,7 @@ describe.skipIf(!!process.env.CI_NO_BROWSER)('instagram stream guard (Chromium +
       });
       const json = JSON.stringify(lines);
       expect(json).not.toContain('fixture_viewer');
+      expect(json).not.toContain('fixture_zed');
       expect(json).not.toContain('lol');
       expect(json).not.toMatch(/https?:\/\/|sessionid|test-session/);
       // The capture is a read: the notice is still there for end() to close.

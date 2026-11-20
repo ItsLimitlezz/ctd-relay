@@ -259,7 +259,7 @@ describe('what the health watcher logs (no names, no comment text)', () => {
       '#######_###',
       '#######_### requested to join',
     ]);
-    expect(logged.notices[2]!.buttons).toEqual(['###### #######_###', '#######']);
+    expect(logged.notices[2]!.buttons).toEqual(['Accept #######_###', 'Decline']);
     expect(logged.notices.map((n) => n.length)).toEqual([44, 11, 29]);
     expect(endStateForLog(null)).toBeNull();
   });

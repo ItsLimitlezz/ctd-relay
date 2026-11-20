@@ -323,7 +323,7 @@ const MAX_LOGGED_DIALOGS = 12;
  */
 const LOG_WORDS: ReadonlySet<string> = new Set([
   ...LABEL_VOCABULARY,
-  'about', 'after', 'again', 'against', 'allow', 'another', 'any', 'are', 'as', 'at', 'be', 'because', 'been', 'before', 'broadcast', 'but',
+  'about', 'accept', 'after', 'again', 'against', 'allow', 'another', 'approve', 'block', 'decline', 'deny', 'remove', 'any', 'are', 'as', 'at', 'be', 'because', 'been', 'before', 'broadcast', 'but',
   'can', 'change', 'check', 'community', 'confirm', 'connected', 'connection', 'content', 'continue', 'copyright', 'could', 'couldn', 'd', 'didn',
   'dismiss', 'do', 'don', 'download', 'ended', 'error', 'failed', 'from', 'get', 'going', 'got', 'guest', 'guests', 'guidelines', 'had', 'has',
   'have', 'help', 'here', 'hour', 'hours', 'how', 'i', 'if', 'instagram', 'interrupted', 'invite', 'invited', 'is', 'isn', 'it', 'its', 'just',
