@@ -1,4 +1,4 @@
-# Release runbook: CTD Relay 0.2.40 (Instagram comments: built-in pack `builtin-3`, no burst of old comments)
+# Release runbook: CTD Relay 0.2.40 (feed codec guard; Instagram comments: built-in pack `builtin-3`, no burst of old comments)
 
 Updates a TrueNAS install from **0.2.30** (`:0.2.30`, schema v4, API v1.11) to **0.2.40**. Follows [INSTALL-TRUENAS.md](INSTALL-TRUENAS.md) → Backups / Updating, like the [0.2.30 runbook](RELEASE-v0.2.30.md); this page adds what is specific to this release.
 
@@ -10,14 +10,15 @@ Version: **`0.2.30` → `0.2.40`** (tag `v0.2.40`), one **+00.00.10** bug-fix ba
 
 | Area | Change | Effect on an existing install |
 |---|---|---|
+| Feed codec guard | A feed that is online but **HEVC or AV1** (or, for Twitch Dual Format through Relay, has no AAC audio) no longer leaves its destinations retrying FFmpeg's "Invalid argument" forever. They wait in `waiting-for-feed` with **Blocked** and a message that says what to change in OBS. They start by themselves once the feed is H.264. Feed cards show `HEVC ⚠` / `AV1 ⚠`, and audio that isn't AAC is a warning (the feed is sent without sound). | Nothing changes for H.264 feeds (any profile: High, Main, Baseline). OBS-direct Dual Format is never blocked. A feed whose codec isn't known yet is never blocked. |
 | Built-in selector pack | `builtin-2` → **`builtin-3`**: from the comment box the reader climbs up to 10 parents (was 4) and stops at one at least 320 px tall (was 200). These are the values of the override `live-1-climb` that made comments readable during the 2026-11-19 live. | Instagram comments are read without an override. A stored override stays active on top of `builtin-3` (see *The stored override* below). |
 | Container choice | When the box around the comment box holds no comment rows and a parent a little further up does, that parent is the container (`container.climbPreferRows`, on). | Only matters when Instagram changes the layout around the comment box. |
 | Old comments | Comments already on screen when the reader first gets to read them are history, not delivered: when a pack change makes the panel readable, when the reader starts during a live, when the panel opens late. A live younger than 60 s delivers what is on screen (`timing.backlogAsHistory`, `timing.liveStartGraceMs`). | No more 25 comments in one second after a pack change. In the first minute of a live, comments that were on screen before the reader's first read are now delivered (0.2.30 skipped them). |
-| Log when Instagram ends a live | `Instagram ended the live` carries the full notice text, its buttons, the rule, the live's length, and the page's state. Unknown dialogs during a live are logged once. | More to read in the log after an Instagram-side end. Nothing is clicked that was not clicked before. |
+| Log when Instagram ends a live | `Instagram ended the live` carries the page's notices and headings with their buttons, the rule, the live's length, and the page's state. Instagram's own ended/warning notice is logged in full; any other text only as interface words plus its length (names become `#` marks). Unknown dialogs during a live are logged once, the same way. | More to read in the log after an Instagram-side end. Nothing is clicked that was not clicked before. |
 | Join lines | "<name> and 3 others joined" (and "1 other", "12 more", "… the live video") is a join event by `<name>` with **`othersCount: 3`**. A join line with no avatar or link takes its first word as the name. | Chat boxes that show joins keep working; those that count people can use `othersCount`. |
-| External API | Revision **1.11 → 1.12** (additive): three optional pack settings, `reader.backlog` in the debug capture ([API.md §15](API.md#15-operator-tools-the-instagram-chat-reader-v111)), `othersCount` on `chat.message` ([API.md](API.md) → `chat.message`). | Existing tokens and apps keep working. The footer shows **API 1.12**. |
+| External API | Revision **1.11 → 1.12** (additive): `destinations[].blocked`, `feeds[].problem` and `kind`/`subject`/`codec` on `system.notice` (codec guard, [API.md](API.md) §4, §5); three optional pack settings, `reader.backlog` in the debug capture ([API.md §15](API.md#15-operator-tools-the-instagram-chat-reader-v111)), `othersCount` on `chat.message` ([API.md](API.md) → `chat.message`). | Existing tokens and apps keep working. The footer shows **API 1.12**. |
 
-**No database migration:** the schema stays at **v4**. Ingest, destinations, accounts, stream keys, the other platforms' chat, show profiles, pairing and the hub are untouched: only files under `server/src/platforms/instagram/`, the API description, and the one new chat field (`othersCount`: the shared chat type, the chat hub's input check and the external API's `chat.message`) changed.
+**No database migration:** the schema stays at **v4**, and no setting is added or rewritten. Accounts, stream keys, the other platforms' chat, show profiles and pairing are untouched. What changed outside `server/src/platforms/instagram/`: the codec guard (the destination runner and orchestrator decide from the feed's codecs whether to start a push, the push supervisor explains FFmpeg's "Invalid argument", `GET /status` and the events carry `blocked` / `problem`, the dashboard shows them; `shared/feed-codec.ts`), the API description, and the one new chat field (`othersCount`: the shared chat type, the chat hub's input check and the external API's `chat.message`).
 
 ### The stored override (`live-1-climb`)
 
@@ -41,7 +42,8 @@ The schema doesn't change, so **switching the image back to `:0.2.30` is enough*
 
 - **An override stored on 0.2.40 that uses a new setting** (`timing.backlogAsHistory`, `timing.liveStartGraceMs`, `container.climbPreferRows`) is not accepted by 0.2.30: it is ignored with the log line `stored Instagram chat selector pack ignored; using the built-in one`, and `builtin-2` runs. It is not deleted. Store one without those settings, as above.
 - The burst is back: on 0.2.30, a pack change during a live delivers everything on screen at once.
-- The API revision goes back to **1.11**, and `chat.message` loses `othersCount` (apps that read it see it missing; join lines still have `join: true`). Tokens and paired apps are untouched.
+- The API revision goes back to **1.11**, and `chat.message` loses `othersCount` (apps that read it see it missing; join lines still have `join: true`). `destinations[].blocked` and `feeds[].problem` disappear. Tokens and paired apps are untouched.
+- **The codec guard is gone:** an HEVC or AV1 feed makes its destinations retry FFmpeg's "Invalid argument" again, as on 0.2.30. Keep OBS on H.264 (CTD OBS → Relay dock → Send stream).
 
 The backup is still the first step.
 
@@ -95,7 +97,8 @@ The image `ghcr.io/itslimitlezz/ctd-relay:0.2.40` exists once the `v0.2.40` tag 
    - If someone joins (or Instagram shows "… and N others joined"), the line arrives as a join event, not a comment. In the external API's `chat.message` an "and N others" line has `othersCount: N`; a plain "<name> joined" has `othersCount: null`. Not required to pass: a Practice live may get no viewers.
    - The log shows `the stored selector pack override only repeats built-in values; it can be deleted`. Press **Settings → Advanced → Revert to built-in** while the live runs. The card shows `builtin-3` with the **Built-in** badge, the log shows `selector pack changed`, **no comment arrives again**, and the next comment you write arrives once. (If you'd rather keep the rollback simple, do this after the first real stream instead; see *The stored override*.)
    - Optional, the burst check: with an Operator tools token and a few comments on screen, store any override (for example the `PUT` from *Rollback safety*) at least a minute into the live. The log shows `comments already on screen taken as history (not delivered)` or nothing at all (the pack was reading, so the rows are a new baseline), and no old comment arrives again. Revert it.
-6. End the Practice live. Optional: a short test stream with **test mode on** to the other destinations (nothing in streaming changed).
+6. End the Practice live.
+7. **Codec guard, with test mode on:** a short test stream from OBS in **H.264** (CTD OBS → Relay dock → Send stream) to the other destinations. The dashboard's feed cards show `H.264`, no `⚠` and no **Blocked** badge, and every destination goes live as on 0.2.30. Optional: switch the landscape encoder to HEVC or AV1 for a moment (outside a real stream). Its destinations show **Blocked: HEVC feed** with the message, nothing retries, and they start by themselves after switching back to H.264.
 
 Keep the `pre-0.2.40` snapshot and backup folder until you've streamed on 0.2.40 at least once.
 

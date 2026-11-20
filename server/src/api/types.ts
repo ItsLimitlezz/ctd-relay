@@ -5,6 +5,7 @@ import type {
   AppResource,
   ChatAlertKind,
   ConnectedApp,
+  DestinationBlock,
   DestinationPhase,
   Feed,
   FeedState,
@@ -124,7 +125,22 @@ export interface ApiSession {
   viewers: number | null;
 }
 
-export type ApiFeed = FeedState;
+/**
+ * A feed's codec problem (shared/feed-codec.ts): `blocking` = no destination can send the feed (HEVC,
+ * AV1…), otherwise it is sent without sound (audio that isn't AAC). `message` says what to change.
+ */
+export interface ApiFeedProblem {
+  reason: DestinationBlock['reason'];
+  /** As in `video.codec` / `audio.codec`: 'hevc', 'av1', 'opus'… */
+  codec: string;
+  /** For display: "HEVC", "AV1", "Opus". */
+  label: string;
+  blocking: boolean;
+  message: string;
+}
+
+/** `problem` is always present in responses and events (null = the feed can be sent as it is). */
+export type ApiFeed = FeedState & { problem?: ApiFeedProblem | null };
 
 export interface ApiDestination {
   id: string;
@@ -137,6 +153,12 @@ export interface ApiDestination {
   down: boolean;
   /** Feeds this destination is waiting for (phase `waiting-for-feed`); empty otherwise. */
   waitingFor: Feed[];
+  /**
+   * Set while the feed is online but can't be sent (HEVC/AV1 video, or no AAC audio for Twitch Dual
+   * Format): Relay starts nothing until OBS sends H.264, then carries on by itself. Phase is
+   * `waiting-for-feed`, `down` is true and `message` says what to change. Null otherwise.
+   */
+  blocked: DestinationBlock | null;
   message: string | null;
   stats: PushStats | null;
   viewers: number | null;
@@ -269,6 +291,14 @@ export interface ApiDestinationUp {
 export interface ApiNotice {
   level: 'info' | 'warn' | 'error';
   message: string;
+  /**
+   * What the notice is about, when Relay can say (additive; most notices have none). 'feed.codec':
+   * a feed's codec can't be sent (level warn) or can be sent again (level info).
+   */
+  kind?: 'feed.codec';
+  subject?: { type: 'feed'; feed: Feed };
+  /** feed.codec: the feed's codec in question ('hevc', 'av1', 'opus'; 'h264' when it is fine again). */
+  codec?: string;
 }
 
 // ---- profiles + the hub (v1.2) ----

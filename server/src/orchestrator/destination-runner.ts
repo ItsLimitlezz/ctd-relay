@@ -28,18 +28,29 @@
 // The health watcher runs for every live whose driver has one (with or without a recovery policy):
 // it also reports viewer counts (DestinationState.viewers).
 //
+// Feed codec guard (shared/feed-codec.ts): Relay hands the feed to the platform as classic RTMP/FLV,
+// which carries H.264 + AAC only. A feed that is online but HEVC/AV1 (or, for Twitch Dual Format,
+// has no AAC audio) is treated like a feed that isn't there: nothing is prepared, no push is started
+// (FFmpeg would only fail and retry forever), and a live that was running is paused with the usual
+// grace period. The state is `waiting-for-feed` with `blocked` + a message that says what to change
+// in OBS; when the feed's tracks change to H.264 the destination carries on by itself. A codec that
+// isn't known yet never blocks.
+//
 // Session test mode: a destination whose platform has no private/test setting is skipped (phase
 // 'disabled', never prepared); the others are prepared with ctx.testMode = true. A channel title
 // (Twitch) is public even during a private test, so those destinations are prepared with an empty
 // title and get no live title changes (see test-mode.ts).
 
 import type { Logger } from 'pino';
+import { blockMessage, feedBlock, pushNeeds, sameBlock, type FeedNeeds } from '../../../shared/feed-codec.js';
 import type {
   Account,
   Destination,
+  DestinationBlock,
   DestinationPhase,
   DestinationState,
   Feed,
+  FeedState,
   TitleResult,
 } from '../../../shared/types.js';
 import type { PushEvent, PushStatus } from '../events.js';
@@ -123,6 +134,10 @@ export interface RunnerHost {
   /** Session test mode (constant while a session runs). */
   testMode(): boolean;
   feedOnline(feed: Feed): boolean;
+  /** The feed as the media server last reported it (codecs), or null when unknown. */
+  feedState(feed: Feed): FeedState | null;
+  /** A destination can't send this feed as it is (codec guard): tell the user once per feed. */
+  feedBlocked(block: DestinationBlock): void;
   graceMs(): number;
   /** Current end() budget (shorter while the server shuts down). */
   endTimeoutMs(): number;
@@ -228,6 +243,10 @@ export class DestinationRunner {
   /** While recovering: the current attempt's deadline (see onAttemptDeadline). */
   private attemptTimer: ReturnType<typeof setTimeout> | null = null;
   private failed = false;
+  /** The codec block last logged and announced (so a repeated evaluate stays quiet). */
+  private reportedBlock: DestinationBlock | null = null;
+  /** What the last push plan read (kept after its live ended, so the guard still knows). */
+  private planNeeds: FeedNeeds | null = null;
   /** Skipped by session test mode: the platform has no private/test setting. Nothing ever runs. */
   private skipped = false;
   private halted = false;
@@ -357,19 +376,19 @@ export class DestinationRunner {
 
   private async evaluate(): Promise<void> {
     if (this.halted || this.failed || this.skipped || !this.driver) return;
-    if (this.requiredOnline()) {
+    if (this.feedsReady()) {
       this.clearGrace();
       if (this.prepared) await this.resume(this.prepared);
       else if (!this.preparing && !this.retryTimer) this.launchPrepare(this.driver);
       return;
     }
-    // A required feed is offline.
+    // A required feed is offline, or online in a codec that can't be sent.
     if (this.retryTimer) {
       clearTimeout(this.retryTimer);
       this.retryTimer = null;
     }
     if (this.prepared) await this.pause();
-    else if (!this.preparing) this.set({ phase: 'waiting-for-feed', message: this.waitingMessage(), waitingFor: this.missingFeeds(), stats: null });
+    else if (!this.preparing) this.set({ ...this.waitingPatch(), stats: null });
   }
 
   /** Feed(s) online with a prepared live: (re)start the push, or go live when there is none. */
@@ -391,31 +410,20 @@ export class DestinationRunner {
         void this.enqueue(() => this.expireGrace());
       }, graceMs);
     }
-    this.set({
-      phase: 'waiting-for-feed',
-      message: `${this.waitingMessage()}: waiting up to ${secs(graceMs)} for it to return`,
-      waitingFor: this.missingFeeds(),
-      stats: null,
-    });
+    this.set({ ...this.waitingPatch(`: waiting up to ${secs(graceMs)} for it to return`), stats: null });
   }
 
   /** The feed did not come back in time: end this live; a fresh prepare happens when it returns. */
   private async expireGrace(): Promise<void> {
     if (this.halted || this.failed || !this.prepared) return;
-    if (this.requiredOnline()) return this.evaluate();
+    if (this.feedsReady()) return this.evaluate();
     this.host.log.info({ destinationId: this.id }, 'feed did not return in time; ending live');
     // Not the platform's doing: an interrupted recovery attempt just becomes a normal prepare later.
     this.recovery = null;
     this.set({ phase: 'ending', message: null });
     await this.endLive();
     if (this.halted) return;
-    this.set({
-      phase: 'waiting-for-feed',
-      message: `${this.waitingMessage()}; a new live will be prepared when it returns`,
-      waitingFor: this.missingFeeds(),
-      watchUrl: null,
-      stats: null,
-    });
+    this.set({ ...this.waitingPatch('; a new live will be prepared when it returns'), watchUrl: null, stats: null });
   }
 
   private launchPrepare(driver: PlatformDriver): void {
@@ -490,7 +498,7 @@ export class DestinationRunner {
       });
     }
 
-    if (this.requiredOnline()) await this.resume(prepared);
+    if (this.feedsReady()) await this.resume(prepared);
     else await this.pause();
   }
 
@@ -632,7 +640,7 @@ export class DestinationRunner {
     this.setRecovering(`${this.platformName()} didn't receive the video yet; restarting the relay…`, { stats: null });
     await this.stopPush();
     if (this.halted || this.failed) return;
-    if (this.requiredOnline()) await this.startPush(plan);
+    if (this.feedsReady()) await this.startPush(plan);
     else await this.pause();
   }
 
@@ -753,7 +761,7 @@ export class DestinationRunner {
   /** Push-down rule: arm on a push failure after going live, while the OBS feed(s) are still up. */
   private armPushDown(prepared: PreparedLive): void {
     const policy = recoveryPolicy(prepared.recovery);
-    if (!policy || !this.wentLive || this.recovery || this.pushDownTimer || !this.requiredOnline()) return;
+    if (!policy || !this.wentLive || this.recovery || this.pushDownTimer || !this.feedsReady()) return;
     this.pushDownTimer = setTimeout(() => {
       this.pushDownTimer = null;
       void this.enqueue(() => this.onPushDown(prepared, policy));
@@ -762,7 +770,7 @@ export class DestinationRunner {
 
   private async onPushDown(prepared: PreparedLive, policy: LiveRecoveryPolicy): Promise<void> {
     if (this.halted || this.failed || this.recovery || this.prepared !== prepared || !this.wentLive) return;
-    if (!this.pushActive || this.pushStatus === 'running' || !this.requiredOnline()) return;
+    if (!this.pushActive || this.pushStatus === 'running' || !this.feedsReady()) return;
     const detail = this.lastPushError ? `: ${cleanText(this.lastPushError, 120)}` : '';
     await this.takedown(`relay down for ${secs(policy.pushDownConfirmMs)} while OBS is live${detail}`);
   }
@@ -780,15 +788,17 @@ export class DestinationRunner {
       return;
     }
 
-    if (!this.requiredOnline()) {
-      // OBS isn't sending either: just drop the live, like when the feed grace period expires.
+    if (!this.feedsReady()) {
+      // OBS isn't sending either (or not something we can send): just drop the live, like when the
+      // feed grace period expires.
       this.host.log.info({ destinationId: this.id, reason }, 'the platform ended the live while the feed is offline');
       this.set({ phase: 'ending', message: null });
       await this.endLive();
       if (this.halted) return;
+      const waiting = this.waitingPatch();
       this.set({
-        phase: 'waiting-for-feed',
-        message: `${name} ended the live (${reason}); a new live will be prepared when the feed returns`,
+        ...waiting,
+        message: waiting.blocked ? waiting.message : `${name} ended the live (${reason}); a new live will be prepared when the feed returns`,
         watchUrl: null,
         stats: null,
       });
@@ -845,7 +855,7 @@ export class DestinationRunner {
   private async onAttemptDeadline(prepared: PreparedLive, recovery: Recovery): Promise<void> {
     if (this.halted || this.failed || this.recovery !== recovery || this.prepared !== prepared) return;
     // Paused for the feed (grace logic), video flowing, or confirm in charge: not this timer's call.
-    if (!this.pushActive || this.pushStatus === 'running' || this.confirmState === 'running' || !this.requiredOnline()) return;
+    if (!this.pushActive || this.pushStatus === 'running' || this.confirmState === 'running' || !this.feedsReady()) return;
     const detail = this.lastPushError ? `: ${cleanText(this.lastPushError, 120)}` : '';
     if (this.confirmState === 'done') {
       await this.recoveryAttemptFailed(`the relay to the new live stayed down${detail}`);
@@ -971,6 +981,56 @@ export class DestinationRunner {
     return this.required.every((f) => this.host.feedOnline(f));
   }
 
+  /** Every required feed is online and can be sent as it is (see the codec guard above). */
+  private feedsReady(): boolean {
+    return this.requiredOnline() && this.codecBlock() === null;
+  }
+
+  /**
+   * Why the online feeds can't be sent, or null. Before the live is prepared only the video codec of
+   * the required feeds is known to matter; with a push plan, what that plan reads.
+   */
+  private codecBlock(): DestinationBlock | null {
+    const plan = this.prepared?.push;
+    if (this.prepared && !plan) return null; // nothing is pushed (e.g. OBS sends Dual Format itself)
+    if (plan) this.planNeeds = pushNeeds(plan);
+    // Without a live: what the last plan read, else the required feeds' video (Twitch Dual Format
+    // through Relay also encodes the primary feed's audio).
+    const needs: FeedNeeds = this.planNeeds ?? { video: this.required, audio: this.encodesOnRelay() ? (this.required[0] ?? null) : null };
+    const feeds: FeedState[] = [];
+    for (const f of new Set<Feed>([...needs.video, ...(needs.audio ? [needs.audio] : [])])) {
+      const state = this.host.feedState(f);
+      if (state) feeds.push(state);
+    }
+    return feedBlock(feeds, needs);
+  }
+
+  /**
+   * The waiting state: "Waiting for <feed>" + `suffix` while a required feed is offline, or the
+   * codec guard's message and `blocked` when the feeds are online but can't be sent.
+   */
+  private waitingPatch(suffix = ''): StatePatch & { message: string } {
+    const block = this.requiredOnline() ? this.codecBlock() : null;
+    if (!block) {
+      this.reportedBlock = null; // a feed that returns in the same codec is announced again
+      return { phase: 'waiting-for-feed', message: `${this.waitingMessage()}${suffix}`, waitingFor: this.missingFeeds(), blocked: null };
+    }
+    if (!sameBlock(block, this.reportedBlock)) {
+      this.reportedBlock = block;
+      this.host.log.warn({ destinationId: this.id, feed: block.feed, reason: block.reason, codec: block.codec }, 'feed cannot be sent as it is; not starting the relay');
+      this.host.feedBlocked(block);
+    }
+    const encodes = this.prepared?.push?.mode === 'ivs' || this.encodesOnRelay();
+    // (Dual Format's message names Twitch Dual Format; every other destination its platform.)
+    const message = blockMessage(block, encodes ? { encodes: true } : { platform: this.platformName() });
+    return { phase: 'waiting-for-feed', message, waitingFor: [block.feed], blocked: block };
+  }
+
+  /** Twitch Dual Format through Relay, known before the plan exists (mirrors feeds.ts requiredFeedsOf). */
+  private encodesOnRelay(): boolean {
+    return this.dest.platform === 'twitch' && this.dest.options?.dualFormat === 'relay-multitrack';
+  }
+
   /** Required feeds that are offline (all required ones when none is, e.g. a feed just came back). */
   private missingFeeds(): Feed[] {
     const missing = this.required.filter((f) => !this.host.feedOnline(f));
@@ -1009,6 +1069,11 @@ export class DestinationRunner {
     if (patch.phase) this.phase = patch.phase;
     // waitingFor only means something in the waiting phase: clear it whenever the phase moves on.
     if (patch.phase && patch.phase !== 'waiting-for-feed' && patch.waitingFor === undefined) patch = { ...patch, waitingFor: [] };
+    // Likewise `blocked`; and once the feed can be sent again, the next block is announced anew.
+    if (patch.phase && patch.phase !== 'waiting-for-feed') {
+      this.reportedBlock = null;
+      if (patch.blocked === undefined) patch = { ...patch, blocked: null };
+    }
     this.host.update(this.id, patch);
   }
 }
