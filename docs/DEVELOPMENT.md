@@ -80,11 +80,13 @@ npx vitest run --project web            # one project
 npx vitest list --filesOnly             # which files each project collects
 npm run build                           # dist/server + dist/web
 npm run smoke                           # end-to-end media relay test with the real binaries in ./tools
+npm run e2e:preview                     # feed previews in the real web UI (Chromium), real Relay + binaries
 ```
 
 - Tests never touch the network or real platform accounts. Platform drivers are tested with stubbed `fetch` and local HTML fixtures.
 - Browser tests drive a real headless Chromium. Set `CI_NO_BROWSER=1` to skip them on machines without it.
 - The smoke test starts MediaMTX and FFmpeg on non-default ports, publishes a test pattern, checks that a wrong key is rejected, relays to a local fake platform and prints PASS or FAIL.
+- `npm run e2e:preview` builds the web UI, starts Relay (TLS off, temp data dir, free ports) with its MediaMTX, publishes two FFmpeg test patterns, and drives the dashboard in Playwright's Chromium: thumbnails (aspect, refresh), **Watch** (LL-HLS through Relay, muted, delay), sound and meter, the muxer stopping after the player closes, the HEVC warning and the Profiles page. It also prints the CPU and RAM Relay and MediaMTX use with nobody watching, thumbnails, and 1 and 3 players (`--quick` skips that). `PREVIEW_E2E_SHOTS=<dir>` saves screenshots; `CHROMIUM_PATH=<binary>` uses another Chromium (it needs H.264, which Playwright's builds have).
 - CI (`.github/workflows/ci.yml`) runs the same typecheck, tests and build on every push and pull request.
 
 ## Production build without Docker

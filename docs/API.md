@@ -1012,11 +1012,57 @@ stale. Kept in memory: after a server restart it is empty until the plugin sends
 ### `GET /api/v1/profiles/{id}/previews/{feed}` — `status:read`
 
 A JPEG of what OBS sends on the profile's `landscape` or `vertical` feed — OBS's program output (the
-vertical one from Aitum Vertical). 640 px wide, one keyframe, made on request and cached 5 s, so
-poll every 3–5 s while showing it. `?access_token=<token>` works too, for image loaders that can't
+vertical one from Aitum Vertical). 640 px wide, one keyframe, made on request and cached 2.5 s
+(5 s before v1.14), so poll every 3–5 s while showing it. `?access_token=<token>` works too, for image loaders that can't
 set headers. Headers: `Content-Type: image/jpeg`, `Cache-Control: no-store`, `X-Preview-At` (when
 the frame was taken). `404 feed_offline` while OBS isn't sending that feed; `503 unavailable` (with
 `Retry-After`) when a frame couldn't be taken — retry.
+
+### `GET /api/v1/profiles/{id}/feeds/{feed}/live.m3u8` — `status:read` (v1.14)
+
+The feed **live**, as Low-Latency HLS: about 1–3 s behind, H.264 video and AAC audio passed through
+unchanged (no transcoding) in fMP4 parts of 200 ms. Play it with any LL-HLS player (hls.js with
+`lowLatencyMode`, AVPlayer, ExoPlayer/Media3); a plain HLS player works too, further behind. How it
+works and what it costs: [PREVIEW.md](PREVIEW.md).
+
+- **Auth:** `Authorization: Bearer` on this request **and on every request the player makes** for the
+  playlists and parts (hls.js `xhrSetup`/`fetchSetup`, `AVURLAsset` HTTP header fields, Media3
+  `DefaultHttpDataSource.Factory().setDefaultRequestProperties`). `?access_token=` is refused here: a
+  token in a URL ends up in logs and caches.
+- **Each `live.m3u8` request opens a player** (a "viewer"). Its URIs are relative, `live/<file>?v=<viewer>`:
+  request them as given (the player adds `_HLS_msn` / `_HLS_part` / `_HLS_skip`). A viewer id only
+  works with the token that opened it, on that profile and feed. A player that asked for nothing for
+  15 s has left; then (or after MediaMTX closed the stream) its requests answer `410 live_ended`:
+  request `live.m3u8` again. Don't keep a player open while nothing shows it.
+- **At most 4 players per feed** at once by default (the server's `LIVE_PREVIEW_MAX_VIEWERS`).
+  Over it: `429 viewer_cap` with `Retry-After`. A token that opens another player while the feed is
+  full replaces its own oldest one.
+- **Rate limit:** `live.m3u8` counts like any request; the `live/{file}` requests have their own budget
+  of 1000 per 10 s per token (a playing LL-HLS player makes about 20 a second), so a player never
+  eats into the 600 a minute of the rest of the API.
+- **Muxing starts with the first player** (the first answer takes about 2–3 s) and stops about 30 s
+  after the last request.
+- **Errors** (problem+json): `404 feed_offline` (OBS isn't sending it), `409 feed_codec` (the feed is
+  HEVC/AV1; `detail` is the codec guard's message, show it instead of a player), `429 viewer_cap`,
+  `503 live_off` (Watch turned off on this server) or `503 unavailable` (retry after `Retry-After`),
+  plus the usual `401`/`403`/`404 unknown_profile`.
+- Headers: `Content-Type: application/vnd.apple.mpegurl` (playlists) or `video/mp4` (parts),
+  `Cache-Control: no-store`. CORS is open like the rest of `/api/v1`.
+
+```js
+import Hls from 'hls.js';
+const hls = new Hls({
+  lowLatencyMode: true,
+  xhrSetup: (xhr) => xhr.setRequestHeader('Authorization', `Bearer ${token}`),
+});
+hls.loadSource(`${base}/api/v1/profiles/${profileId}/feeds/landscape/live.m3u8`);
+hls.attachMedia(video); // start muted: browsers block autoplay with sound
+```
+
+### `GET /api/v1/profiles/{id}/feeds/{feed}/live/{file}?v=<viewer>` — `status:read` (v1.14)
+
+The live preview's media playlists and fMP4 init/part/segment files, as the playlists name them.
+`410 live_ended`: open `live.m3u8` again. `404 not_found`: a part the player fell behind on.
 
 ### Typical set-up: CTD Live mobile
 
@@ -1577,6 +1623,16 @@ The capture reads the page; it does not click or change anything.
 `apiVersion` stays `1`: every change below is additive, so clients written for an earlier v1
 keep working (ignore event types and fields you don't know). `GET /api/v1/openapi.json` reports
 the revision in `info.version`.
+
+### v1.14
+
+(Follows v1.13, Stream Reports.)
+
+- **Live preview (§10):** `GET /profiles/{id}/feeds/{feed}/live.m3u8` and `…/live/{file}`: the feed as
+  Low-Latency HLS (~1–3 s, passthrough, no transcoding), `status:read` in the `Authorization` header
+  only. New problem codes `feed_codec` (409, HEVC/AV1 feed), `viewer_cap` (429), `live_off` (503) and
+  `live_ended` (410).
+- The JPEG preview (`/profiles/{id}/previews/{feed}`) is now cached 2.5 s instead of 5 s.
 
 ### v1.12
 

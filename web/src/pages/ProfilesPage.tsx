@@ -1,14 +1,16 @@
 import { useEffect, useId, useState, type FormEvent } from 'react';
-import type { Profile, ProfileSummary } from '@shared/types';
-import { DEFAULT_PROFILE_ID } from '@shared/types';
+import type { Feed, Profile, ProfileSummary } from '@shared/types';
+import { DEFAULT_PROFILE_ID, FEEDS } from '@shared/types';
 import { api } from '../api';
 import { Badge } from '../components/Badge';
 import { Button } from '../components/Button';
 import { Card } from '../components/Card';
 import { ConfirmButton } from '../components/ConfirmButton';
 import { EmptyState } from '../components/EmptyState';
+import { FeedThumbnail } from '../components/FeedThumbnail';
 import { Field } from '../components/Field';
 import { LayersIcon, PlusIcon } from '../components/icons';
+import { LivePlayerModal } from '../components/LivePlayer';
 import { Modal } from '../components/Modal';
 import { ProfileDot, ProfileStatusBadge } from '../components/ProfileBadge';
 import { Spinner } from '../components/Spinner';
@@ -229,6 +231,7 @@ function ProfileRow({
             </span>
             {blocked && <span className="faint">{blocked}</span>}
           </div>
+          <ProfileFeeds profile={p} />
           <nav className="profile-links" aria-label={`Set up ${p.name}`}>
             <Link to={`/accounts?${q}`}>Accounts</Link>
             <Link to={`/destinations?${q}`}>Destinations</Link>
@@ -259,6 +262,19 @@ function ProfileRow({
         </ConfirmButton>
       </div>
     </li>
+  );
+}
+
+/** Both feeds of a profile: thumbnails (probed: the list has no feed states) and Watch. */
+function ProfileFeeds({ profile }: { profile: ProfileSummary }) {
+  const [watching, setWatching] = useState<Feed | null>(null);
+  return (
+    <div className="profile-feeds" aria-label={`${profile.name} feeds`}>
+      {FEEDS.map((feed) => (
+        <FeedThumbnail key={feed} profileId={profile.id} feed={feed} state={undefined} compact onWatch={() => setWatching(feed)} />
+      ))}
+      {watching && <LivePlayerModal open onClose={() => setWatching(null)} profileId={profile.id} feed={watching} context={profile.name} />}
+    </div>
   );
 }
 

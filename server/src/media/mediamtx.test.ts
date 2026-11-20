@@ -59,7 +59,7 @@ function fakeApi() {
   return { fetch: fetchFn as unknown as typeof fetch, requests, set, remove };
 }
 
-async function setup(opts: { bin?: string; seed?: (repos: Repos) => Promise<void>; deps?: MediaServerDeps } = {}) {
+async function setup(opts: { bin?: string; seed?: (repos: Repos) => Promise<void>; deps?: MediaServerDeps; config?: Partial<AppConfig> } = {}) {
   let bin = opts.bin;
   if (bin === undefined) {
     // Own folder: on Linux <tmp>/mediamtx would collide with the config dir <dataDir>/mediamtx/.
@@ -68,7 +68,7 @@ async function setup(opts: { bin?: string; seed?: (repos: Repos) => Promise<void
     await fs.writeFile(bin, '');
     await fs.chmod(bin, 0o755);
   }
-  const config = { dataDir: tmp, rtmpPort: 1935, mediamtxApiPort: 9997, mediamtxBin: bin } as AppConfig;
+  const config = { dataDir: tmp, rtmpPort: 1935, mediamtxApiPort: 9997, mediamtxBin: bin, ...opts.config } as AppConfig;
   const bus = new EventBus();
   const feedEvents: FeedState[] = [];
   bus.on('feed', (s) => feedEvents.push(s));
@@ -117,6 +117,43 @@ const publishReq = (pathName: string, key: string): MediaMtxAuthRequest => ({
   protocol: 'rtmp',
   id: null,
   query: `key=${key}`,
+});
+
+describe('MediaServer: live preview (LL-HLS)', () => {
+  it('serves HLS on loopback and tells the proxy where a feed is, with the reader password as a header', async () => {
+    const { server, configPath, secret, authUrl, repos } = await setup({ config: { mediamtxHlsPort: 9996 } });
+    expect(server.hlsSource?.('default', 'landscape')).toBeNull(); // not started yet
+    await server.start();
+    const yml = await fs.readFile(configPath, 'utf8');
+    expect(yml).toContain('hls: true');
+    expect(yml).toContain('hlsAddress: "127.0.0.1:9996"');
+    const pass = (await secret('ingest', 'internalReader'))!;
+    expect(server.hlsSource?.('default', 'landscape')).toEqual({
+      baseUrl: 'http://127.0.0.1:9996/live/landscape/',
+      authorization: `Basic ${Buffer.from(`internal:${pass}`).toString('base64')}`,
+    });
+    const club = repos.profiles.create({ name: 'DPRTMNT', color: null });
+    await server.profileAdded(club);
+    expect(server.hlsSource?.(club.id, 'vertical')?.baseUrl).toBe(`http://127.0.0.1:9996/live/${club.slug}/vertical/`);
+    expect(() => server.hlsSource?.('ghost', 'landscape')).toThrow(/Profile not found/);
+    // MediaMTX asks the auth hook when an HLS session starts: the proxy's loopback read is allowed, nothing else.
+    const url = await authUrl();
+    expect(await postAuth(url, { action: 'read', protocol: 'hls', path: 'live/landscape', ip: '127.0.0.1', user: 'internal', password: pass })).toBe(200);
+    expect(await postAuth(url, { action: 'read', protocol: 'hls', path: 'live/landscape', ip: '192.168.1.9', user: 'internal', password: pass })).toBe(401);
+    expect(await postAuth(url, { action: 'read', protocol: 'hls', path: 'live/landscape', ip: '127.0.0.1', user: '', password: '' })).toBe(401);
+  });
+
+  it('LIVE_PREVIEW_MAX_VIEWERS=0 keeps HLS off; so does a config without an HLS port', async () => {
+    const off = await setup({ config: { mediamtxHlsPort: 9996, livePreviewMaxViewers: 0 } });
+    await off.server.start();
+    expect(await fs.readFile(off.configPath, 'utf8')).toContain('hls: false');
+    expect(off.server.hlsSource?.('default', 'landscape')).toBeNull();
+    await off.server.stop();
+    const none = await setup();
+    await none.server.start();
+    expect(await fs.readFile(none.configPath, 'utf8')).toContain('hls: false');
+    expect(none.server.hlsSource?.('default', 'landscape')).toBeNull();
+  });
 });
 
 describe('MediaServer (default profile)', () => {

@@ -30,6 +30,7 @@ import { ffprobePath, probeFeed } from './feed-probe.js';
 import { FeedTracker, offlineFeedState, shouldEmitFeed, type FeedMeasurements, type MtxPath } from './feed-state.js';
 import { createMediaMtxApi, type FetchFn } from './mediamtx-api.js';
 import { buildMediaMtxConfig } from './mediamtx-config.js';
+import { DEFAULT_LIVE_MAX_VIEWERS } from './live-preview.js';
 import { APP_NAME, feedPath, INTERNAL_READER_USER, streamKeyPath, type IngestRoute } from './paths.js';
 import { defaultSpawn, onLines, terminate, type SpawnFn } from './process-utils.js';
 import { redactSecretsInText } from './redact.js';
@@ -115,6 +116,8 @@ export function createMediaServer({ config, bus, log, repos }: MediaServerOption
   const workDir = path.join(config.dataDir, 'mediamtx');
   const configPath = path.join(workDir, 'mediamtx.yml');
   const bin = config.mediamtxBin;
+  // Live preview (docs/PREVIEW.md): loopback LL-HLS, unless it is turned off.
+  const hlsPort = config.mediamtxHlsPort && (config.livePreviewMaxViewers ?? DEFAULT_LIVE_MAX_VIEWERS) > 0 ? config.mediamtxHlsPort : null;
   const notFound = `MediaMTX not found at ${bin}; run \`npm run setup-tools\` (or set MEDIAMTX_BIN). Feeds stay offline.`;
   /** The internal reader password lives in the legacy 'ingest' scope (shared by every profile). */
   const readerScope = repos.secrets.scoped(profileSecretScope(DEFAULT_PROFILE_ID, 'ingest'));
@@ -496,7 +499,7 @@ export function createMediaServer({ config, bus, log, repos }: MediaServerOption
         await fs.mkdir(workDir, { recursive: true });
         await fs.writeFile(
           configPath,
-          buildMediaMtxConfig({ rtmpPort: config.rtmpPort, apiPort: config.mediamtxApiPort, authPort: auth.port }),
+          buildMediaMtxConfig({ rtmpPort: config.rtmpPort, apiPort: config.mediamtxApiPort, authPort: auth.port, hlsPort }),
           { mode: 0o600 },
         );
       } catch (err) {
@@ -540,6 +543,13 @@ export function createMediaServer({ config, bus, log, repos }: MediaServerOption
 
     feed(profileId, feed) {
       return feedState(profileId, feed);
+    },
+
+    hlsSource(profileId, feed) {
+      const entry = requireProfile(profileId);
+      if (hlsPort === null || !running || !readerPassword) return null;
+      const basic = Buffer.from(`${INTERNAL_READER_USER}:${readerPassword}`).toString('base64');
+      return { baseUrl: `http://127.0.0.1:${hlsPort}/${feedPath(feed, entry.slug)}/`, authorization: `Basic ${basic}` };
     },
 
     readUrl(profileId, feed) {

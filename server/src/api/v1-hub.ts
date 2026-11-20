@@ -5,7 +5,7 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { z } from 'zod';
 import { API_SCOPES, DEFAULT_PROFILE_ID, type ApiScope } from '../../../shared/types.js';
 import { OBS_BODY_LIMIT, OBS_POSTS_PER_MINUTE, ObsEventsBody, obsStoreFor, parseObsEvents } from './obs.js';
-import { grabWithFfmpeg, previewServiceFor } from './previews.js';
+import { livePreviewOf, previewsOf, registerLiveRoutes } from './live.js';
 import { connectOffersFor, DEVICE_NAME_MAX } from './connect.js';
 import { API_REVISION } from './openapi.js';
 import type { AppMessage } from '../events.js';
@@ -109,10 +109,7 @@ export function registerHubRoutes(app: FastifyInstance, ctx: V1Context): void {
   const messageId = createUlidGenerator(ctx.now);
   const obsLimiter = new SlidingWindowLimiter(OBS_POSTS_PER_MINUTE, 60_000, ctx.now);
   const obsStore = obsStoreFor(services);
-  const previews = ctx.previews ?? previewServiceFor(services, () => ({
-    online: (profileId, feed) => services.media.feed(profileId, feed).online,
-    grab: (profileId, feed) => grabWithFfmpeg(services.config.ffmpegBin, services.media.readUrl(profileId, feed)),
-  }));
+  const previews = ctx.previews ?? previewsOf(services);
 
   /** The `{id}` profile of a path, checked against the token; sends the problem and returns null otherwise. */
   const pathProfile = (req: FastifyRequest, reply: FastifyReply): string | null => {
@@ -273,6 +270,18 @@ export function registerHubRoutes(app: FastifyInstance, ctx: V1Context): void {
       .header('cache-control', 'no-store')
       .header('x-preview-at', new Date(preview.at).toISOString())
       .send(preview.jpeg);
+  });
+
+  // ---- live preview (v1.14, §10): LL-HLS, Authorization header only (no ?access_token=) ----
+
+  registerLiveRoutes(app, {
+    base: '/profiles/:id/feeds/:feed',
+    preHandler: requireToken('status:read'),
+    filePreHandler: requireToken('status:read', false, 'live'),
+    profile: pathProfile,
+    who: (req) => `token:${authOf(req).token.id}`,
+    error: (reply, status, code, message) => sendProblem(reply, status, code, message),
+    live: () => ctx.live ?? livePreviewOf(services),
   });
 
   // ---- app-to-app messages ----

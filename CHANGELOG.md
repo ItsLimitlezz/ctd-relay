@@ -2,6 +2,26 @@
 
 Versions follow the hub's CONVENTIONS.md → Versioning. Each release that ships to a TrueNAS install has a runbook in `docs/RELEASE-*.md` (backup, update, verify, rollback).
 
+## Unreleased: feed previews
+
+See what OBS sends to Relay without leaving the web UI. API revision **1.14** (additive; after 1.13 from Stream Reports). No database change. See [docs/PREVIEW.md](docs/PREVIEW.md).
+
+### Added
+- **Feed thumbnails** on the dashboard's Landscape and Vertical feed cards and on every profile's row in **Profiles**: a frame of each feed in its own shape (16:9, 9:16), refreshed every 3 s while the page is on screen and the feed is online; an "Offline" placeholder otherwise. Nothing is fetched from a background tab.
+- **Watch:** a live player for a feed, about 1–3 s behind (1.0–1.1 s measured), muted until you turn the sound on, with volume (remembered per browser) and an audio level meter. It is the bundled MediaMTX's Low-Latency HLS, passed through unchanged (no transcoding), muxed only while someone watches (stops ~30–40 s after the last player closes), and proxied through Relay's own HTTPS server with the same login as the web UI. MediaMTX's HLS server listens on loopback only. At most 4 players per feed at once (`LIVE_PREVIEW_MAX_VIEWERS`; `0` turns Watch off). Played with hls.js 1.7.4 (bundled, loaded only when you press Watch) or Safari's own HLS player.
+- An **HEVC/AV1 feed** shows the codec warning in place of the thumbnail and has no Watch button (the feed codec guard's message says what to change in OBS).
+- **API (1.14):** `GET /api/v1/profiles/{id}/feeds/{feed}/live.m3u8` (+ `live/{file}`), `status:read`, header auth only, for CTD Live Studio, CTD Live mobile and the CTD OBS Producer. New problem codes `feed_codec`, `viewer_cap`, `live_off`, `live_ended`. docs/API.md §10.
+- Web UI routes `GET /api/profiles/{id}/feeds/{feed}/preview.jpg`, `…/live.m3u8`, `…/live/{file}` (any signed-in user).
+- `npm run e2e:preview`: the previews end to end in Chromium with the real Relay, MediaMTX and FFmpeg, including the CPU/RAM they cost. `npm run smoke` also checks LL-HLS against the real MediaMTX.
+
+### Changed
+- The JPEG preview is cached 2.5 s instead of 5 s, so a 3 s refresh always gets a new frame (still at most one grab per feed per 2.5 s, however many clients ask).
+- Content-Security-Policy: `media-src 'self' blob:` (the player's Media Source).
+- New settings `LIVE_PREVIEW_MAX_VIEWERS` (default 4) and `MEDIAMTX_HLS_PORT` (default 9996, loopback; never map it). `.env.example`, docs/SECURITY.md → Live preview.
+
+### Cost
+- Thumbnails: about 5 % of one core while a page shows them; a player: a few percent more on Relay and MediaMTX, ~35 MB RAM per feed being watched; nothing while no preview is shown. Each player uses the feed's bitrate in bandwidth (upload, when watched from outside). Measured numbers in docs/PREVIEW.md → What it costs.
+
 ## 0.2.40 (2026-11-20)
 
 Feeds in HEVC/AV1 are blocked with a clear message instead of retrying forever, and Instagram comments get the fixes from the first live run on 0.2.30. API revision **1.12** (additive). Database schema stays at **v4** (no migration). Runbook: [docs/RELEASE-v0.2.40.md](docs/RELEASE-v0.2.40.md).
