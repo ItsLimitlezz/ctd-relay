@@ -224,6 +224,8 @@ export interface ApiChatMessage {
   kind: 'message' | 'event';
   /** v1.3: a "<name> joined" presence line (Instagram, TikTok), not a comment; always with kind 'event'. */
   join: boolean;
+  /** v1.12: on a `join` line that names one user and N others ("dj_fan and 3 others joined"): N. Else null. */
+  othersCount: number | null;
   ts: number;
 }
 

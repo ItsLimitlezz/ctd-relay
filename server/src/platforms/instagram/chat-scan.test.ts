@@ -5,6 +5,7 @@ import {
   alignWindow,
   CHAT_SCAN_SOURCE,
   CHAT_SNAPSHOT_SOURCE,
+  EMPTY_SETTLE_MS,
   MAX_DECISIONS,
   MAX_SETTLE_MS,
   newChatMemory,
@@ -20,21 +21,27 @@ import {
 let nextEl = 1;
 /** A parsed row; `n` (the element) is new unless given. */
 function row(author: string, text: string, over: Partial<ScanRow> = {}): ScanRow {
-  return { n: nextEl++, id: null, author, text, kind: 'message', join: false, avatarUrl: null, badges: null, drop: null, restored: false, hasAvatar: true, ...over };
+  return { n: nextEl++, id: null, author, text, kind: 'message', join: false, othersCount: null, avatarUrl: null, badges: null, drop: null, restored: false, hasAvatar: true, ...over };
 }
 function scan(rows: ScanRow[], over: Partial<ScanResult> = {}): ScanResult {
-  return { doc: 'doc-1', ready: true, container: { strategy: 'tabpanel', tag: 'div', role: 'tabpanel' }, rows, truncated: 0, bad: [], ...over };
+  return { doc: 'doc-1', ready: true, container: { strategy: 'tabpanel', tag: 'div', role: 'tabpanel', n: 1_000_000 }, rows, truncated: 0, bad: [], ...over };
 }
 const OPTS = { packRevision: 1, historySize: 500 };
 const texts = (rows: ScanRow[]) => rows.map((r) => `${r.author}: ${r.text}`);
 /** One read: returns what was delivered. */
 const read = (memory: ChatMemory, rows: ScanRow[], over: Partial<ScanResult> = {}) => texts(reconcile(memory, scan(rows, over), OPTS));
-/** A memory that has already taken its (empty) baseline. */
+/** A memory that has taken its baseline: the panel was there and stayed empty, so there is no backlog. */
 function started(): ChatMemory {
   const memory = newChatMemory();
-  reconcile(memory, scan([]), OPTS);
+  const t0 = Date.now() - 60_000;
+  reconcile(memory, scan([]), { ...OPTS, now: new Date(t0) });
+  reconcile(memory, scan([]), { ...OPTS, now: new Date(t0 + EMPTY_SETTLE_MS) });
+  expect(memory.pending).toBeNull();
   return memory;
 }
+const T0 = new Date('2026-01-01T00:00:00Z').getTime();
+/** Options for a read `ms` after T0. */
+const at = (ms: number, over: Partial<Parameters<typeof reconcile>[2]> = {}) => ({ ...OPTS, now: new Date(T0 + ms), ...over });
 /** The same rows as new elements (what a re-render produces). */
 const remount = (rows: ScanRow[]): ScanRow[] => rows.map((r) => ({ ...r, n: nextEl++ }));
 
@@ -109,21 +116,77 @@ describe('reconcile: what is new', () => {
     expect(read(memory, [a, b, c])).toEqual(['ann: lol']);
   });
 
-  it('delivers the comments that were posted while the comments tab was not selected', () => {
-    const memory = newChatMemory();
+  it('a live that just started: comments posted while the comments tab was not selected are delivered', () => {
+    const memory = newChatMemory(T0);
     // The reader starts, the panel is not open: an empty baseline.
-    expect(read(memory, [], { container: null })).toEqual([]);
-    expect(read(memory, [], { container: null })).toEqual([]);
+    expect(reconcile(memory, scan([], { container: null }), at(5_000))).toEqual([]);
+    expect(reconcile(memory, scan([], { container: null }), at(6_000))).toEqual([]);
     // The tab gets selected and shows what viewers wrote meanwhile.
-    const backlog = [row('ann', 'first'), row('bob', 'second')];
-    expect(read(memory, backlog)).toEqual(['ann: first', 'bob: second']);
-    expect(read(memory, backlog)).toEqual([]);
+    const written = [row('ann', 'first'), row('bob', 'second')];
+    expect(texts(reconcile(memory, scan(written), at(20_000)))).toEqual(['ann: first', 'bob: second']);
+    expect(texts(reconcile(memory, scan(written), at(21_000)))).toEqual([]);
+  });
+
+  it('a live that just started: what is on screen at the first read is new', () => {
+    const memory = newChatMemory(T0);
+    const rows = [row('ann', 'early'), row('bob', 'bird')];
+    expect(texts(reconcile(memory, scan(rows), at(8_000)))).toEqual(['ann: early', 'bob: bird']);
+    expect(texts(reconcile(memory, scan(rows), at(9_000)))).toEqual([]);
+    // Without the option the first read is a baseline whatever the age of the live (as before 0.2.40).
+    const legacy = newChatMemory(T0);
+    expect(reconcile(legacy, scan(remount(rows)), at(8_000, { backlogAsHistory: false }))).toEqual([]);
+  });
+
+  it('a live that has been running: the comments that show up when the panel opens are history, not a burst', () => {
+    for (const liveStartedAt of [T0 - 10 * 60_000, null]) {
+      const memory = newChatMemory(liveStartedAt); // null: the driver does not know, so no grace
+      expect(reconcile(memory, scan([], { container: null }), at(0))).toEqual([]);
+      expect(reconcile(memory, scan([], { container: null }), at(30_000))).toEqual([]); // however long it takes
+      const backlog = Array.from({ length: 25 }, (_, i) => row('ann', `old ${i}`));
+      expect(reconcile(memory, scan(backlog), at(31_000))).toEqual([]);
+      expect(memory.backlog).toBe(25);
+      expect(memory.decisions.every((d) => d.verdict === 'dropped' && d.reason === 'baseline')).toBe(true);
+      // From here on, comments are new; and the backlog is known, so a re-render does not deliver it.
+      expect(texts(reconcile(memory, scan([...backlog, row('bob', 'now')]), at(32_000)))).toEqual(['bob: now']);
+      expect(reconcile(memory, scan(remount(backlog)), at(33_000))).toEqual([]);
+    }
+  });
+
+  it('a panel that was seen empty has no backlog: the first comment of a quiet live is delivered', () => {
+    const memory = newChatMemory(T0 - 10 * 60_000);
+    expect(reconcile(memory, scan([]), at(0))).toEqual([]);
+    expect(reconcile(memory, scan([]), at(EMPTY_SETTLE_MS - 1))).toEqual([]);
+    expect(memory.pending).toBe('start');
+    expect(reconcile(memory, scan([]), at(EMPTY_SETTLE_MS))).toEqual([]);
+    expect(memory.pending).toBeNull();
+    expect(texts(reconcile(memory, scan([row('ann', 'anyone here?')]), at(5 * 60_000)))).toEqual(['ann: anyone here?']);
+
+    // Rows that render a moment after the (still empty) panel were there all along: history.
+    const late = newChatMemory(T0 - 10 * 60_000);
+    reconcile(late, scan([]), at(0));
+    expect(reconcile(late, scan([row('ann', 'old')]), at(1_000))).toEqual([]);
+    // A "Comments" heading without rows is a guess, and another element is another panel: neither settles.
+    const guess = newChatMemory(T0 - 10 * 60_000);
+    const heading = { strategy: 'heading' as const, tag: 'div', role: null, n: 7 };
+    reconcile(guess, scan([], { container: heading }), at(0));
+    reconcile(guess, scan([], { container: heading }), at(EMPTY_SETTLE_MS));
+    expect(guess.pending).toBe('start');
+    reconcile(guess, scan([], { container: { ...heading, strategy: 'composer', n: 8 } }), at(EMPTY_SETTLE_MS + 1_000));
+    reconcile(guess, scan([], { container: { ...heading, strategy: 'composer', n: 9 } }), at(2 * EMPTY_SETTLE_MS + 1_000));
+    expect(guess.pending).toBe('start');
+    expect(reconcile(guess, scan([row('bob', 'old too')]), at(2 * EMPTY_SETTLE_MS + 2_000))).toEqual([]);
+  });
+
+  it('with the option off, rows that become readable later are delivered at once (0.2.30)', () => {
+    const memory = newChatMemory(T0 - 10 * 60_000);
+    const off = { backlogAsHistory: false };
+    expect(reconcile(memory, scan([], { container: null }), at(0, off))).toEqual([]);
+    const rows = [row('ann', 'first'), row('bob', 'second')];
+    expect(texts(reconcile(memory, scan(rows), at(1_000, off)))).toEqual(['ann: first', 'bob: second']);
   });
 
   it('waits for a page that is still loading before taking an empty baseline (bounded)', () => {
     const memory = newChatMemory();
-    const t0 = new Date('2026-01-01T00:00:00Z');
-    const at = (ms: number) => ({ ...OPTS, now: new Date(t0.getTime() + ms) });
     expect(reconcile(memory, scan([], { ready: false }), at(0))).toEqual([]);
     expect(memory.baselined).toBe(false);
     // The existing comments render while the page loads: they are the baseline, not new.
@@ -265,14 +328,44 @@ describe('reconcile: rows the page ruled out, ids, packs, direction', () => {
     expect(texts(reconcile(memory, scan([...reparsed, row('cat', 'three')]), { ...OPTS, packRevision: 2 }))).toEqual(['cat: three']);
   });
 
-  it('delivers what a new pack finds when the old one could not read anything', () => {
-    const memory = started();
-    // The reader is blind (Instagram changed its page): reads find a container but no rows.
-    expect(read(memory, [])).toEqual([]);
-    // The operator stores a pack that works: the comments on screen were never delivered.
+  it('a new pack that makes the panel readable mid-live: what is on screen is history, not a burst', () => {
+    const memory = newChatMemory(T0 - 30 * 60_000);
+    // The reader is blind (Instagram changed its page): reads find a container but no rows, for minutes.
+    expect(reconcile(memory, scan([]), at(0))).toEqual([]);
+    expect(reconcile(memory, scan([]), at(60_000))).toEqual([]);
+    expect(memory.pending).toBeNull(); // an empty panel, as far as the reader can tell
+    // The operator stores a pack that works. 26 rows are on screen; they were written over the last half hour.
+    const rows = Array.from({ length: 26 }, (_, i) => row('ann', `comment ${i}`));
+    expect(reconcile(memory, scan(rows), at(61_000, { packRevision: 2 }))).toEqual([]);
+    expect(memory.backlog).toBe(26);
+    expect(memory.decisions.slice(-26).every((d) => d.verdict === 'dropped' && d.reason === 'pack-changed')).toBe(true);
+    expect(texts(reconcile(memory, scan([...rows, row('bob', 'after the fix')]), at(62_000, { packRevision: 2 })))).toEqual(['bob: after the fix']);
+    expect(reconcile(memory, scan(remount(rows)), at(63_000, { packRevision: 2 }))).toEqual([]);
+  });
+
+  it('a new pack that reads nothing at first: the first rows it does read are still that backlog', () => {
+    const memory = newChatMemory(T0 - 30 * 60_000);
+    reconcile(memory, scan([], { container: null }), at(0));
+    expect(reconcile(memory, scan([], { container: null }), at(1_000, { packRevision: 2 }))).toEqual([]);
+    expect(memory.pending).toBe('pack');
+    expect(reconcile(memory, scan([row('ann', 'old')]), at(9_000, { packRevision: 2 }))).toEqual([]);
+    expect(texts(reconcile(memory, scan([row('ann', 'new')]), at(10_000, { packRevision: 2 })))).toEqual(['ann: new']);
+  });
+
+  it('a new pack in the first minute of a live: what it finds was never delivered, so it is delivered', () => {
+    const memory = newChatMemory(T0);
+    expect(reconcile(memory, scan([]), at(5_000))).toEqual([]);
     const rows = [row('ann', 'missed one'), row('bob', 'missed two')];
-    expect(texts(reconcile(memory, scan(rows), { ...OPTS, packRevision: 2 }))).toEqual(['ann: missed one', 'bob: missed two']);
-    expect(texts(reconcile(memory, scan(rows), { ...OPTS, packRevision: 2 }))).toEqual([]);
+    expect(texts(reconcile(memory, scan(rows), at(40_000, { packRevision: 2 })))).toEqual(['ann: missed one', 'bob: missed two']);
+    expect(texts(reconcile(memory, scan(rows), at(41_000, { packRevision: 2 })))).toEqual([]);
+    // The grace is the pack's: with a shorter one the same live is no longer young.
+    const strict = newChatMemory(T0);
+    reconcile(strict, scan([]), at(5_000, { liveStartGraceMs: 30_000 }));
+    expect(reconcile(strict, scan(remount(rows)), at(40_000, { packRevision: 2, liveStartGraceMs: 30_000 }))).toEqual([]);
+    // With the option off the burst is delivered whatever the age of the live (0.2.30).
+    const legacy = newChatMemory(T0 - 30 * 60_000);
+    reconcile(legacy, scan([]), at(0, { backlogAsHistory: false }));
+    expect(texts(reconcile(legacy, scan(remount(rows)), at(1_000, { packRevision: 2, backlogAsHistory: false })))).toEqual(['ann: missed one', 'bob: missed two']);
   });
 
   it('learns a newest-first list and then treats the top as the new end', () => {

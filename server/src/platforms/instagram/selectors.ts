@@ -358,13 +358,16 @@ export const HEALTH_PROBE_ARGS = {
 };
 
 /**
- * `(args) => { ended, warning, viewers }` — one read of the producer page for the health watcher:
+ * `(args) => { ended, warning, viewers, dialog }` — one read of the producer page for the health watcher:
  * - `ended` / `warning`: text of a short visible notice (dialog, alert or heading) that says the
  *   live ended / was removed (or only warns). Never read from the comments (marked container,
  *   rows, lists, logs, panels labelled "comments") or from panels holding inputs or several avatars.
  * - `viewers`: the viewer count's raw text (parsed by the driver), from a "viewers"/"watching"
  *   label (aria-label/title, with the number inside it or next to the labelled icon) or a short
  *   "12 viewers" text outside the comments; null when not found.
+ * - `dialog`: `{ text, buttons }` of a visible dialog that is none of the notices above (so that a
+ *   prompt nobody has seen yet ends up in the log with its wording). Never one that holds a field,
+ *   an avatar or a link: those can carry what people wrote, or a name.
  */
 export const HEALTH_PROBE_SOURCE = `(args) => {
   const re = (s) => new RegExp(s, 'i');
@@ -401,13 +404,17 @@ export const HEALTH_PROBE_SOURCE = `(args) => {
     }
     return squash(parts.join(' '));
   };
-  const out = { ended: null, warning: null, viewers: null };
+  const out = { ended: null, warning: null, viewers: null, dialog: null };
+  // True when the text is one of the notices (also when another one was already taken).
   const classify = (t) => {
-    if (!t || t.length > args.maxNotice) return;
-    if (warnRe.test(t)) { if (!out.warning) out.warning = t; return; }
-    if (endedRe.test(t) || (policyRe.test(t) && liveRe.test(t))) { if (!out.ended) out.ended = t; return; }
-    if (interruptRe.test(t) && !out.warning) out.warning = t;
+    if (!t || t.length > args.maxNotice) return false;
+    if (warnRe.test(t)) { if (!out.warning) out.warning = t; return true; }
+    if (endedRe.test(t) || (policyRe.test(t) && liveRe.test(t))) { if (!out.ended) out.ended = t; return true; }
+    if (interruptRe.test(t)) { if (!out.warning) out.warning = t; return true; }
+    return false;
   };
+  const buttonsOf = (el) => Array.from(el.querySelectorAll('button, [role="button"]')).filter(visible).slice(0, 8)
+    .map((b) => squash(b.getAttribute('aria-label') || b.innerText || b.textContent).slice(0, 40)).filter(Boolean);
   // Not role="status" / aria-live regions: they may announce viewers' comments, and a comment saying
   // "your live has ended" must never end a healthy live.
   const noticeSel = '[role="dialog"], [role="alertdialog"], [role="alert"]';
@@ -415,7 +422,10 @@ export const HEALTH_PROBE_SOURCE = `(args) => {
     if (!visible(el) || inComments(el)) continue;
     if (el.querySelector('input, textarea, select, [contenteditable="true"], [role="tabpanel"], [role="log"], [' + args.commentsAttr + '], [' + args.commentAttr + ']')) continue;
     if (el.querySelectorAll(avatarSel).length > 1) continue;
-    classify(noticeText(el));
+    const t = noticeText(el);
+    if (classify(t) || out.dialog || !t || el.getAttribute('role') === 'alert') continue;
+    if (el.querySelector(avatarSel + ', a[href]')) continue;
+    out.dialog = { text: t.slice(0, args.maxNotice), buttons: buttonsOf(el) };
   }
   for (const el of document.querySelectorAll('h1, h2, h3, h4, [role="heading"]')) {
     if (visible(el) && !inComments(el)) classify(noticeText(el));
@@ -470,6 +480,86 @@ export const HEALTH_PROBE_SOURCE = `(args) => {
     }
   }
   return out;
+}`;
+
+/** Arguments of END_STATE_SOURCE. */
+export const END_STATE_ARGS = {
+  commentsAttr: CHAT_CONTAINER_ATTR,
+  commentAttr: CHAT_ROW_ATTR,
+  /** Longest text kept per notice (the health probe only classifies notices up to NOTICE_MAX). */
+  maxText: 600,
+  maxNotices: 6,
+};
+
+/**
+ * `(args) => { notices, visibility, focused, online, videos, pathDepth }`: what the producer page
+ * shows when Instagram has ended the live, for the log. Read once, before anything is clicked.
+ * - `notices`: every visible dialog, alert and heading outside the comments, with its role, its
+ *   text without the buttons (cut to `maxText`; `length` is the full length) and its buttons'
+ *   names. Like the health probe, never the comments and never a panel that holds a field, a
+ *   comments list or several avatars.
+ * - `visibility` / `focused` / `online`: document.visibilityState, document.hasFocus(),
+ *   navigator.onLine (a hidden or unfocused page can be throttled by the browser).
+ * - `videos`: the page's video elements (paused, ended, readyState, size): is the preview still playing.
+ * No URLs (only how deep the path is), no cookies, no field values.
+ */
+export const END_STATE_SOURCE = `(args) => {
+  const avatarSel = 'img[alt$="profile picture" i]';
+  const commentsSel = '[' + args.commentsAttr + '], [' + args.commentAttr + '], li, [role="listitem"], [role="row"], [role="log"], [role="feed"], article';
+  const visible = (el) => !!(el && el.isConnected && (el.offsetWidth || el.offsetHeight || el.getClientRects().length));
+  const squash = (s) => String(s || '').replace(/\\s+/g, ' ').trim();
+  const inComments = (el) => {
+    if (el.closest(commentsSel)) return true;
+    for (let node = el.parentElement; node && node !== document.body; node = node.parentElement) {
+      const role = node.getAttribute('role');
+      if (role !== 'tabpanel' && role !== 'region' && role !== 'complementary') continue;
+      const by = node.getAttribute('aria-labelledby');
+      const tab = by ? document.getElementById(by) : null;
+      if (/comment/i.test(node.getAttribute('aria-label') || (tab && tab.textContent) || '')) return true;
+    }
+    return false;
+  };
+  const noticeText = (el) => {
+    const parts = [];
+    const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
+    for (let n = walker.nextNode(); n; n = walker.nextNode()) {
+      const p = n.parentElement;
+      if (!p || p.closest('button, [role="button"], a, svg, time, script, style')) continue;
+      const t = squash(n.textContent);
+      if (t) parts.push(t);
+    }
+    return squash(parts.join(' '));
+  };
+  const notices = [];
+  const seen = new Set();
+  const add = (el, role) => {
+    if (notices.length >= args.maxNotices || !visible(el) || inComments(el)) return;
+    const t = noticeText(el);
+    if (!t || seen.has(t)) return;
+    seen.add(t);
+    const buttons = role === 'heading' ? [] : Array.from(el.querySelectorAll('button, [role="button"]')).filter(visible).slice(0, 8)
+      .map((b) => squash(b.getAttribute('aria-label') || b.innerText || b.textContent).slice(0, 40)).filter(Boolean);
+    notices.push({ role: role, text: t.slice(0, args.maxText), length: t.length, buttons: buttons });
+  };
+  for (const el of document.querySelectorAll('[role="dialog"], [role="alertdialog"], [role="alert"]')) {
+    if (el.querySelector('input, textarea, select, [contenteditable="true"], [role="tabpanel"], [role="log"], [' + args.commentsAttr + '], [' + args.commentAttr + ']')) continue;
+    if (el.querySelectorAll(avatarSel).length > 1) continue;
+    add(el, el.getAttribute('role'));
+  }
+  for (const el of document.querySelectorAll('h1, h2, h3, h4, [role="heading"]')) {
+    if (!el.closest('[role="dialog"], [role="alertdialog"], [role="alert"]')) add(el, 'heading');
+  }
+  const videos = Array.from(document.querySelectorAll('video')).slice(0, 4).map((v) => ({
+    paused: !!v.paused, ended: !!v.ended, readyState: v.readyState, width: v.videoWidth || 0, height: v.videoHeight || 0,
+  }));
+  return {
+    notices: notices,
+    visibility: document.visibilityState,
+    focused: document.hasFocus(),
+    online: navigator.onLine,
+    videos: videos,
+    pathDepth: location.pathname.split('/').filter(Boolean).length,
+  };
 }`;
 
 /** Arguments of LINK_TITLE_SOURCE. */

@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { ChatAlert } from '../../../shared/types.js';
 import type { ChatMessageInput } from '../platforms/types.js';
 import { RecentKeys, RingBuffer } from './buffers.js';
-import { MAX_AUTHOR_LENGTH, MAX_TEXT_LENGTH, cleanAlertAmount, cleanText, normalizeChatMessage, truncate } from './normalize.js';
+import { MAX_AUTHOR_LENGTH, MAX_OTHERS_COUNT, MAX_TEXT_LENGTH, cleanAlertAmount, cleanText, normalizeChatMessage, truncate } from './normalize.js';
 import { safeErrorMessage } from './redact.js';
 import { generateOverlayToken, tokensEqual } from './token.js';
 
@@ -24,6 +24,17 @@ describe('normalizeChatMessage', () => {
       ts: '2026-10-11T11:59:00.000Z',
       kind: 'message',
     });
+  });
+
+  it('keeps othersCount only on join events, as a whole number from 1', () => {
+    const join = (over: Partial<ChatMessageInput>) => normalizeChatMessage(input({ kind: 'event', join: true, text: 'dj_fan and 3 others joined', ...over }), 'instagram', 'd', NOW);
+    expect(join({ othersCount: 3 })).toMatchObject({ kind: 'event', join: true, othersCount: 3 });
+    expect(join({ othersCount: MAX_OTHERS_COUNT })?.othersCount).toBe(MAX_OTHERS_COUNT);
+    for (const bad of [0, -1, 2.5, Number.NaN, Infinity, MAX_OTHERS_COUNT + 1, '3' as unknown as number]) expect(join({ othersCount: bad }), String(bad)).not.toHaveProperty('othersCount');
+    expect(join({})).not.toHaveProperty('othersCount');
+    // Not a join line: no count, whatever the source sent.
+    expect(join({ join: false, othersCount: 3 })).not.toHaveProperty('othersCount');
+    expect(normalizeChatMessage(input({ join: true, othersCount: 3 }), 'instagram', 'd', NOW)).not.toHaveProperty('othersCount');
   });
 
   it('keeps kind=event', () => {

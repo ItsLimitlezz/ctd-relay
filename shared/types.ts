@@ -323,6 +323,11 @@ export interface ChatMessage {
    * and TikTok's live chat). Only on `kind: 'event'` lines.
    */
   join?: boolean;
+  /**
+   * On a `join` line that names one user and a number of others ("dj_fan and 3 others joined" in
+   * Instagram's live chat): that number. `author` is the named user.
+   */
+  othersCount?: number;
 }
 
 export type ChatAlertKind = 'follow' | 'subscription' | 'gift' | 'cheer' | 'kicks' | 'raid' | 'membership' | 'superchat' | 'tip';

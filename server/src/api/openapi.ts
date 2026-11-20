@@ -697,7 +697,7 @@ export function openApiDocument(version: string): Record<string, unknown> {
         },
         ChatMessage: {
           type: 'object',
-          required: ['id', 'platform', 'channel', 'destinationId', 'platformMessageId', 'user', 'text', 'fragments', 'reply', 'highlighted', 'action', 'kind', 'join', 'ts'],
+          required: ['id', 'platform', 'channel', 'destinationId', 'platformMessageId', 'user', 'text', 'fragments', 'reply', 'highlighted', 'action', 'kind', 'join', 'othersCount', 'ts'],
           properties: {
             id: { type: 'string', description: 'Stable, platform-prefixed: use it to apply deletions' },
             platform: ref('Platform'),
@@ -724,6 +724,7 @@ export function openApiDocument(version: string): Record<string, unknown> {
             action: bool,
             kind: { enum: ['message', 'event'] },
             join: { type: 'boolean', description: 'v1.3: a "<name> joined" presence line (Instagram, TikTok), not a comment; always with kind "event"' },
+            othersCount: nullable({ type: 'integer', minimum: 1, description: 'v1.12: on a join line that names one user and N others ("dj_fan and 3 others joined"): N; user is the named one. Else null' }),
             ts: epochMs,
           },
         },
