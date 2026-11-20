@@ -1,0 +1,129 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Fixture: live producer comments (synthetic)</title>
+<style>
+  body { font-family: sans-serif; margin: 0; }
+  [hidden] { display: none !important; }
+  #panel { width: 380px; min-height: 260px; }
+  .row { display: flex; gap: 6px; padding: 4px; }
+  .row img.av, .composer img.av { width: 20px; height: 20px; }
+  .body { display: block; }
+  .meta { display: flex; gap: 8px; font-size: 11px; }
+  img.emoji { width: 16px; height: 16px; }
+  .pinned-area { border-bottom: 1px solid #ccc; }
+</style>
+</head>
+<body>
+<div role="dialog" aria-label="Live producer">
+  <div role="tablist">
+    <button type="button" role="tab" id="tab-setup" aria-selected="false">Stream setup</button>
+    <button type="button" role="tab" id="tab-comments" aria-selected="true" aria-controls="panel">Comments</button>
+  </div>
+  <div role="tabpanel" id="panel" aria-labelledby="tab-comments">
+    <div class="pinned-area" id="pinned">
+      <!-- a pinned copy of the comment by fixture_user_b below -->
+      <div class="row" data-fx="pinned-copy">
+        <a href="/fixture_user_b/"><img class="av" alt="fixture_user_b's profile picture" src="data:image/gif;base64,R0lGODlhAQABAAAAACH5BAEKAAEALAAAAAABAAEAAAICTAEAOw=="></a>
+        <div class="body"><span class="pin-label">Pinned</span>
+          <div><a href="/fixture_user_b/"><span class="u">fixture_user_b</span></a> <span class="t">hey <a href="/fixture_user_a/">@fixture_user_a</a>, love the stream 🔥🔥</span></div>
+        </div>
+      </div>
+    </div>
+    <ul id="list" style="list-style: none; margin: 0; padding: 0;">
+      <li class="sys" data-fx="system"><span>We're telling your followers that you've started a live video.</span></li>
+      <div class="row" data-fx="join">
+        <a href="/fixture_user_a/"><img class="av" alt="fixture_user_a's profile picture" src="data:image/gif;base64,R0lGODlhAQABAAAAACH5BAEKAAEALAAAAAABAAEAAAICTAEAOw=="></a>
+        <span><span class="u">fixture_user_a</span> joined</span>
+      </div>
+      <div class="row" data-fx="mention">
+        <a href="/fixture_user_b/"><img class="av" alt="fixture_user_b's profile picture" src="data:image/gif;base64,R0lGODlhAQABAAAAACH5BAEKAAEALAAAAAABAAEAAAICTAEAOw=="></a>
+        <div class="body">
+          <div><a href="/fixture_user_b/"><span class="u">fixture_user_b</span></a> <span class="t">hey <a href="/fixture_user_a/">@fixture_user_a</a>, love the stream 🔥🔥</span></div>
+          <div class="meta"><time datetime="2026-01-01T00:00:00Z">1m</time><span>Reply</span><span>See translation</span></div>
+        </div>
+      </div>
+      <div class="row" data-fx="long">
+        <a href="/fixture_user_c/"><img class="av" alt="fixture_user_c’s profile picture" src="data:image/gif;base64,R0lGODlhAQABAAAAACH5BAEKAAEALAAAAAABAAEAAAICTAEAOw=="></a>
+        <div class="body">
+          <div><a href="/fixture_user_c/"><span class="u">fixture_user_c</span></a><svg aria-label="Verified" width="12" height="12"><title>Verified</title><circle cx="6" cy="6" r="6"></circle></svg>
+            <span class="t" id="long-text"></span><span role="button" tabindex="0">more</span></div>
+          <div class="meta"><span>2m</span><span>Reply</span></div>
+        </div>
+      </div>
+      <div class="row" data-fx="label-like">
+        <a href="/fixture_user_d/"><img class="av" alt="fixture_user_d's profile picture" src="data:image/gif;base64,R0lGODlhAQABAAAAACH5BAEKAAEALAAAAAABAAEAAAICTAEAOw=="></a>
+        <div class="body">
+          <div><a href="/fixture_user_d/"><span class="u">fixture_user_d</span></a> <span class="t">now</span></div>
+          <div class="meta"><span>3m</span><span>Reply</span></div>
+        </div>
+      </div>
+      <div class="row" data-fx="emoji-images">
+        <a href="/fixture_user_e/"><img class="av" alt="fixture_user_e's profile picture" src="data:image/gif;base64,R0lGODlhAQABAAAAACH5BAEKAAEALAAAAAABAAEAAAICTAEAOw=="></a>
+        <div class="body">
+          <div><a href="/fixture_user_e/"><span class="u">fixture_user_e</span></a> <span class="t"><img class="emoji" alt="🎉" src="data:image/gif;base64,R0lGODlhAQABAAAAACH5BAEKAAEALAAAAAABAAEAAAICTAEAOw=="><img class="emoji" alt="🎉" src="data:image/gif;base64,R0lGODlhAQABAAAAACH5BAEKAAEALAAAAAABAAEAAAICTAEAOw=="></span></div>
+          <div class="meta"><span>3m</span><span>Reply</span></div>
+        </div>
+      </div>
+      <div class="row" data-fx="join-others">
+        <a href="/fixture_user_f/"><img class="av" alt="fixture_user_f's profile picture" src="data:image/gif;base64,R0lGODlhAQABAAAAACH5BAEKAAEALAAAAAABAAEAAAICTAEAOw=="></a>
+        <span><span class="u">fixture_user_f</span> and 3 others joined</span>
+      </div>
+      <div class="row" data-fx="says-pinned">
+        <a href="/fixture_user_a/"><img class="av" alt="fixture_user_a's profile picture" src="data:image/gif;base64,R0lGODlhAQABAAAAACH5BAEKAAEALAAAAAABAAEAAAICTAEAOw=="></a>
+        <div class="body">
+          <div><a href="/fixture_user_a/"><span class="u">fixture_user_a</span></a> <span class="t">Pinned</span></div>
+          <div class="meta"><span>4m</span><span>Reply</span></div>
+        </div>
+      </div>
+      <div class="row" data-fx="request">
+        <a href="/fixture_user_g/"><img class="av" alt="fixture_user_g's profile picture" src="data:image/gif;base64,R0lGODlhAQABAAAAACH5BAEKAAEALAAAAAABAAEAAAICTAEAOw=="></a>
+        <span><span class="u">fixture_user_g</span> requested to join</span>
+      </div>
+      <li class="plain" data-fx="no-avatar"><a href="/fixture_user_h/">fixture_user_h</a><span>no avatar on this one</span></li>
+    </ul>
+    <div class="composer">
+      <img class="av" alt="fixture_host's profile picture" src="data:image/gif;base64,R0lGODlhAQABAAAAACH5BAEKAAEALAAAAAABAAEAAAICTAEAOw==">
+      <input id="composer" type="text" placeholder="Add a comment…">
+      <button type="button" id="post">Post</button>
+    </div>
+  </div>
+</div>
+<script>
+  // 600 characters of made-up text for the long comment.
+  document.getElementById('long-text').textContent = Array.from({ length: 100 }, (_, i) => 'word' + (i % 10)).join(' ');
+  const AV = 'data:image/gif;base64,R0lGODlhAQABAAAAACH5BAEKAAEALAAAAAABAAEAAAICTAEAOw==';
+  // Test helpers: add a comment row, re-mount the list, switch tabs.
+  window.__add = (user, text, where) => {
+    const row = document.createElement('div');
+    row.className = 'row';
+    row.innerHTML = '<a href="/' + user + '/"><img class="av" alt="' + user + '\'s profile picture" src="' + AV + '"></a>' +
+      '<div class="body"><div><a href="/' + user + '/"><span class="u"></span></a> <span class="t"></span></div><div class="meta"><span>now</span><span>Reply</span></div></div>';
+    row.querySelector('.u').textContent = user;
+    row.querySelector('.t').textContent = text;
+    const list = document.getElementById('list');
+    if (where === 'top') list.insertBefore(row, list.firstChild);
+    else list.appendChild(row);
+  };
+  // What a framework does when it re-renders the list: every row is a new element with the same content.
+  window.__remount = () => {
+    const list = document.getElementById('list');
+    const copy = list.cloneNode(true);
+    list.replaceWith(copy);
+  };
+  window.__keepLast = (n) => {
+    const list = document.getElementById('list');
+    while (list.children.length > n) list.removeChild(list.firstChild);
+  };
+  window.__tab = (name) => {
+    const comments = name === 'comments';
+    document.getElementById('tab-comments').setAttribute('aria-selected', String(comments));
+    document.getElementById('tab-setup').setAttribute('aria-selected', String(!comments));
+    document.getElementById('panel').hidden = !comments;
+  };
+  document.getElementById('tab-comments').onclick = () => window.__tab('comments');
+  document.getElementById('tab-setup').onclick = () => window.__tab('setup');
+</script>
+</body>
+</html>

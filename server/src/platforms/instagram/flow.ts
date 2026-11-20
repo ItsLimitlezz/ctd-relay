@@ -700,14 +700,3 @@ async function dismissAfterEnd(page: Page): Promise<void> {
     // best effort
   }
 }
-
-/** Open the "Comments" tab of the producer (best effort). */
-export async function selectCommentsTab(page: Page, signal: AbortSignal): Promise<void> {
-  const tab = await visibleNow(sel.commentsTab(page));
-  if (!tab) return;
-  const selected = await tab.getAttribute('aria-selected', { timeout: 1000 }).catch(() => null);
-  if (selected === 'true') return;
-  await click(tab, signal, 3_000).catch((err: unknown) => {
-    if (signal.aborted) throw err;
-  });
-}

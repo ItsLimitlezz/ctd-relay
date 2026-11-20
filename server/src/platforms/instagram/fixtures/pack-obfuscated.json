@@ -1,0 +1,13 @@
+{
+  "schema": 1,
+  "version": "fixture-obfuscated-1",
+  "note": "Example override for the redesigned-comments fixture",
+  "container": { "css": ["[data-testid=\"live-comments\"]"] },
+  "row": {
+    "css": ["[data-comment-id]"],
+    "avatarCss": ["img[alt^=\"Profile photo of\" i]"],
+    "avatarAlt": "^Profile photo of (.+)$",
+    "idAttrs": ["data-comment-id"]
+  },
+  "text": { "css": [".xtext"] }
+}

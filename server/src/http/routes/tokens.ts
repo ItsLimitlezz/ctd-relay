@@ -8,7 +8,7 @@ import net from 'node:net';
 import type { FastifyPluginAsync, FastifyRequest } from 'fastify';
 import { z } from 'zod';
 import type { ApiTokensResponse, ConnectOfferResponse, ConnectOfferStatus, CreateApiTokenResponse } from '../../../../shared/api.js';
-import { API_SCOPES, type ApiScope } from '../../../../shared/types.js';
+import { ADMIN_ONLY_SCOPES, API_SCOPES, type ApiScope } from '../../../../shared/types.js';
 import { LAN_HTTP_HOST_ENV, LAN_HTTP_PORT_ENV, LAN_HTTP_PORT_SETTING, accessInfo, localIPv4Addresses, parsePortOverride } from '../../api/access.js';
 import { connectOffersFor, connectUri, qrSvg } from '../../api/connect.js';
 import { obsRelayFor } from '../../api/obs-relay.js';
@@ -29,7 +29,7 @@ export const tokenNameSchema = z
 export const scopesSchema = z
   .array(z.enum(API_SCOPES as [ApiScope, ...ApiScope[]]))
   .min(1, 'pick at least one scope')
-  .max(10);
+  .max(API_SCOPES.length);
 /** A profile id, or null = every profile. */
 export const tokenProfileSchema = z.string().trim().min(1, 'profileId must be a profile id or null').max(MAX_PROFILE_ID).nullable();
 
@@ -133,6 +133,10 @@ const tokenRoutes: FastifyPluginAsync<RouteOptions> = async (app, { services }) 
     if (CONTROL_RE.test(name)) return sendError(reply, 400, 'name: control characters are not allowed', 'invalid');
     const profileId = parsed.data.profileId ?? null;
     if (profileId !== null && !repos.profiles.get(profileId)) return sendError(reply, 404, 'Profile not found', 'unknown_profile');
+    const adminOnly = scopes.filter((s) => ADMIN_ONLY_SCOPES.includes(s));
+    if (profileId !== null && adminOnly.length > 0) {
+      return sendError(reply, 400, `scopes: ${adminOnly.join(', ')} changes the whole server, so the token cannot be limited to one profile`, 'invalid');
+    }
     if (repos.apiTokens.list().length >= MAX_API_TOKENS) {
       return sendError(reply, 409, `At most ${MAX_API_TOKENS} tokens; revoke unused ones first`, 'limit');
     }
