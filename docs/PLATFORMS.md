@@ -28,6 +28,35 @@ How each platform is supported, how to connect it, and how to register the free 
 
 Only admins can manage developer apps, accounts and destinations. Operators can go live, change the title, read chat, and turn destinations on or off.
 
+## What every platform receives: H.264 video, AAC audio
+
+Relay does not re-encode. Each destination gets its feed exactly as OBS sends it, over classic RTMP (FLV), and classic RTMP carries **H.264 video and AAC audio only**. That holds for every platform on this page, Custom RTMP included. Twitch Dual Format through Relay ("Relay both feeds") is the one destination Relay encodes, and it still has to read H.264 feeds.
+
+So the encoder in OBS decides whether anyone sees the stream:
+
+| OBS sends | What happens |
+|---|---|
+| H.264 + AAC | Sent as it is. |
+| **HEVC (H.265) or AV1** video | Nothing can be sent from that feed. Its destinations are **blocked**: Relay prepares no live, starts no relay and does not retry. |
+| H.264 with audio that isn't AAC (for example Opus) | The video is sent **without sound**. Twitch Dual Format through Relay is blocked instead, because it encodes the landscape feed's audio. |
+
+**When a feed is HEVC or AV1** you see it in four places:
+
+- **Dashboard, feed card:** a red `HEVC ⚠` badge and what to change.
+- **Dashboard, destination cards:** `Blocked: HEVC feed` with the same message, for example: "Landscape feed is HEVC. YouTube gets the stream unchanged and needs H.264. In CTD OBS: Relay dock → Send stream (switches to H.264), or Settings → Output → Video encoder: H.264. It starts by itself once the feed is H.264."
+- **Relay dock in CTD OBS:** the feed line reads `Landscape: HEVC ⚠` and the destinations are DOWN with that message. A notice is shown once per feed.
+- **API:** `feeds[].video.codec` and `feeds[].problem`, `destinations[].blocked`, and a `system.notice` with `kind: "feed.codec"` ([API.md](API.md) §4 and §5).
+
+**To fix it,** make OBS send H.264: in CTD OBS use **Relay dock → Send stream** (it sets both outputs to H.264), or set **Settings → Output → Video encoder** to an H.264 encoder (NVENC H.264, QuickSync H.264, AMD H.264 or x264) and do the same in the vertical stream's settings. Restart the stream in OBS. Relay sees the new codec within a second or two and the blocked destinations start by themselves; you don't need to press anything in Relay. The session keeps running meanwhile.
+
+Destinations on the other feed are not affected: with an HEVC vertical feed and an H.264 landscape feed, the landscape destinations go live as usual.
+
+A live that was already running when OBS switched to HEVC is paused like a lost feed: Relay waits for the disconnect grace period, then ends that live and prepares a new one once the feed is H.264 again.
+
+If a relay does start on a feed like this (the codec wasn't known yet), FFmpeg's `Error opening output files: Invalid argument` and `Error binding filtergraph inputs/outputs: Invalid argument` are shown as the same message.
+
+Sending HEVC or AV1 on to platforms that accept it (Enhanced RTMP) and converting a feed on Relay ([TRANSCODING.md](TRANSCODING.md)) are not built yet.
+
 ---
 
 ## Twitch

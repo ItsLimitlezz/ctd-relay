@@ -3,6 +3,9 @@
 //   OBS stand-ins (FFmpeg test patterns) -> MediaMTX (auth via our loopback server)
 //     -> PushSupervisor (FFmpeg -c copy) -> fake platforms (FFmpeg -listen 1)
 //
+// Also the feed codec guard's two facts: an HEVC feed is reported as `hevc`, and a push started on
+// it anyway gets the clear message instead of FFmpeg's "Invalid argument".
+//
 // Two profiles stream at the same time: the default profile on the pre-profiles paths/keys
 // (`live/landscape?key=…`) and a second profile, added while MediaMTX runs, on
 // `live/<slug>/landscape?key=…` (published the way OBS does it: server `…/live`, key `<slug>/landscape?key=…`).
@@ -18,6 +21,7 @@ import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import pino from 'pino';
+import { feedProblem } from '../shared/feed-codec.js';
 import { DEFAULT_PROFILE_ID, type Feed, type FeedState } from '../shared/types.js';
 import { loadConfig } from '../server/src/config.js';
 import { openDatabase } from '../server/src/db/database.js';
@@ -292,6 +296,38 @@ async function run(): Promise<void> {
       await pushes.stopAll();
       await stopped;
       if (pushes.isRunning(mainDest) || pushes.isRunning(clubDest)) throw new Error('push still marked running');
+    });
+
+    await step('HEVC feed: reported as hevc and flagged; a push on it says what to change', async () => {
+      const isHevc = (f: FeedState) => f.profileId === DEFAULT_PROFILE_ID && f.feed === 'vertical' && f.online && f.video?.codec === 'hevc';
+      const online = waitFor<FeedState>(bus, 'feed', isHevc, 30_000, 'vertical online as hevc');
+      // Takes the vertical path over from the H.264 publisher of the multitrack step, if it ran.
+      const publisher = ffmpeg(ff, [
+        '-loglevel', 'error', '-re',
+        '-f', 'lavfi', '-i', 'testsrc2=size=720x1280:rate=30',
+        '-f', 'lavfi', '-i', 'sine=frequency=700',
+        '-c:v', 'libx265', '-preset', 'ultrafast', '-g', '60', '-pix_fmt', 'yuv420p', '-b:v', '800k',
+        '-c:a', 'aac', '-f', 'flv', `${rtmp}/live/vertical?key=${keys.vertical}`,
+      ]);
+      const hevc = await Promise.race([
+        online,
+        exitCode(publisher, 30_000).then((c) => {
+          throw new Error(`HEVC publisher exited (${c}): ${publisher.tail.slice(-3).join(' | ')}`);
+        }),
+      ]);
+      const problem = feedProblem(hevc);
+      if (!problem?.blocking || problem.codec !== 'hevc') throw new Error(`expected a blocking hevc problem, got ${JSON.stringify(problem)}`);
+
+      // The orchestrator never starts this push (codec guard); if one runs anyway, FFmpeg finds no
+      // video stream and the supervisor explains it.
+      const hevcDest = destination(DEFAULT_PROFILE_ID, 'HEVC relay', 'vertical');
+      const retrying = waitFor<PushEvent>(bus, 'push', (e) => e.id === hevcDest && e.status === 'retrying', 30_000, 'the HEVC push to fail');
+      pushes.start(hevcDest, { url: `rtmp://127.0.0.1:${platformPort3}/app/hevckey`, mode: 'copy', feeds: ['vertical'] });
+      const ev = await retrying;
+      await pushes.stop(hevcDest);
+      publisher.kill('SIGKILL');
+      if (!ev.message?.startsWith('Vertical feed is HEVC.')) throw new Error(`push message: ${ev.message}`);
+      console.log(`\n  feed: ${hevc.video?.codec}; push: ${ev.message}`);
     });
 
     await step('rotate the default landscape key: the publisher using the old key is disconnected', async () => {

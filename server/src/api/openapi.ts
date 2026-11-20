@@ -16,7 +16,7 @@ import { platformPaths, platformSchemas } from './openapi-platforms.js';
 import { showPaths, showSchemas } from './openapi-show.js';
 
 /** Minor revision of the v1 contract (additive changes only; see the changelog in docs/API.md). */
-export const API_REVISION = '1.11';
+export const API_REVISION = '1.12';
 
 const ref = (name: string) => ({ $ref: `#/components/schemas/${name}` });
 const nullable = (schema: object) => ({ oneOf: [schema, { type: 'null' }] });
@@ -568,6 +568,21 @@ export function openApiDocument(version: string): Record<string, unknown> {
             video: nullable({ type: 'object', properties: { codec: str, width: int, height: int, fps: num } }),
             audio: nullable({ type: 'object', properties: { codec: str, sampleRate: int, channels: int } }),
             bitrateKbps: nullable(num),
+            problem: {
+              ...nullable({
+                type: 'object',
+                required: ['reason', 'codec', 'label', 'blocking', 'message'],
+                properties: {
+                  reason: { enum: ['feed-video-codec', 'feed-audio-codec', 'feed-audio-missing'] },
+                  codec: { type: 'string', description: "The codec that can't be sent, as in video.codec / audio.codec (hevc, av1, opus…)" },
+                  label: { type: 'string', description: 'The codec for display: HEVC, AV1, Opus' },
+                  blocking: { type: 'boolean', description: 'true: no destination can send this feed. false: it is sent without sound' },
+                  message: { type: 'string', description: 'What is wrong and what to change in OBS' },
+                },
+              }),
+              description:
+                "The feed's codec can't be sent: Relay passes feeds on as classic RTMP (H.264 video, AAC audio). null when the feed is fine, offline, or its tracks aren't known yet",
+            },
           },
         },
         Destination: {
@@ -583,6 +598,19 @@ export function openApiDocument(version: string): Record<string, unknown> {
             live: bool,
             down: { type: 'boolean', description: 'Session running, destination enabled (not skipped by test mode) and not reaching the platform (error, retrying, recovering, waiting-for-feed; also preparing/connecting/confirming during a retry, until live)' },
             waitingFor: { type: 'array', items: { enum: ['landscape', 'vertical'] }, description: 'Feeds the destination is waiting for; non-empty only while phase is waiting-for-feed' },
+            blocked: {
+              ...nullable({
+                type: 'object',
+                required: ['reason', 'feed', 'codec'],
+                properties: {
+                  reason: { enum: ['feed-video-codec', 'feed-audio-codec', 'feed-audio-missing'] },
+                  feed: { enum: ['landscape', 'vertical'] },
+                  codec: nullable(str),
+                },
+              }),
+              description:
+                "The feed is online but can't be sent (HEVC or AV1 video; no AAC audio for Twitch Dual Format): nothing is pushed or retried until OBS sends H.264, then the destination starts by itself. phase is waiting-for-feed, down is true, message says what to change. null otherwise",
+            },
             message: nullable(str),
             stats: nullable({ type: 'object', properties: { bitrateKbps: num, fps: num, speed: num, uptimeSec: num } }),
             viewers: { oneOf: [{ type: 'integer', minimum: 0 }, { type: 'null' }], description: 'null when unknown' },
@@ -805,7 +833,17 @@ export function openApiDocument(version: string): Record<string, unknown> {
           type: 'object',
           properties: { destinationId: str, name: str, platform: ref('Platform'), downForSec: int, recoveries: int },
         },
-        Notice: { type: 'object', properties: { level: { enum: ['info', 'warn', 'error'] }, message: str } },
+        Notice: {
+          type: 'object',
+          required: ['level', 'message'],
+          properties: {
+            level: { enum: ['info', 'warn', 'error'] },
+            message: str,
+            kind: { enum: ['feed.codec'], description: "Optional: what the notice is about. feed.codec = a feed's codec can't be sent (warn) or can be sent again (info)" },
+            subject: { type: 'object', properties: { type: { enum: ['feed'] }, feed: { enum: ['landscape', 'vertical'] } } },
+            codec: { type: 'string', description: 'feed.codec: the codec in question (hevc, av1, opus; h264 once the feed is fine again)' },
+          },
+        },
         ChatResponse: {
           type: 'object',
           required: ['items', 'next'],

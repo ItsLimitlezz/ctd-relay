@@ -9,6 +9,7 @@ import type {
   PlatformInfo,
   SessionState,
 } from '../../../shared/types.js';
+import { feedProblem } from '../../../shared/feed-codec.js';
 import { requiredFeedsOf, waitingForFeedMessage } from '../orchestrator/feeds.js';
 import type { ApiDestination, ApiFeed, ApiPlatform, ApiSession, ApiStatus } from './types.js';
 
@@ -58,6 +59,7 @@ export function apiSession(s: SessionLike, viewers: number | null = null): ApiSe
 }
 
 export function apiFeed(f: FeedState): ApiFeed {
+  const problem = feedProblem(f);
   return {
     feed: f.feed,
     online: f.online,
@@ -65,6 +67,7 @@ export function apiFeed(f: FeedState): ApiFeed {
     video: f.video,
     audio: f.audio,
     bitrateKbps: f.bitrateKbps,
+    problem: problem ? { reason: problem.reason, codec: problem.codec, label: problem.label, blocking: problem.blocking, message: problem.message } : null,
   };
 }
 
@@ -118,6 +121,7 @@ export function apiDestination(
     live: phase === 'live',
     down: isDown(session, dest, phase, info, st?.retries ?? 0),
     waitingFor,
+    blocked: phase === 'waiting-for-feed' ? (st?.blocked ?? null) : null,
     message,
     stats: st?.stats ?? null,
     viewers,

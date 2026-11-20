@@ -217,6 +217,23 @@ event stream.
   `["landscape"]` or both); it is `[]` in every other phase. `message` reads "Waiting for vertical
   feed", "Waiting for landscape feed" or "Waiting for both feeds". Twitch Dual Format (relay) needs
   both feeds; a vertical-only platform needs only the vertical one.
+- `blocked` (additive, v1.12): set when the feed is **online but can't be sent**, because Relay passes
+  feeds on as classic RTMP (H.264 video, AAC audio):
+  `{ "reason": "feed-video-codec", "feed": "landscape", "codec": "hevc" }`. `reason` is
+  `feed-video-codec` (HEVC, AV1…), or for Twitch Dual Format through Relay `feed-audio-codec` /
+  `feed-audio-missing` (`codec` is `null` when there is no audio). While it is set Relay prepares no
+  live, starts no relay and retries nothing; `phase` is `waiting-for-feed` (no new phase value),
+  `waitingFor` names that feed, `down` is `true`, and `message` says what to change, for example
+  "Landscape feed is HEVC. YouTube gets the stream unchanged and needs H.264. In CTD OBS: Relay dock
+  → Send stream (switches to H.264), or Settings → Output → Video encoder: H.264. It starts by itself
+  once the feed is H.264." It goes back to `null` and the destination starts by itself when OBS sends
+  H.264. `null` in every other case.
+- `feeds[].video.codec` / `feeds[].audio.codec`: what OBS sends, from the ingest server's track list
+  (`h264`, `hevc`, `av1`, `aac`, `opus`…). `feeds[].problem` (additive, v1.12) is Relay's verdict on
+  it, or `null`: `{ "reason": "feed-video-codec", "codec": "hevc", "label": "HEVC", "blocking": true,
+  "message": "Landscape feed is HEVC. …" }`. `blocking: true` = no destination can send this feed;
+  `false` = it is sent without sound (audio that isn't AAC, `reason: "feed-audio-codec"`). Show it as
+  "Landscape: HEVC ⚠". It is `null` while the feed is offline or its tracks aren't known yet.
 - `down` = the session is running, the destination is enabled (and not skipped by test mode), and
   it isn't reaching the platform right now (`error`, `retrying`, `recovering`, or `waiting-for-feed`,
   and also `preparing` / `connecting` / `confirming` while a retry works its way back — it stays down
@@ -548,6 +565,17 @@ Messages the web UI shows as toasts (takedown detected, live again, session stop
 ```
 
 `src.profile` is the profile concerned, or `null` for server-wide notices.
+
+A notice may say what it is about (additive, v1.12): `kind` and `subject`, named like the fields of
+an issue so the same problem can become one. Today there is one kind:
+```json
+{ "level": "warn", "kind": "feed.codec", "subject": { "type": "feed", "feed": "landscape" }, "codec": "hevc",
+  "message": "Landscape feed is HEVC. Twitch, YouTube, Kick and the other platforms get the stream unchanged and need H.264. In CTD OBS: Relay dock → Send stream (switches to H.264), or Settings → Output → Video encoder: H.264. It starts by itself once the feed is H.264." }
+```
+`feed.codec` with `level: "warn"` is sent once per feed and OBS connection when a destination can't
+send the feed (HEVC, AV1) or will send it without sound (`codec: "opus"`). `level: "info"` with the
+same `subject` (`codec: "h264"`) follows when the feed can be sent again. Notices are events, not
+state: read `feeds[].problem` and `destinations[].blocked` from `/status` for what is true now.
 
 ### `profile.status`, `profiles.changed` — `status:read`
 A profile's summary changed / profiles were created, renamed or deleted (§9.1).
@@ -1540,6 +1568,14 @@ The capture reads the page; it does not click or change anything.
 `apiVersion` stays `1`: every change below is additive, so clients written for an earlier v1
 keep working (ignore event types and fields you don't know). `GET /api/v1/openapi.json` reports
 the revision in `info.version`.
+
+### v1.12
+
+- **Feed codec guard:** `destinations[].blocked`, `feeds[].problem` and `kind` / `subject` / `codec`
+  on `system.notice` (§4, §5). A feed that is online but HEVC or AV1 no longer leaves its
+  destinations in `retrying` with FFmpeg's "Invalid argument": they are `waiting-for-feed` with
+  `blocked` set and a `message` that says what to change in OBS, and they start by themselves when
+  the feed is H.264. No new `phase` value and no new event type.
 
 ### v1.11
 

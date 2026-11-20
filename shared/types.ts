@@ -232,8 +232,25 @@ export interface DestinationState {
   lastRecovery: { at: string; reason: string } | null;
   /** Current viewers on the platform, when the driver can read them (null = unknown). */
   viewers?: number | null;
-  /** Feeds this destination needs that are offline now. Non-empty only while the phase is `waiting-for-feed`. */
+  /**
+   * Feeds this destination is waiting for: offline ones, or (with `blocked`) the online feed it can't
+   * send. Non-empty only while the phase is `waiting-for-feed`.
+   */
   waitingFor?: Feed[];
+  /**
+   * Set while the feed is online but can't be sent (e.g. HEVC video): nothing is pushed and no
+   * retries run until OBS sends H.264; then the destination starts by itself. Only while the phase is
+   * `waiting-for-feed`; `message` says what to change.
+   */
+  blocked?: DestinationBlock | null;
+}
+
+/** Why a destination can't send an online feed (shared/feed-codec.ts). */
+export interface DestinationBlock {
+  reason: 'feed-video-codec' | 'feed-audio-codec' | 'feed-audio-missing';
+  feed: Feed;
+  /** The feed's codec that can't be sent ('hevc', 'av1', 'opus'…); null when the feed has no audio. */
+  codec: string | null;
 }
 
 export type SessionStatus = 'offline' | 'starting' | 'live' | 'stopping';

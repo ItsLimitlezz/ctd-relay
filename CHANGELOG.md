@@ -2,6 +2,27 @@
 
 Versions follow the hub's CONVENTIONS.md → Versioning. Each release that ships to a TrueNAS install has a runbook in `docs/RELEASE-*.md` (backup, update, verify, rollback).
 
+## Unreleased
+
+Bug fix after the 2026-11-19 incident. Additive API fields (API revision 1.12, with 0.2.40). Schema stays at **v4**.
+
+### Fixed
+- **A feed in HEVC or AV1 no longer leaves every destination retrying with errors nobody can act on.** Relay passes each feed on unchanged over classic RTMP, which carries H.264 video and AAC audio only. With an HEVC feed, FFmpeg found no video to send and every destination looped in *Retrying* with "Error opening output files: Invalid argument" (YouTube, Kick…) or "Error binding filtergraph inputs/outputs: Invalid argument" (Twitch Dual Format), so the stream reached no one. Now Relay reads each feed's codec from the ingest server's track list and, for a feed it can't send, prepares no live, starts no relay and retries nothing. The destination is **blocked** with what to change: "Landscape feed is HEVC. YouTube gets the stream unchanged and needs H.264. In CTD OBS: Relay dock → Send stream (switches to H.264), or Settings → Output → Video encoder: H.264. It starts by itself once the feed is H.264." And it does: when OBS switches to H.264 the blocked destinations go live without anyone touching Relay. Destinations on the other feed are not affected.
+- The same check when a feed's tracks change mid-stream: a live that was running is paused like a lost feed (grace period, then a new live when the feed is H.264 again).
+- **Twitch Dual Format through Relay** is also blocked when the landscape feed has no AAC audio, which made FFmpeg fail the same way.
+- If a relay does start on such a feed, FFmpeg's two "Invalid argument" errors are shown as the same clear message.
+
+### Added
+- **Where you see it:** the dashboard's feed card (`HEVC ⚠` and the fix) and destination cards (`Blocked: HEVC feed`); the Relay dock in CTD OBS (`Landscape: HEVC ⚠`, destinations DOWN with the message, one notice per feed); and the API: `feeds[].problem`, `destinations[].blocked` (phase stays `waiting-for-feed`, `down` is true) and `system.notice` with `kind: "feed.codec"`. `feeds[].video.codec` was already there. See docs/API.md §4, §5.
+- A feed whose audio isn't AAC (for example Opus) is sent without sound; Relay now says so on the feed card and in a notice.
+- `npm run smoke` publishes an HEVC feed to the real MediaMTX and checks both facts.
+
+### Docs
+- docs/PLATFORMS.md: "What every platform receives: H.264 video, AAC audio". docs/OBS-SETUP.md: troubleshooting row.
+
+### Not in this change
+- Sending HEVC or AV1 on to platforms that accept it (Enhanced RTMP) and converting a feed on Relay (docs/TRANSCODING.md).
+
 ## 0.2.30 (2026-11-19)
 
 API revision **1.11**. Database schema stays at **v4** (no migration; the selector pack override is one row in the settings table). Runbook: [docs/RELEASE-v0.2.30.md](docs/RELEASE-v0.2.30.md).
