@@ -925,7 +925,7 @@ approval (otherwise it is revoked). `410 expired` also answers an unknown `pairi
 gets `410` and simply starts over. Store the token: it never expires (until revoked in
 Settings → API).
 
-### 9.5 Overlay summaries: versions and template updates (unreleased)
+### 9.5 Overlay summaries: versions and template updates (v1.15)
 
 CTD Overlay tells the CTD OBS plugin's **CTD Overlays** dock its version, its templates' versions
 against their followed GitHub releases, which overlays wait for a major upgrade, and short
@@ -1731,13 +1731,14 @@ The web UI uses the same routes under `/api/reports` (session cookie), plus, for
 keep working (ignore event types and fields you don't know). `GET /api/v1/openapi.json` reports
 the revision in `info.version`.
 
-### Unreleased
+### v1.15
 
 - **Overlay summaries (§9.5):** `PUT /apps/{appId}/summary` (`apps:write`, the registering token)
   and `GET /profiles/{id}/overlay-summary` (`apps:read`): an overlay server's version, its
   templates' installed and latest versions, update kind (patch / minor / major), overlays waiting
   for a major upgrade and trimmed release notes, for the CTD OBS plugin's CTD Overlays dock. In
-  memory; unknown fields are dropped. The revision number is set when this ships.
+  memory; unknown fields are dropped. No new scope: paired apps that hold `apps:read` (the CTD
+  OBS plugin) and `apps:write` (CTD Overlay) use it as they are.
 
 ### v1.14
 
