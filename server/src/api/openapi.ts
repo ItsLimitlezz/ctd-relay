@@ -1084,7 +1084,7 @@ export function openApiDocument(version: string): Record<string, unknown> {
         OverlaySummary: {
           type: 'object',
           required: ['schema', 'server', 'templates', 'overlays'],
-          description: 'docs/API.md §9.5. templates: { id, name, installed, oldestInUse?, latest?, source?: { kind, repo?, pinned? }, auto?, update?: none | patch | minor | major, checkedAt?, problem?, notes?: [{ version, text }] }; overlays: { id, slug, name?, show?, template: { id, name?, version }, waiting?: { to, major, why? } }',
+          description: 'docs/API.md §9.5. templates: { id, name, installed, oldestInUse?, latest?, source?: { kind, repo?, tagPrefix?, pinned? }, auto?, update?: none | patch | minor | major, checkedAt?, problem?, notes?: [{ version, text }] }; overlays: { id, slug, name?, show?, template: { id, name?, version }, waiting?: { to, major, why? } }',
           properties: {
             schema: { type: 'string', enum: ['ctd-overlay-summary/1'] },
             server: { type: 'object', properties: { name: str, version: nullable(str) } },

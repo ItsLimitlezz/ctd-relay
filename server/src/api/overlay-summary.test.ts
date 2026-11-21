@@ -67,7 +67,7 @@ const summary = (): OverlaySummary & Record<string, unknown> => ({
       notes: [{ version: '1.3.0', text: 'New: a darker style\nFix: long names wrap' }],
     },
     { id: 'com.ctd.clubbug', name: 'Club bug', installed: '2.0.0', oldestInUse: '1.4.0', latest: '2.0.0', source: { kind: 'github', repo: 'someone/club-bug' }, auto: true, update: 'major' },
-    { id: 'com.ctd.unused', name: 'Not used yet', installed: '1.0.0', source: { kind: 'none' } },
+    { id: 'com.ctd.unused', name: 'Not used yet', installed: '1.0.0', source: { kind: 'github', repo: 'someone/kit', tagPrefix: 'tn-v' } },
   ],
   overlays: [
     { id: 'ovl_lower', slug: 'lower', show: 'Miami Or Bust', template: { id: 'com.ctd.lower', name: 'Lower third', version: '1.3.0' } },
@@ -106,6 +106,9 @@ describe('PUT /apps/{appId}/summary', () => {
     const tooMany = summary();
     tooMany.templates[0]!.notes = [{ version: '1.3.0', text: Array(9).fill('line').join('\n') }];
     expectProblem(await call('PUT', '/api/v1/apps/ctd-overlay/summary', overlayToken, tooMany), 400, 'invalid');
+    const prefix = summary();
+    prefix.templates[0]!.source = { kind: 'github', repo: 'someone/lower-third', tagPrefix: 'has space' };
+    expectProblem(await call('PUT', '/api/v1/apps/ctd-overlay/summary', overlayToken, prefix), 400, 'invalid');
     const control = summary();
     control.templates[0]!.notes = [{ version: '1.3.0', text: 'bell\u0007' }];
     expectProblem(await call('PUT', '/api/v1/apps/ctd-overlay/summary', overlayToken, control), 400, 'invalid');
@@ -138,6 +141,7 @@ describe('GET /profiles/{id}/overlay-summary', () => {
     expect(item.overlays.map((o: { slug: string }) => o.slug)).toEqual(['lower']);
     // its template, and the one no overlay uses; not the club's
     expect(item.templates.map((x: { id: string }) => x.id)).toEqual(['com.ctd.lower', 'com.ctd.unused']);
+    expect(item.templates[1].source).toEqual({ kind: 'github', repo: 'someone/kit', tagPrefix: 'tn-v' });
     expect(item.templates[0].notes).toEqual([{ version: '1.3.0', text: 'New: a darker style\nFix: long names wrap' }]);
     // no token ids, no overlay keys or URLs
     const text = res.body;

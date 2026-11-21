@@ -74,6 +74,11 @@ const TemplateSchema = z.object({
       kind: z.enum(['github', 'url', 'none']),
       /** owner/name, for a GitHub source (no URL: a release page is built from it). */
       repo: z.string().regex(/^[A-Za-z0-9-]{1,39}\/[A-Za-z0-9._-]{1,100}$/).optional(),
+      /**
+       * The release tag prefix the source follows ("tn-v" for tn-v1.2.0): one repository can hold several templates,
+       * one per prefix, so a source is its repo and prefix together.
+       */
+      tagPrefix: z.string().regex(/^[A-Za-z0-9._/-]{1,64}$/).optional(),
       /** Follows one release only (owner/name@tag). */
       pinned: z.boolean().optional(),
     })

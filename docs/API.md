@@ -943,7 +943,7 @@ registered, `409 app_owned` for another token). Body (at most 64 KB; `204` when 
   "ui": "http://overlay.local:4848",
   "templates": [
     { "id": "com.example.lower", "name": "Lower third", "installed": "1.3.0", "oldestInUse": "1.2.0",
-      "latest": "1.3.0", "source": { "kind": "github", "repo": "owner/lower-third" },
+      "latest": "1.3.0", "source": { "kind": "github", "repo": "owner/lower-third", "tagPrefix": "v" },
       "auto": true, "update": "minor", "checkedAt": "2026-11-21T18:00:00Z",
       "notes": [{ "version": "1.3.0", "text": "New: a darker style\nFix: long names wrap" }] }
   ],
@@ -958,6 +958,8 @@ registered, `409 app_owned` for another token). Body (at most 64 KB; `204` when 
 - `update`: from `oldestInUse` (else `installed`) to `latest`. `patch` and `minor` move overlays by
   themselves (when `auto`); `major` waits for the operator (before 1.0.0 a minor bump counts as
   major). `problem`: the last check failed, as a short code only (`rate-limited`, `no-release`…).
+- `source.tagPrefix`: the release tag prefix it follows (`tn-v` for `tn-v1.2.0`). One repository can hold
+  several templates, one per prefix: show a source as `owner/name · tn-v`, never by `repo` alone.
 - `notes`: at most 5 releases; `text` is at most 8 plain lines of 200 characters joined with `\n` (a
   string, not an array: the OBS plugin's JSON reader drops arrays of strings).
 - `ui`: the admin UI's address (no credentials, query or fragment). The dock opens
