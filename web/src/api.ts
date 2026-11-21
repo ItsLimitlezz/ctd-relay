@@ -375,6 +375,18 @@ export const api = {
     post<object>(`/api/browser/${encodeURIComponent(accountId)}/close`, { save }),
 };
 
+/**
+ * Same-origin URLs of a feed's previews (docs/PREVIEW.md). The browser sends the session cookie with
+ * them, so no credential is ever part of the URL. Thumbnail: one JPEG (refresh it every few seconds).
+ * Live: the LL-HLS playlist for hls.js or a native HLS <video>.
+ */
+export function feedPreviewUrl(profileId: string, feed: Feed): string {
+  return `/api/profiles/${encodeURIComponent(profileId)}/feeds/${feed}/preview.jpg`;
+}
+export function feedLiveUrl(profileId: string, feed: Feed): string {
+  return `/api/profiles/${encodeURIComponent(profileId)}/feeds/${feed}/live.m3u8`;
+}
+
 /** Build a ws:// or wss:// URL for a same-origin path. */
 export function wsUrl(path: string): string {
   const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';

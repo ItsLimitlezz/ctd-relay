@@ -10,6 +10,7 @@ import { ALERT_COUNT_UNITS, ALERT_KINDS, API_ROLES, EVENT_TYPES } from './types.
 import { CLAIMS_PER_MINUTE_PER_IP, MESSAGE_DATA_MAX_BYTES, MESSAGE_TYPE_RE, MESSAGES_PER_MINUTE, PAIRINGS_PER_MINUTE_PER_IP } from './v1-hub.js';
 import { OBS_BODY_LIMIT, OBS_DATA_MAX_BYTES, OBS_EVENT_TYPES, OBS_MAX_EVENTS, OBS_POSTS_PER_MINUTE } from './obs.js';
 import { PREVIEW_MAX_AGE_MS } from './previews.js';
+import { DEFAULT_LIVE_MAX_VIEWERS, VIEWER_IDLE_MS } from '../media/live-preview.js';
 import { CONNECT_OFFER_TTL_MS, DEVICE_NAME_MAX, MOBILE_SCOPES } from './connect.js';
 import { MAX_SOCKETS_PER_TOKEN, OBS_SUBPROTOCOL } from './obs-relay.js';
 import { platformPaths, platformSchemas } from './openapi-platforms.js';
@@ -17,7 +18,7 @@ import { reportPaths, reportSchemas } from './openapi-reports.js';
 import { showPaths, showSchemas } from './openapi-show.js';
 
 /** Minor revision of the v1 contract (additive changes only; see the changelog in docs/API.md). */
-export const API_REVISION = '1.13';
+export const API_REVISION = '1.14';
 
 const ref = (name: string) => ({ $ref: `#/components/schemas/${name}` });
 const nullable = (schema: object) => ({ oneOf: [schema, { type: 'null' }] });
@@ -295,6 +296,49 @@ export function openApiDocument(version: string): Record<string, unknown> {
             '200': { description: 'The preview', content: { 'image/jpeg': { schema: { type: 'string', format: 'binary' } } } },
             '404': problemResponse('Feed offline (`feed_offline`), no such feed (`not_found`) or profile (`unknown_profile`)'),
             '503': problemResponse('The preview could not be taken right now (`unavailable`, with Retry-After)'),
+            '401': errors['401'],
+            '429': errors['429'],
+          },
+        },
+      },
+      '/profiles/{id}/feeds/{feed}/live.m3u8': {
+        get: {
+          summary: 'Live preview of a feed: Low-Latency HLS multivariant playlist (v1.14)',
+          operationId: 'getFeedLive',
+          tags: ['profiles'],
+          description: `Needs \`feeds:watch\` in the \`Authorization\` header on this and every request it leads to (no \`?access_token=\`). H.264 + AAC passed through unchanged (no transcoding) as LL-HLS (fMP4, 200 ms parts, ~1–3 s behind). Each request opens a new player ("viewer"); its URIs (\`live/<file>?v=<viewer>\`) only work with the token that opened it. At most ${DEFAULT_LIVE_MAX_VIEWERS} players per feed at once by default (LIVE_PREVIEW_MAX_VIEWERS); a player that asked for nothing for ${VIEWER_IDLE_MS / 1000} s has left. Muxing starts with the first player and stops ~30 s after the last request. See docs/API.md §10 and docs/PREVIEW.md.`,
+          parameters: [idPath, { name: 'feed', in: 'path', required: true, schema: { enum: ['landscape', 'vertical'] } }],
+          responses: {
+            '200': { description: 'The multivariant playlist', content: { 'application/vnd.apple.mpegurl': { schema: str } } },
+            '404': problemResponse('Feed offline (`feed_offline`), no such feed (`not_found`) or profile (`unknown_profile`)'),
+            '409': problemResponse('The feed is HEVC/AV1 (`feed_codec`, `detail` says what to change in OBS)'),
+            '429': {
+              ...problemResponse('Too many players on this feed (`viewer_cap`), or over 600 requests/minute (`rate_limited`)'),
+              headers: { 'Retry-After': { schema: int, description: 'Seconds to wait' } },
+            },
+            '503': problemResponse('Live preview turned off (`live_off`) or not available right now (`unavailable`, with Retry-After)'),
+            '401': errors['401'],
+            '403': problemResponse('Token without `feeds:watch` (`missing_scope`) or limited to another profile (`profile_forbidden`)'),
+          },
+        },
+      },
+      '/profiles/{id}/feeds/{feed}/live/{file}': {
+        get: {
+          summary: "A live preview's media playlist or fMP4 part/segment (v1.14)",
+          operationId: 'getFeedLiveFile',
+          tags: ['profiles'],
+          description: 'The URIs of the live preview playlists, as given (`?v=<viewer>`; LL-HLS players add `_HLS_msn`, `_HLS_part`, `_HLS_skip`). `410 live_ended`: the player ended (idle, or the muxer closed); open `live.m3u8` again.',
+          parameters: [
+            idPath,
+            { name: 'feed', in: 'path', required: true, schema: { enum: ['landscape', 'vertical'] } },
+            { name: 'file', in: 'path', required: true, schema: { type: 'string', pattern: '^[A-Za-z0-9_-]{1,128}\\.(m3u8|mp4)$' } },
+            { name: 'v', in: 'query', required: true, schema: str, description: 'The viewer id from the playlist' },
+          ],
+          responses: {
+            '200': { description: 'A media playlist or an fMP4 file', content: { 'application/vnd.apple.mpegurl': { schema: str }, 'video/mp4': { schema: { type: 'string', format: 'binary' } } } },
+            '404': problemResponse('No such file (`not_found`, e.g. a part the player fell behind on) or the feed went offline (`feed_offline`)'),
+            '409': problemResponse('The feed turned HEVC/AV1 (`feed_codec`)'),
+            '410': problemResponse('This player ended (`live_ended`): open live.m3u8 again'),
             '401': errors['401'],
             '429': errors['429'],
           },

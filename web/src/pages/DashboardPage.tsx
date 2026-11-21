@@ -20,6 +20,7 @@ import { Card } from '../components/Card';
 import { ChatLog } from '../components/ChatLog';
 import { ConfirmButton } from '../components/ConfirmButton';
 import { EmptyState } from '../components/EmptyState';
+import { FeedThumbnail } from '../components/FeedThumbnail';
 import { Field } from '../components/Field';
 import {
   elapsedSeconds,
@@ -35,6 +36,7 @@ import {
   plural,
 } from '../components/format';
 import { BroadcastIcon, ExternalIcon, EyeIcon, FlaskIcon, LandscapeIcon, RetryIcon, ShieldIcon, VerticalIcon } from '../components/icons';
+import { LivePlayerModal } from '../components/LivePlayer';
 import { PhaseBadge } from '../components/PhaseBadge';
 import { PlatformBadge, platformName } from '../components/PlatformBadge';
 import { ProfileTag } from '../components/ProfileBadge';
@@ -382,11 +384,31 @@ const FEED_HINT: Record<Feed, string> = {
 };
 
 function FeedsRow({ feeds }: { feeds: FeedState[] | null }) {
+  const profileId = useProfileId();
+  const [watching, setWatching] = useState<Feed | null>(null);
+  // Another profile on screen: its player isn't the one that was open.
+  useEffect(() => setWatching(null), [profileId]);
   return (
     <div className="feeds">
       {FEEDS.map((feed) => (
-        <FeedCard key={feed} feed={feed} state={feeds?.find((f) => f.feed === feed) ?? null} loading={!feeds} />
+        <FeedCard
+          key={feed}
+          feed={feed}
+          state={feeds?.find((f) => f.feed === feed) ?? null}
+          loading={!feeds}
+          profileId={profileId}
+          onWatch={() => setWatching(feed)}
+        />
       ))}
+      {watching && (
+        <LivePlayerModal
+          open
+          onClose={() => setWatching(null)}
+          profileId={profileId}
+          feed={watching}
+          state={feeds?.find((f) => f.feed === watching)}
+        />
+      )}
     </div>
   );
 }
@@ -397,14 +419,27 @@ const KEYFRAME_FIX: Record<Feed, string> = {
   vertical: 'In the Aitum Vertical dock: settings → Keyframe Interval: 2 s, then restart the vertical stream.',
 };
 
-export function FeedCard({ feed, state, loading }: { feed: Feed; state: FeedState | null; loading: boolean }) {
+export function FeedCard({
+  feed,
+  state,
+  loading,
+  profileId,
+  onWatch,
+}: {
+  feed: Feed;
+  state: FeedState | null;
+  loading: boolean;
+  /** With a profile, the card shows the feed's preview (thumbnail + Watch). */
+  profileId?: string;
+  onWatch?: () => void;
+}) {
   const online = !!state?.online;
   const Icon = feed === 'landscape' ? LandscapeIcon : VerticalIcon;
   const keyframes = keyframeStatus(state?.video);
   // HEVC/AV1 video (no destination can send it) or audio that isn't AAC (sent without sound).
   const problem = online ? feedProblem(state) : null;
   return (
-    <Card>
+    <Card className="feed-card">
       <div className="feed-head">
         <span className="feed-icon">
           <Icon />
@@ -426,6 +461,9 @@ export function FeedCard({ feed, state, loading }: { feed: Feed; state: FeedStat
           </>
         )}
       </div>
+      {profileId && !loading && state && (
+        <FeedThumbnail profileId={profileId} feed={feed} state={state} {...(onWatch ? { onWatch } : {})} />
+      )}
       {online && state ? (
         <dl className="kv">
           <dt>Resolution</dt>

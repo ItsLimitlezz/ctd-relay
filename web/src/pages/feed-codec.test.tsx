@@ -62,3 +62,36 @@ describe('blocked destination badge', () => {
     expect(blockedLabel({ reason: 'feed-audio-codec', feed: 'landscape', codec: 'opus' })).toBe('Blocked: no AAC audio');
   });
 });
+
+describe('feed card: preview', () => {
+  const withPreview = (state: FeedState) =>
+    renderToStaticMarkup(<FeedCard feed={state.feed} state={state} loading={false} profileId="default" onWatch={() => undefined} />);
+
+  it('an online H.264 feed: a thumbnail frame in its aspect, with Watch', () => {
+    const out = withPreview(feed());
+    expect(out).toContain('feed-thumb is-landscape');
+    expect(out).toContain('Loading preview…'); // the first frame arrives after mount
+    expect(out).toContain('Watch the landscape feed live');
+    const v = withPreview(feed({ feed: 'vertical' }));
+    expect(v).toContain('feed-thumb is-vertical');
+  });
+
+  it('offline: a placeholder, no Watch', () => {
+    const out = withPreview(feed({ online: false, video: null, audio: null }));
+    expect(out).toContain('data-mode="offline"');
+    expect(out).toContain('Offline');
+    expect(out).not.toContain('feed-thumb-watch');
+  });
+
+  it('HEVC: the codec warning instead of a picture or a player', () => {
+    const out = withPreview(feed({ feed: 'vertical', video: { codec: 'hevc' } }));
+    expect(out).toContain('data-mode="codec"');
+    expect(out).toContain('No preview: Relay needs H.264');
+    expect(out).not.toContain('feed-thumb-watch');
+    expect(out).not.toContain('<video');
+  });
+
+  it('without a profile (older callers): no preview at all', () => {
+    expect(card(feed())).not.toContain('feed-thumb');
+  });
+});

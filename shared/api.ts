@@ -344,6 +344,16 @@ export interface VersionResponse {
 }
 
 // ---------------------------------------------------------------------------
+// Feed previews (docs/PREVIEW.md). Any logged-in user; the session cookie authenticates them.
+// GET /api/profiles/:id/feeds/:feed/preview.jpg -> image/jpeg (404 feed_offline, 503 unavailable)
+// GET /api/profiles/:id/feeds/:feed/live.m3u8   -> LL-HLS multivariant playlist (a new viewer)
+// GET /api/profiles/:id/feeds/:feed/live/:file  -> its media playlists and fMP4 parts (?v=<viewer>)
+//   Errors (ApiError codes): 404 feed_offline | unknown_profile | not_found, 409 feed_codec (HEVC/AV1),
+//   410 live_ended (open live.m3u8 again), 429 viewer_cap (Retry-After), 503 live_off | unavailable.
+// The same live routes are in /api/v1 (status:read, Authorization header only): docs/API.md §10.
+// ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
 // Transcoding capabilities (docs/TRANSCODING.md §4). Read-only: what this machine's FFmpeg can encode.
 // GET /api/system/transcode-capabilities [user] and GET /api/v1/system/transcode-capabilities
 // (status:read) -> TranscodeCapabilities

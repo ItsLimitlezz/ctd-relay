@@ -407,6 +407,8 @@ export interface AuditEntry {
  *                Settings → API for every profile; never granted through pairing (ADMIN_ONLY_SCOPES).
  * reports:read = stream reports: viewers, chat counts, events, the audience leaderboards and
  *                exports (v1.13, docs/REPORTS.md). Holds viewer names: grant it with care.
+ * feeds:watch  = watch a feed live, video and sound (LL-HLS, v1.14, docs/PREVIEW.md). Each player
+ *                pulls the feed's full bitrate. The JPEG thumbnails stay under status:read.
  */
 export type ApiScope =
   | 'chat:read'
@@ -420,7 +422,8 @@ export type ApiScope =
   | 'show:write'
   | 'show:secrets'
   | 'system:admin'
-  | 'reports:read';
+  | 'reports:read'
+  | 'feeds:watch';
 export const API_SCOPES: readonly ApiScope[] = [
   'chat:read',
   'status:read',
@@ -434,6 +437,7 @@ export const API_SCOPES: readonly ApiScope[] = [
   'show:secrets',
   'system:admin',
   'reports:read',
+  'feeds:watch',
 ];
 /** Scopes an app cannot ask for by pairing, and that a token limited to one profile cannot hold. */
 export const ADMIN_ONLY_SCOPES: readonly ApiScope[] = ['system:admin'];
