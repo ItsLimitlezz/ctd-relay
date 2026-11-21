@@ -296,7 +296,7 @@ export function openApiDocument(version: string): Record<string, unknown> {
           summary: 'Live preview of a feed: Low-Latency HLS multivariant playlist (v1.14)',
           operationId: 'getFeedLive',
           tags: ['profiles'],
-          description: `Needs \`status:read\` in the \`Authorization\` header on this and every request it leads to (no \`?access_token=\`). H.264 + AAC passed through unchanged (no transcoding) as LL-HLS (fMP4, 200 ms parts, ~1–3 s behind). Each request opens a new player ("viewer"); its URIs (\`live/<file>?v=<viewer>\`) only work with the token that opened it. At most ${DEFAULT_LIVE_MAX_VIEWERS} players per feed at once by default (LIVE_PREVIEW_MAX_VIEWERS); a player that asked for nothing for ${VIEWER_IDLE_MS / 1000} s has left. Muxing starts with the first player and stops ~30 s after the last request. See docs/API.md §10 and docs/PREVIEW.md.`,
+          description: `Needs \`feeds:watch\` in the \`Authorization\` header on this and every request it leads to (no \`?access_token=\`). H.264 + AAC passed through unchanged (no transcoding) as LL-HLS (fMP4, 200 ms parts, ~1–3 s behind). Each request opens a new player ("viewer"); its URIs (\`live/<file>?v=<viewer>\`) only work with the token that opened it. At most ${DEFAULT_LIVE_MAX_VIEWERS} players per feed at once by default (LIVE_PREVIEW_MAX_VIEWERS); a player that asked for nothing for ${VIEWER_IDLE_MS / 1000} s has left. Muxing starts with the first player and stops ~30 s after the last request. See docs/API.md §10 and docs/PREVIEW.md.`,
           parameters: [idPath, { name: 'feed', in: 'path', required: true, schema: { enum: ['landscape', 'vertical'] } }],
           responses: {
             '200': { description: 'The multivariant playlist', content: { 'application/vnd.apple.mpegurl': { schema: str } } },
@@ -308,7 +308,7 @@ export function openApiDocument(version: string): Record<string, unknown> {
             },
             '503': problemResponse('Live preview turned off (`live_off`) or not available right now (`unavailable`, with Retry-After)'),
             '401': errors['401'],
-            '403': problemResponse('Token without `status:read` (`missing_scope`) or limited to another profile (`profile_forbidden`)'),
+            '403': problemResponse('Token without `feeds:watch` (`missing_scope`) or limited to another profile (`profile_forbidden`)'),
           },
         },
       },

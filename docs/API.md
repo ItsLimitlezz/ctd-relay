@@ -72,6 +72,7 @@ Authorization: Bearer ctd_pat_3fK9wQ1v…
 | `show:secrets` | `GET /profiles/{id}/show/revisions/{rev}/secrets`: third-party secrets (URL keys, passwords) saved with a show profile. Grant it per trusted machine only (v1.9) |
 | `system:admin` | Operator tools (§15): read, replace and revert the Instagram chat reader's selector pack, and take its sanitised debug capture. Only for a token an admin creates for **every profile**; pairing never grants it (v1.11) |
 | `reports:read` | Stream reports (§16): `GET /reports/…` past streams, viewers over time, chat counts, events, leaderboards and exports. Holds viewers' names: give it only to apps you trust with your audience (v1.13) |
+| `feeds:watch` | Live preview (§10): `GET /profiles/{id}/feeds/{feed}/live.m3u8` and `…/live/{file}`, the feeds as live video **with sound**. Each player pulls the feed's full bitrate. The JPEG previews stay under `status:read` (v1.14) |
 
 A token may also be **limited to one profile** (§9.1). `/`, `/events` and `/events/poll` return
 whatever the token's scopes allow. Browser-only fallback: `GET /events` also accepts
@@ -1019,13 +1020,15 @@ set headers. Headers: `Content-Type: image/jpeg`, `Cache-Control: no-store`, `X-
 the frame was taken). `404 feed_offline` while OBS isn't sending that feed; `503 unavailable` (with
 `Retry-After`) when a frame couldn't be taken — retry.
 
-### `GET /api/v1/profiles/{id}/feeds/{feed}/live.m3u8` — `status:read` (v1.14)
+### `GET /api/v1/profiles/{id}/feeds/{feed}/live.m3u8` — `feeds:watch` (v1.14)
 
 The feed **live**, as Low-Latency HLS: about 1–3 s behind, H.264 video and AAC audio passed through
 unchanged (no transcoding) in fMP4 parts of 200 ms. Play it with any LL-HLS player (hls.js with
 `lowLatencyMode`, AVPlayer, ExoPlayer/Media3); a plain HLS player works too, further behind. How it
 works and what it costs: [PREVIEW.md](PREVIEW.md).
 
+- **Scope:** `feeds:watch`, its own scope: live video and sound is more than the status and still
+  frames every paired app gets with `status:read`. Pair (or create a token) with it on purpose.
 - **Auth:** `Authorization: Bearer` on this request **and on every request the player makes** for the
   playlists and parts (hls.js `xhrSetup`/`fetchSetup`, `AVURLAsset` HTTP header fields, Media3
   `DefaultHttpDataSource.Factory().setDefaultRequestProperties`). `?access_token=` is refused here: a
@@ -1037,7 +1040,8 @@ works and what it costs: [PREVIEW.md](PREVIEW.md).
   request `live.m3u8` again. Don't keep a player open while nothing shows it.
 - **At most 4 players per feed** at once by default (the server's `LIVE_PREVIEW_MAX_VIEWERS`).
   Over it: `429 viewer_cap` with `Retry-After`. A token that opens another player while the feed is
-  full replaces its own oldest one.
+  full replaces its own oldest one. A player counts from the moment it asks for `live.m3u8`, so
+  players that open at the same moment never pass the cap together.
 - **Rate limit:** `live.m3u8` counts like any request; the `live/{file}` requests have their own budget
   of 1000 per 10 s per token (a playing LL-HLS player makes about 20 a second), so a player never
   eats into the 600 a minute of the rest of the API.
@@ -1060,7 +1064,7 @@ hls.loadSource(`${base}/api/v1/profiles/${profileId}/feeds/landscape/live.m3u8`)
 hls.attachMedia(video); // start muted: browsers block autoplay with sound
 ```
 
-### `GET /api/v1/profiles/{id}/feeds/{feed}/live/{file}?v=<viewer>` — `status:read` (v1.14)
+### `GET /api/v1/profiles/{id}/feeds/{feed}/live/{file}?v=<viewer>` — `feeds:watch` (v1.14)
 
 The live preview's media playlists and fMP4 init/part/segment files, as the playlists name them.
 `410 live_ended`: open `live.m3u8` again. `404 not_found`: a part the player fell behind on.
@@ -1676,8 +1680,8 @@ the revision in `info.version`.
 ### v1.14
 
 - **Live preview (§10):** `GET /profiles/{id}/feeds/{feed}/live.m3u8` and `…/live/{file}`: the feed as
-  Low-Latency HLS (~1–3 s, passthrough, no transcoding), `status:read` in the `Authorization` header
-  only. New problem codes `feed_codec` (409, HEVC/AV1 feed), `viewer_cap` (429), `live_off` (503) and
+  Low-Latency HLS (~1–3 s, passthrough, no transcoding), with the new scope **`feeds:watch`** in the
+  `Authorization` header only (`status:read` is not enough). New problem codes `feed_codec` (409, HEVC/AV1 feed), `viewer_cap` (429), `live_off` (503) and
   `live_ended` (410).
 - The JPEG preview (`/profiles/{id}/previews/{feed}`) is now cached 2.5 s instead of 5 s.
 

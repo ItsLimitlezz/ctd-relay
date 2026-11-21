@@ -43,7 +43,7 @@ beforeEach(async () => {
   });
   t = await createTestApi({ live });
   club = t.addProfile('DPRTMNT', '#E11D48');
-  reader = t.token(['status:read'], 'ctd live studio');
+  reader = t.token(['status:read', 'feeds:watch'], 'ctd live studio');
 });
 afterEach(async () => {
   await t.close();
@@ -99,18 +99,26 @@ describe('GET /profiles/{id}/feeds/{feed}/live.m3u8 (+ live/{file})', () => {
     expect((await get('/api/v1/status', reader)).statusCode).toBe(200);
   });
 
-  it('needs status:read (the preview scope)', async () => {
+  it('needs feeds:watch: status:read (every paired app has it) gets the JPEG preview, not live video and sound', async () => {
     expectProblem(await get(`${BASE}/live.m3u8`, t.token(['chat:read'], 'chat only')), 403, 'missing_scope');
+    const status = t.token(['status:read', 'chat:read'], 'overlay');
+    const refused = await get(`${BASE}/live.m3u8`, status);
+    expectProblem(refused, 403, 'missing_scope');
+    expect(refused.json().detail).toContain('feeds:watch');
+    // Not even with a viewer id someone else opened.
+    const href = /^live\/video1_stream\.m3u8\?v=\S+$/m.exec((await get(`${BASE}/live.m3u8`, reader)).body)![0];
+    expectProblem(await get(`${BASE}/${href}`, status), 403, 'missing_scope');
+    expect(upstream).toHaveLength(1);
   });
 
   it("a viewer id is tied to the token that opened it", async () => {
     const master = await get(`${BASE}/live.m3u8`, reader);
     const href = /^live\/video1_stream\.m3u8\?v=\S+$/m.exec(master.body)![0];
-    expectProblem(await get(`${BASE}/${href}`, t.token(['status:read'], 'another app')), 410, 'live_ended');
+    expectProblem(await get(`${BASE}/${href}`, t.token(['status:read', 'feeds:watch'], 'another app')), 410, 'live_ended');
   });
 
   it("a profile-limited token can't watch another profile", async () => {
-    const mainOnly = t.token(['status:read'], 'main only', DEFAULT_PROFILE_ID);
+    const mainOnly = t.token(['feeds:watch'], 'main only', DEFAULT_PROFILE_ID);
     expectProblem(await get(`/api/v1/profiles/${club.id}/feeds/landscape/live.m3u8`, mainOnly), 403, 'profile_forbidden');
     expect((await get(`${BASE}/live.m3u8`, mainOnly)).statusCode).toBe(200);
   });
@@ -122,7 +130,7 @@ describe('GET /profiles/{id}/feeds/{feed}/live.m3u8 (+ live/{file})', () => {
     expectProblem(av1, 409, 'feed_codec');
     expect(av1.json().detail).toMatch(/^Vertical feed is AV1\./);
     expectProblem(await get(`/api/v1/profiles/${DEFAULT_PROFILE_ID}/feeds/sideways/live.m3u8`, reader), 404, 'not_found');
-    for (const name of ['a', 'b', 'c']) expect((await get(`${BASE}/live.m3u8`, t.token(['status:read'], name))).statusCode).toBe(200);
+    for (const name of ['a', 'b', 'c']) expect((await get(`${BASE}/live.m3u8`, t.token(['feeds:watch'], name))).statusCode).toBe(200);
     const capped = await get(`${BASE}/live.m3u8`, reader);
     expectProblem(capped, 429, 'viewer_cap');
     expect(capped.headers['retry-after']).toBe('15');

@@ -273,11 +273,13 @@ export function registerHubRoutes(app: FastifyInstance, ctx: V1Context): void {
   });
 
   // ---- live preview (v1.14, §10): LL-HLS, Authorization header only (no ?access_token=) ----
+  // Its own scope: live video and sound (and the feed's full bitrate per player) is more than the
+  // status and thumbnails every paired app gets with status:read.
 
   registerLiveRoutes(app, {
     base: '/profiles/:id/feeds/:feed',
-    preHandler: requireToken('status:read'),
-    filePreHandler: requireToken('status:read', false, 'live'),
+    preHandler: requireToken('feeds:watch'),
+    filePreHandler: requireToken('feeds:watch', false, 'live'),
     profile: pathProfile,
     who: (req) => `token:${authOf(req).token.id}`,
     error: (reply, status, code, message) => sendProblem(reply, status, code, message),

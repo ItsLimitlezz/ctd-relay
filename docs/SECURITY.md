@@ -79,12 +79,12 @@ RTMP publishing requires a random per-feed key. Reading a feed is only possible 
 
 ## Live preview
 
-The feed previews (thumbnails and **Watch**, [PREVIEW.md](PREVIEW.md)) are behind the same login as the rest of the web UI, and behind a token with `status:read` in `/api/v1`.
+The feed previews (thumbnails and **Watch**, [PREVIEW.md](PREVIEW.md)) are behind the same login as the rest of the web UI. In `/api/v1` the JPEG thumbnails need `status:read` and the live player needs its own scope, `feeds:watch` (live video and sound, and the feed's full bitrate per player, are more than the status every paired app gets).
 
 - MediaMTX's Low-Latency HLS server listens on **127.0.0.1 only** and answers only with the internal reader password, which only Relay's proxy sends (as a header, never in a URL). Nothing outside the container can reach it, and its port must never be mapped.
 - MediaMTX gives each HLS reader a session id that works without the password. It never leaves the server: Relay replaces it in every playlist with its own random viewer id (128 bits), which only works together with the login (session cookie) or token that opened the player, on that profile and feed. Logging out ends the player at its next request.
 - No credential is in any preview URL: the browser sends the `SameSite=Strict` session cookie with each request, apps send `Authorization: Bearer` (the live routes refuse `?access_token=`). Neither viewer ids nor HLS session ids are logged.
-- Players per feed are capped (`LIVE_PREVIEW_MAX_VIEWERS`, default 4), so a stolen login can't pull the feed many times over. Each player costs upload bandwidth (the feed's bitrate), not CPU: nothing is transcoded.
+- Players per feed are capped (`LIVE_PREVIEW_MAX_VIEWERS`, default 4), so a stolen login can't pull the feed many times over; a player holds its place from the moment it asks, so players opening at the same moment can't pass the cap together. The `live/{file}` requests of `/api/v1` have their own budget (1000 per 10 s per token) instead of the 600 a minute: they only reach files of a player the same token opened, so the larger budget buys nothing else. Each player costs upload bandwidth (the feed's bitrate), not CPU: nothing is transcoded.
 - The CSP adds `media-src 'self' blob:` (the player hands the `<video>` a Media Source `blob:` URL). Scripts stay same-origin; the player library is bundled, not loaded from a CDN.
 
 ## Protections
