@@ -2,15 +2,15 @@
 
 Versions follow the hub's CONVENTIONS.md → Versioning. Each release that ships to a TrueNAS install has a runbook in `docs/RELEASE-*.md` (backup, update, verify, rollback).
 
-## 0.2.60 (unreleased): feed previews
+## 0.2.60 (2026-11-21)
 
-See what OBS sends to Relay without leaving the web UI. API revision **1.14** (additive; after 1.13 from Stream Reports). No database change. See [docs/PREVIEW.md](docs/PREVIEW.md).
+**Feed previews**: see what OBS sends to Relay without leaving the web UI. Includes everything in 0.2.50 (Stream Reports). API revision **1.14** (additive). No database change: schema **v4**, reports **r1**, so 0.2.50 still opens `app.db` after a rollback. See [docs/PREVIEW.md](docs/PREVIEW.md). Runbook: [docs/RELEASE-v0.2.60.md](docs/RELEASE-v0.2.60.md).
 
 ### Added
-- **Feed thumbnails** on the dashboard's Landscape and Vertical feed cards and on every profile's row in **Profiles**: a frame of each feed in its own shape (16:9, 9:16), refreshed every 3 s while the page is on screen and the feed is online; an "Offline" placeholder otherwise. Nothing is fetched from a background tab.
+- **Feed thumbnails** on the dashboard's Landscape and Vertical feed cards and on every profile's row in **Profiles**: a frame of each feed in its own shape (16:9, 9:16), refreshed while the page is on screen and the feed is online (asked for 3 s after the last frame arrived: about every 5–6 s with 2 s keyframes); an "Offline" placeholder otherwise. Nothing is fetched from a background tab.
 - **Watch:** a live player for a feed, about 1–3 s behind (1.0–1.1 s measured), muted until you turn the sound on, with volume (remembered per browser) and an audio level meter. It is the bundled MediaMTX's Low-Latency HLS, passed through unchanged (no transcoding), muxed only while someone watches (stops ~30–40 s after the last player closes), and proxied through Relay's own HTTPS server with the same login as the web UI. MediaMTX's HLS server listens on loopback only. At most 4 players per feed at once (`LIVE_PREVIEW_MAX_VIEWERS`; `0` turns Watch off). Played with hls.js 1.7.4 (bundled, loaded only when you press Watch) or Safari's own HLS player.
 - An **HEVC/AV1 feed** shows the codec warning in place of the thumbnail and has no Watch button (the feed codec guard's message says what to change in OBS).
-- **API (1.14):** `GET /api/v1/profiles/{id}/feeds/{feed}/live.m3u8` (+ `live/{file}`), `status:read`, header auth only, for CTD Live Studio, CTD Live mobile and the CTD OBS Producer. New problem codes `feed_codec`, `viewer_cap`, `live_off`, `live_ended`. docs/API.md §10.
+- **API (1.14):** `GET /api/v1/profiles/{id}/feeds/{feed}/live.m3u8` (+ `live/{file}`) with a new scope, **`feeds:watch`** ("Watch the feeds live"), header auth only, for CTD Live Studio, CTD Live mobile and the CTD OBS Producer. Existing tokens and paired apps don't get it; the JPEG previews stay under `status:read`. New problem codes `feed_codec`, `viewer_cap`, `live_off`, `live_ended`. docs/API.md §10.
 - Web UI routes `GET /api/profiles/{id}/feeds/{feed}/preview.jpg`, `…/live.m3u8`, `…/live/{file}` (any signed-in user).
 - `npm run e2e:preview`: the previews end to end in Chromium with the real Relay, MediaMTX and FFmpeg, including the CPU/RAM they cost. `npm run smoke` also checks LL-HLS against the real MediaMTX.
 
@@ -19,8 +19,15 @@ See what OBS sends to Relay without leaving the web UI. API revision **1.14** (a
 - Content-Security-Policy: `media-src 'self' blob:` (the player's Media Source).
 - New settings `LIVE_PREVIEW_MAX_VIEWERS` (default 4) and `MEDIAMTX_HLS_PORT` (default 9996, loopback; never map it). `.env.example`, docs/SECURITY.md → Live preview.
 
+### Changed (Senior check)
+- **Viewer cap:** a player holds its place from the moment it asks for the playlist, not from when MediaMTX answers. Before, players opening at the same moment all passed the check (12 logins opening at once on a cold feed all got a player with a cap of 4), and a request abandoned while MediaMTX started the muxer still took a place for 15 s. Now an abandoned request gives its place back (the abort reaches MediaMTX too).
+- **Live video has its own API scope, `feeds:watch`,** instead of `status:read`: every paired app holds `status:read`, and live video with sound (and a feed's full bitrate per player, out of the upload the restreams use) is more than status and still frames.
+- **Safari's own HLS player** (Safari without Media Source, e.g. iOS before 17.1) plays the sound through the `<video>` element without the level meter: WebKit gives a Web Audio graph silence for an HLS `<video>`, which would have muted it.
+- docs/PREVIEW.md: reverse proxy notes for Caddy (nothing to add; leave `flush_interval` out; `encode` is fine; HTTP/2) and nginx, measured resource safety. `scripts/preview-stress.ts` repeats the SR measurements (restream with and without 4 players, also on one CPU; cap; opens abandoned during a cold start; killed tab; frozen network; 100 open/close cycles; hidden page).
+
 ### Cost
 - Thumbnails: about 5 % of one core while a page shows them; a player: a few percent more on Relay and MediaMTX, ~35 MB RAM per feed being watched; nothing while no preview is shown. Each player uses the feed's bitrate in bandwidth (upload, when watched from outside). Measured numbers in docs/PREVIEW.md → What it costs.
+
 ## 0.2.50 (2026-11-20)
 
 **Stream reports**: every stream's viewers per platform over time, chat per minute, what went wrong and when, and who in your audience chats, joins and watches the most, on a new **Reports** page with **Excel (.xlsx)**, CSV and JSON export. API revision **1.13** (additive). Database schema stays at **v4**: the report tables have their own schema track (`reports_meta`, r1), so 0.2.40 still opens `app.db` after a rollback and ignores them. See [docs/REPORTS.md](docs/REPORTS.md). Runbook: [docs/RELEASE-v0.2.50.md](docs/RELEASE-v0.2.50.md).
