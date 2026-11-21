@@ -24,10 +24,12 @@ const AccountsPage = lazy(reloadingImport(() => import('./pages/AccountsPage')))
 const AssetsPage = lazy(reloadingImport(() => import('./pages/AssetsPage')));
 const SettingsPage = lazy(reloadingImport(() => import('./pages/SettingsPage')));
 const ProfilesPage = lazy(reloadingImport(() => import('./pages/ProfilesPage')));
+const ReportsPage = lazy(reloadingImport(() => import('./pages/ReportsPage')));
 
 const PAGES: Record<Exclude<RouteName, 'login' | 'setup'>, ComponentType> = {
   dashboard: DashboardPage,
   chat: ChatPage,
+  reports: ReportsPage,
   destinations: DestinationsPage,
   accounts: AccountsPage,
   assets: AssetsPage,

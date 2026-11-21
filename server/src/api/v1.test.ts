@@ -181,6 +181,13 @@ describe('GET /openapi.json', () => {
       '/library',
       '/platforms/instagram/chat/selector-pack',
       '/platforms/instagram/chat/debug',
+      '/reports/sessions',
+      '/reports/sessions/{id}',
+      '/reports/sessions/{id}/export',
+      '/reports/summary',
+      '/reports/export',
+      '/reports/audience',
+      '/reports/audience/users/{userId}',
     ]);
     expect(doc.components.securitySchemes.bearer).toMatchObject({ type: 'http', scheme: 'bearer' });
     // Every $ref resolves.

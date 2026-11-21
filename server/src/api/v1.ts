@@ -25,6 +25,7 @@ import { musicFor } from '../music/music-service.js';
 import { transcodeCapabilitiesFor } from '../media/transcode-capabilities.js';
 import { registerObsSocketRoute } from './v1-obs-socket.js';
 import { registerPlatformRoutes } from './v1-platforms.js';
+import { registerReportApiRoutes } from './v1-reports.js';
 import { registerShowRoutes } from './v1-show.js';
 
 export const API_PREFIX = '/api/v1';
@@ -507,6 +508,7 @@ const v1Plugin: FastifyPluginAsync<V1Options> = async (app, opts) => {
   registerObsSocketRoute(app, ctx);
   registerShowRoutes(app, ctx);
   registerPlatformRoutes(app, ctx);
+  registerReportApiRoutes(app, ctx);
 };
 
 export default v1Plugin;

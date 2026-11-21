@@ -41,6 +41,12 @@ One scope is for **operators**, not apps: `system:admin` ([API.md §15](API.md#1
 - That protects what a capture shows, not the page from the token's holder: a capture also counts how many elements each selector of the pack matches, and the holder picks the selectors. With enough tries, counts can tell what an attribute on the Instagram page holds. This is one more reason to treat the token like the admin login, and to revoke it when the work is done.
 - Every pack change, revert and capture is in the audit log with the token's or user's name. Revoke the token when the work is done.
 
+### Stream reports (v1.13)
+
+- Reports hold personal data about viewers: platform user ids, display names, and when they chatted, joined or (Twitch) were in the chat. Never message text. `reports:read` tokens and report exports carry that data; grant and share them accordingly. The scope is shown as sensitive when approving a pairing.
+- An admin can turn audience tracking off (counts only), set a retention (90 or 365 days) and forget one viewer (Reports page). Forgetting is audited without the viewer's name.
+- CSV exports prefix cells that start like a spreadsheet formula with `'`; the .xlsx writes every name as text, never as a formula.
+
 ### Show profiles and uploaded files (v1.9)
 
 The CTD OBS plugin saves OBS set-ups ("show profiles", [API.md §14](API.md#14-show-profiles-v19)) through three more scopes:

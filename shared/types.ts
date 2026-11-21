@@ -405,6 +405,8 @@ export interface AuditEntry {
  * system:admin = operator tools that change how this server works, e.g. the Instagram chat reader's
  *                selector pack and its debug capture (v1.11). Only for tokens an admin creates in
  *                Settings → API for every profile; never granted through pairing (ADMIN_ONLY_SCOPES).
+ * reports:read = stream reports: viewers, chat counts, events, the audience leaderboards and
+ *                exports (v1.13, docs/REPORTS.md). Holds viewer names: grant it with care.
  */
 export type ApiScope =
   | 'chat:read'
@@ -417,7 +419,8 @@ export type ApiScope =
   | 'show:read'
   | 'show:write'
   | 'show:secrets'
-  | 'system:admin';
+  | 'system:admin'
+  | 'reports:read';
 export const API_SCOPES: readonly ApiScope[] = [
   'chat:read',
   'status:read',
@@ -430,6 +433,7 @@ export const API_SCOPES: readonly ApiScope[] = [
   'show:write',
   'show:secrets',
   'system:admin',
+  'reports:read',
 ];
 /** Scopes an app cannot ask for by pairing, and that a token limited to one profile cannot hold. */
 export const ADMIN_ONLY_SCOPES: readonly ApiScope[] = ['system:admin'];

@@ -5,6 +5,7 @@ import { useMemo, useSyncExternalStore, type AnchorHTMLAttributes, type MouseEve
 export type RouteName =
   | 'dashboard'
   | 'chat'
+  | 'reports'
   | 'destinations'
   | 'accounts'
   | 'assets'
@@ -26,6 +27,7 @@ export interface RouteDef {
 export const ROUTES: readonly RouteDef[] = [
   { name: 'dashboard', path: '/', label: 'Dashboard', adminOnly: false, nav: true },
   { name: 'chat', path: '/chat', label: 'Chat', adminOnly: false, nav: true },
+  { name: 'reports', path: '/reports', label: 'Reports', adminOnly: false, nav: true },
   { name: 'destinations', path: '/destinations', label: 'Destinations', adminOnly: true, nav: true },
   { name: 'accounts', path: '/accounts', label: 'Accounts', adminOnly: true, nav: true },
   { name: 'assets', path: '/assets', label: 'Assets', adminOnly: false, nav: true },

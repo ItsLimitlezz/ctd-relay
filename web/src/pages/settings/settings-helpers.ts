@@ -319,6 +319,10 @@ export const API_SCOPE_INFO: Readonly<Record<ApiScope, { label: string; help: st
     label: 'Operator tools',
     help: 'Changes how this server works: replace or revert the Instagram chat reader’s selector pack and take its debug capture (page structure only, no names or comments). Only for an operator or a support agent you trust.',
   },
+  'reports:read': {
+    label: 'Read stream reports',
+    help: 'Past streams: viewers over time, chat counts, events, exports, and who chatted, joined or watched the most (names and counts, never message text). Only for apps you trust with your audience.',
+  },
 };
 
 /** "Reading now" line of the Instagram chat reader card. */

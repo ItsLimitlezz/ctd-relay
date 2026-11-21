@@ -14,6 +14,7 @@ import { DEFAULT_LIVE_MAX_VIEWERS, VIEWER_IDLE_MS } from '../media/live-preview.
 import { CONNECT_OFFER_TTL_MS, DEVICE_NAME_MAX, MOBILE_SCOPES } from './connect.js';
 import { MAX_SOCKETS_PER_TOKEN, OBS_SUBPROTOCOL } from './obs-relay.js';
 import { platformPaths, platformSchemas } from './openapi-platforms.js';
+import { reportPaths, reportSchemas } from './openapi-reports.js';
 import { showPaths, showSchemas } from './openapi-show.js';
 
 /** Minor revision of the v1 contract (additive changes only; see the changelog in docs/API.md). */
@@ -539,12 +540,14 @@ export function openApiDocument(version: string): Record<string, unknown> {
       },
       ...showPaths({ errors, profileErrors, idPath }),
       ...platformPaths({ errors }),
+      ...reportPaths({ errors }),
     },
     components: {
       securitySchemes: { bearer: { type: 'http', scheme: 'bearer', description: 'ctd_pat_ token from Settings → API (or pairing)' } },
       schemas: {
         ...showSchemas(),
         ...platformSchemas(),
+        ...reportSchemas(),
         TranscodeCapabilities: transcodeCapabilitiesSchema(),
         Ulid: { type: 'string', pattern: '^[0-7][0-9A-HJKMNP-TV-Z]{25}$', description: 'ULID: unique, sortable by time' },
         Problem: {
