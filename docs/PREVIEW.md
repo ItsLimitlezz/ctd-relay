@@ -14,8 +14,8 @@ with `status:read`, the live player only with its own scope, `feeds:watch`.
   Nothing is fetched while the tab is in the background.
 - **Profiles:** each profile's row shows both feeds the same way, so you can see what every profile's
   OBS sends without switching to it.
-- **Watch** (on a thumbnail): the feed live in a player, about **1–3 s behind** Relay (1.0–1.1 s in
-  the test below). It starts **muted**; the speaker button turns the sound on, the slider sets the
+- **Watch** (on a thumbnail): the feed live in a player, about **2 s behind** Relay (2.1 s in the
+  test below). It starts **muted**; the speaker button turns the sound on, the slider sets the
   volume (remembered in this browser), and the bar next to it is the audio level (peak, shown once the
   sound has been turned on). The player says how far behind it is. Closing the player stops it. A
   muted player in a background tab stops too, and starts again when you come back.
@@ -71,7 +71,7 @@ hls.js is the path that was measured.
 
 | Browser | Path | Checked |
 | --- | --- | --- |
-| Chrome, Edge, Chromium | hls.js over MSE | **Yes** (Chromium 157, automated: 1920×1080 H.264 High + AAC, 1.0–1.1 s behind, sound and meter) |
+| Chrome, Edge, Chromium | hls.js over MSE | **Yes** (Chromium 157, automated: 1920×1080 H.264 High + AAC, 2.1 s behind, sound and meter) |
 | Firefox | hls.js over MSE, the same code path | Not run. H.264/AAC come from the system's decoders (Windows, macOS: built in; Linux: needs FFmpeg's libavcodec, OpenH264 alone can't play OBS's High profile) |
 | Safari 17.1+ (macOS, iPadOS, iOS) | hls.js over Managed Media Source (hls.js turns off AirPlay for it) | Not run |
 | Safari before 17.1, iOS before 17.1 | Safari's own HLS player, same-origin with the session cookie | Not run. No audio level bar there: WebKit gives a Web Audio graph silence for an HLS `<video>`, so the sound goes through the element directly |
@@ -182,12 +182,12 @@ loses it. Watch one player at a time during such a show, or lower `LIVE_PREVIEW_
 - **Hidden page:** 0 thumbnail requests in 20 s (6 in 20 s while visible, 2 feeds).
 - Relay's log held no stream key, HLS session id, token or cookie.
 
-**Playback.** At the default ~1 s delay hls.js keeps about 0.8 s of video buffered. On a steady link
-it plays at 1.0–1.1 s for minutes; a hiccup longer than that (a slow network, a busy machine) makes it
-buffer, and it then settles a few seconds further behind (2.5–4 s) and catches up at 1.2× speed. With
-heavy simulated jitter (0–300 ms on every request, 1 s on 3 %) it rebuffered about 5 times in 90 s
-and played 4–7 s behind, the same with a target latency of 1.5 or 2 s, so the player keeps
-MediaMTX's own target.
+**Playback.** The player aims for **2 s behind** (hls.js `liveSyncDuration: 2`), not MediaMTX's own
+target (0.5 s part hold-back, about 1 s behind). At ~1 s hls.js keeps under a second of video buffered:
+on the real dashboard it rebuffered in 3 of 3 one-minute runs (3–6 frozen seconds each), then played
+2.5–4 s behind and caught up at 1.2× into the next stall. At 2 s it played all 3 runs without a single
+frozen second, 2.1 s behind. (With heavy simulated jitter, 0–300 ms on every request and 1 s on 3 % of
+them, any target rebuffers now and then and drifts to 4–7 s behind: still watchable, just later.)
 
 ## Settings
 

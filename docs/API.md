@@ -1058,6 +1058,7 @@ works and what it costs: [PREVIEW.md](PREVIEW.md).
 import Hls from 'hls.js';
 const hls = new Hls({
   lowLatencyMode: true,
+  liveSyncDuration: 2, // ~2 s behind; at MediaMTX's own ~1 s target hls.js rebuffers at the first hiccup
   xhrSetup: (xhr) => xhr.setRequestHeader('Authorization', `Bearer ${token}`),
 });
 hls.loadSource(`${base}/api/v1/profiles/${profileId}/feeds/landscape/live.m3u8`);

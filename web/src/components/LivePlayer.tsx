@@ -170,6 +170,10 @@ export function LivePlayer({ profileId, feed, state }: { profileId: string; feed
           enableWorker: false,
           backBufferLength: 4,
           maxLiveSyncPlaybackRate: 1.2,
+          // About 2 s behind instead of MediaMTX's own target (0.5 s part hold-back, ~1 s behind): there
+          // hls.js keeps under a second buffered and rebuffers at the first hiccup, then plays catch-up at
+          // 1.2x into the next one (SR check: 3–6 frozen seconds a minute in 3 of 3 runs; at 2 s, none).
+          liveSyncDuration: 2,
           liveDurationInfinity: true,
         });
         hls.on(Hls.Events.MANIFEST_PARSED, () => {
