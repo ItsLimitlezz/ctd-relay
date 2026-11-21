@@ -90,9 +90,15 @@ interface Viewer {
   who: string;
   profileId: string;
   feed: Feed;
-  /** MediaMTX's session id for this reader (server-side only). */
+  /** MediaMTX's session id for this reader (server-side only; '' while opening). */
   upstream: string;
   lastSeen: number;
+  /**
+   * Opening: the playlist request to MediaMTX is in flight. The slot counts toward the cap from the
+   * start, so players that open at the same moment can't all pass the check together (the first
+   * playlist can take a few seconds while MediaMTX starts the muxer).
+   */
+  opening?: boolean;
 }
 
 const FEED_NAME: Record<Feed, string> = { landscape: 'landscape', vertical: 'vertical' };
@@ -185,7 +191,7 @@ export class LivePreviewService {
    * GET live.m3u8: a new player. Starts the feed's muxer if nobody watches yet and returns the
    * multivariant playlist, its URIs pointing at `live/<file>?v=<viewer>`.
    */
-  async open(profileId: string, feed: Feed, who: string): Promise<LiveResult> {
+  async open(profileId: string, feed: Feed, who: string, signal?: AbortSignal): Promise<LiveResult> {
     const blocked = this.check(profileId, feed);
     if (blocked) return blocked;
     const source = this.deps.source(profileId, feed);
@@ -194,7 +200,7 @@ export class LivePreviewService {
     this.prune();
     const watching = [...this.viewers.values()].filter((v) => v.profileId === profileId && v.feed === feed);
     if (watching.length >= this.deps.maxViewers) {
-      const mine = watching.filter((v) => v.who === who).sort((a, b) => a.lastSeen - b.lastSeen);
+      const mine = watching.filter((v) => v.who === who && !v.opening).sort((a, b) => a.lastSeen - b.lastSeen);
       const oldest = mine[0];
       if (!oldest) {
         const max = this.deps.maxViewers;
@@ -207,37 +213,60 @@ export class LivePreviewService {
       }
       this.viewers.delete(oldest.id);
     }
+    const viewerId = this.newViewerId();
+    if (!VIEWER_ID_RE.test(viewerId) || this.viewers.has(viewerId)) {
+      return fail(503, 'unavailable', "Couldn't start the live preview right now; retry in a few seconds.", 5);
+    }
+    // Hold the slot before waiting for MediaMTX (see Viewer.opening); give it back on any failure.
+    const slot: Viewer = { id: viewerId, who, profileId, feed, upstream: '', lastSeen: this.now(), opening: true };
+    this.viewers.set(viewerId, slot);
+    const release = () => {
+      if (this.viewers.get(viewerId) === slot) this.viewers.delete(viewerId);
+    };
 
     let res: Response;
+    const timeout = AbortSignal.timeout(OPEN_TIMEOUT_MS);
     try {
       // `cookieCheck=1` without a cookie: MediaMTX puts the session in the URIs instead of a cookie.
       res = await this.fetch(`${source.baseUrl}index.m3u8?cookieCheck=1`, {
         headers: { authorization: source.authorization },
         redirect: 'manual',
-        signal: AbortSignal.timeout(OPEN_TIMEOUT_MS),
+        signal: signal ? AbortSignal.any([signal, timeout]) : timeout,
       });
     } catch (err) {
+      release();
+      if (signal?.aborted) return fail(503, 'unavailable', 'The request was cancelled.');
       this.deps.warn?.({ profileId, feed, error: errorName(err) }, 'live preview: MediaMTX HLS did not answer');
       return fail(503, 'unavailable', "Couldn't start the live preview right now; retry in a few seconds.", 5);
     }
     if (res.status === 404) {
+      release();
       void res.body?.cancel();
       return fail(404, 'feed_offline', `The ${FEED_NAME[feed]} feed is offline (OBS isn't sending it).`);
     }
     if (res.status !== 200) {
+      release();
       void res.body?.cancel();
       this.deps.warn?.({ profileId, feed, status: res.status }, 'live preview: MediaMTX HLS refused the playlist');
       return fail(503, 'unavailable', "Couldn't start the live preview right now; retry in a few seconds.", 5);
     }
     const text = await readText(res);
     const upstream = text === null ? null : upstreamSession(text);
-    const viewerId = this.newViewerId();
     const body = text !== null && upstream ? rewritePlaylist(text, { upstream, viewerId, prefix: 'live/' }) : null;
-    if (!body || !upstream || !VIEWER_ID_RE.test(viewerId)) {
+    if (!body || !upstream) {
+      release();
       this.deps.warn?.({ profileId, feed }, 'live preview: unexpected playlist from MediaMTX');
       return fail(503, 'unavailable', "Couldn't start the live preview right now; retry in a few seconds.", 5);
     }
-    this.viewers.set(viewerId, { id: viewerId, who, profileId, feed, upstream, lastSeen: this.now() });
+    if (signal?.aborted) {
+      // The player went away while MediaMTX answered: nobody will use this viewer.
+      release();
+      return fail(503, 'unavailable', 'The request was cancelled.');
+    }
+    slot.upstream = upstream;
+    slot.lastSeen = this.now();
+    delete slot.opening;
+    this.viewers.set(viewerId, slot);
     return { ok: true, kind: 'playlist', body };
   }
 
@@ -247,7 +276,7 @@ export class LivePreviewService {
     const vid = typeof query.v === 'string' ? query.v : '';
     this.prune();
     const viewer = VIEWER_ID_RE.test(vid) ? this.viewers.get(vid) : undefined;
-    if (!viewer || viewer.who !== who || viewer.profileId !== profileId || viewer.feed !== feed) {
+    if (!viewer || viewer.opening || viewer.who !== who || viewer.profileId !== profileId || viewer.feed !== feed) {
       return fail(410, 'live_ended', 'This live preview ended; open it again.');
     }
     const blocked = this.check(profileId, feed);
@@ -312,7 +341,8 @@ export class LivePreviewService {
 
   private prune(): void {
     const cutoff = this.now() - VIEWER_IDLE_MS;
-    for (const [id, v] of this.viewers) if (v.lastSeen < cutoff) this.viewers.delete(id);
+    // An opening slot is given back by open() itself (it waits at most OPEN_TIMEOUT_MS).
+    for (const [id, v] of this.viewers) if (!v.opening && v.lastSeen < cutoff) this.viewers.delete(id);
   }
 }
 

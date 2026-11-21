@@ -80,7 +80,7 @@ export function registerLiveRoutes(app: FastifyInstance, opts: LiveRouteOptions)
     if (profileId === null) return reply;
     const feed = feedOf(req);
     if (!feed) return opts.error(reply, 404, 'not_found', 'Feed: landscape or vertical.');
-    return sendLive(reply, await opts.live().open(profileId, feed, opts.who(req)), opts);
+    return sendLive(reply, await opts.live().open(profileId, feed, opts.who(req), clientGone(reply)), opts);
   });
 
   app.get(`${opts.base}/live/:file`, { preHandler: opts.filePreHandler ?? opts.preHandler }, async (req, reply) => {

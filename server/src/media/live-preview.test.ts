@@ -336,6 +336,75 @@ describe('viewers: cap and on-demand stop', () => {
     expect(await live.file('default', 'landscape', 'video1_stream.m3u8', { v: oldV }, 'session:a')).toMatchObject({ code: 'live_ended' });
   });
 
+  it('players opening at the same moment hold their slot while MediaMTX starts the muxer: never more than the cap (SR check)', async () => {
+    // MediaMTX answers the first playlist only once the muxer has a segment (a second or two).
+    const gate: (() => void)[] = [];
+    const slow = new LivePreviewService({
+      feed: () => feedState(),
+      source: () => ({ baseUrl: BASE, authorization: AUTH }),
+      maxViewers: 2,
+      fetch: (async (input: string | URL | Request) => {
+        calls.push({ url: String(input), init: undefined });
+        await new Promise<void>((r) => gate.push(r));
+        return respond(new URL(String(input)));
+      }) as typeof fetch,
+      now: () => clock,
+      newViewerId: () => `viewer${String(++ids).padStart(16, '0')}`,
+    });
+    const opening = ['a', 'b', 'c', 'd', 'e'].map((w) => slow.open('default', 'landscape', `token:${w}`));
+    await Promise.resolve();
+    // Only two asked MediaMTX at all; the others were refused at once.
+    expect(calls).toHaveLength(2);
+    for (const release of gate) release();
+    const results = await Promise.all(opening);
+    expect(results.filter((r) => r.ok)).toHaveLength(2);
+    expect(results.filter((r) => !r.ok && r.code === 'viewer_cap')).toHaveLength(3);
+    expect(slow.viewerCount('default', 'landscape')).toBe(2);
+  });
+
+  it('an open that fails or is abandoned gives its slot back', async () => {
+    const live = service(1);
+    respond = () => new Response('nope', { status: 500 });
+    expect(await live.open('default', 'landscape', 'session:a')).toMatchObject({ code: 'unavailable' });
+    expect(live.viewerCount('default', 'landscape')).toBe(0);
+    respond = () => new Response('', { status: 404 });
+    expect(await live.open('default', 'landscape', 'session:a')).toMatchObject({ code: 'feed_offline' });
+    expect(live.viewerCount('default', 'landscape')).toBe(0);
+    // The client went away while MediaMTX was starting the muxer.
+    respond = (url) => (url.pathname.endsWith('/index.m3u8') ? new Response(MASTER) : new Response(MEDIA));
+    const ac = new AbortController();
+    const pending = live.open('default', 'landscape', 'session:a', ac.signal);
+    ac.abort();
+    expect(await pending).toMatchObject({ ok: false, code: 'unavailable' });
+    expect(live.viewerCount('default', 'landscape')).toBe(0);
+    // A viewer id is only usable once its playlist has been handed out.
+    ok(await live.open('default', 'landscape', 'session:b'));
+    expect(live.viewerCount('default', 'landscape')).toBe(1);
+  });
+
+  it('an opening slot is not someone else\'s "own oldest" and is not pruned as idle', async () => {
+    let release: () => void = () => undefined;
+    const slow = new LivePreviewService({
+      feed: () => feedState(),
+      source: () => ({ baseUrl: BASE, authorization: AUTH }),
+      maxViewers: 1,
+      fetch: (async (input: string | URL | Request) => {
+        await new Promise<void>((r) => (release = r));
+        return respond(new URL(String(input)));
+      }) as typeof fetch,
+      now: () => clock,
+      newViewerId: () => `viewer${String(++ids).padStart(16, '0')}`,
+    });
+    const first = slow.open('default', 'landscape', 'session:a');
+    await Promise.resolve();
+    clock += VIEWER_IDLE_MS + 1;
+    // Same login, feed full with its own opening slot: refused, not replaced.
+    expect(await slow.open('default', 'landscape', 'session:a')).toMatchObject({ code: 'viewer_cap' });
+    release();
+    ok(await first);
+    expect(slow.viewerCount('default', 'landscape')).toBe(1);
+  });
+
   it('a player that stops asking leaves after VIEWER_IDLE_MS; one that keeps playing stays', async () => {
     const live = service(1);
     const r = ok(await live.open('default', 'landscape', 'session:a'));
