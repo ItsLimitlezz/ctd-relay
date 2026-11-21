@@ -63,6 +63,11 @@ export function LivePlayer({ profileId, feed, state }: { profileId: string; feed
   const meterRef = useRef<HTMLSpanElement>(null);
   const audioRef = useRef<AudioGraph | null>(null);
   const attemptsRef = useRef(0);
+  /**
+   * Safari's own HLS player (no Media Source): WebKit hands a Web Audio graph silence for an HLS
+   * <video>, so the meter's graph would mute the sound. Plain element volume there, no meter.
+   */
+  const nativeRef = useRef(false);
   const [phase, setPhase] = useState<Phase>('connecting');
   const [notice, setNotice] = useState<string | null>(null);
   const [error, setError] = useState<PlayerError | null>(null);
@@ -157,6 +162,7 @@ export function LivePlayer({ profileId, feed, state }: { profileId: string; feed
       const { default: Hls } = await import('hls.js');
       if (disposed) return;
       if (Hls.isSupported()) {
+        nativeRef.current = false;
         let mediaRecovered = false;
         hls = new Hls({
           lowLatencyMode: true,
@@ -184,6 +190,7 @@ export function LivePlayer({ profileId, feed, state }: { profileId: string; feed
         hls.attachMedia(video);
       } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
         // Safari without Managed Media Source: its own HLS player (same-origin, the cookie goes along).
+        nativeRef.current = true;
         video.addEventListener('error', onNativeError);
         video.src = url;
         void video.play().catch(() => undefined);
@@ -263,7 +270,7 @@ export function LivePlayer({ profileId, feed, state }: { profileId: string; feed
     const video = videoRef.current;
     const soundOn = muted; // the click turns the sound on when it is off
     // A click: browsers allow sound now, and an AudioContext may start.
-    if (soundOn && video && !audioRef.current) {
+    if (soundOn && video && !audioRef.current && !nativeRef.current) {
       try {
         const ctx = new AudioContext();
         const source = ctx.createMediaElementSource(video);
@@ -350,7 +357,7 @@ export function LivePlayer({ profileId, feed, state }: { profileId: string; feed
         />
         <span
           className={cx('live-meter', !hasMeter && 'is-off')}
-          title={hasMeter ? 'Audio level (peak)' : 'Turn the sound on once to see the audio level'}
+          title={hasMeter ? 'Audio level (peak)' : muted ? 'Turn the sound on once to see the audio level' : 'No audio level in this browser’s own player'}
           aria-hidden="true"
         >
           <span ref={meterRef} className="live-meter-bar" />
