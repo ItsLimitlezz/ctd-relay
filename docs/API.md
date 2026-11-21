@@ -60,7 +60,7 @@ Authorization: Bearer ctd_pat_3fK9wQ1v…
 | `chat:read` | `GET /chat`, `chat.*` and `alert.*` events |
 | `status:read` | `GET /status`, `GET /profiles`, `stream.*`, `feed.*`, `destination.*`, `profile.status`, `profiles.changed`, `system.notice` events |
 | `ingest:read` | `GET /profiles/{id}/ingest`: OBS server URL and **stream keys** (only for apps that configure OBS) |
-| `apps:read` | `GET /apps`, `GET /profiles/{id}/overlays`, `apps.changed` and `app.message` events |
+| `apps:read` | `GET /apps`, `GET /profiles/{id}/overlays`, `GET /profiles/{id}/overlay-summary` (§9.5), `apps.changed` and `app.message` events |
 | `apps:write` | `PUT`/`DELETE /apps/{id}`, `POST /apps/{id}/heartbeat`, `POST /messages` |
 | `obs:write` | `POST /apps/{id}/events`: OBS events into the hub (the CTD OBS plugin; v1.4, §10) |
 | `obs:control` | `GET /obs/socket`: control OBS through Relay's OBS socket relay (CTD Live mobile; v1.6, §12) |
@@ -924,6 +924,57 @@ approval (otherwise it is revoked). `410 expired` also answers an unknown `pairi
 gets `410` and simply starts over. Store the token: it never expires (until revoked in
 Settings → API).
 
+### 9.5 Overlay summaries: versions and template updates (unreleased)
+
+CTD Overlay tells the CTD OBS plugin's **CTD Overlays** dock its version, its templates' versions
+against their followed GitHub releases, which overlays wait for a major upgrade, and short
+release notes. This is kept apart from the registration (§9.2) so an overlay's `meta` stays within
+its 4 KB: the summary is sent on its own, when it changes and every few minutes.
+
+#### `PUT /api/v1/apps/{appId}/summary` — `apps:write`
+
+Only for a registered app, by the token that registered it (`404 not_found` before the app is
+registered, `409 app_owned` for another token). Body (at most 64 KB; `204` when stored):
+
+```json
+{
+  "schema": "ctd-overlay-summary/1",
+  "server": { "name": "CTD Overlay", "version": "0.4.0" },
+  "ui": "http://overlay.local:4848",
+  "templates": [
+    { "id": "com.example.lower", "name": "Lower third", "installed": "1.3.0", "oldestInUse": "1.2.0",
+      "latest": "1.3.0", "source": { "kind": "github", "repo": "owner/lower-third" },
+      "auto": true, "update": "minor", "checkedAt": "2026-11-21T18:00:00Z",
+      "notes": [{ "version": "1.3.0", "text": "New: a darker style\nFix: long names wrap" }] }
+  ],
+  "overlays": [
+    { "id": "ovl_…", "slug": "lower", "name": "Lower third", "show": "Miami Or Bust",
+      "template": { "id": "com.example.lower", "name": "Lower third", "version": "1.2.0" },
+      "waiting": { "to": "2.0.0", "major": true, "why": "a major version" } }
+  ]
+}
+```
+
+- `update`: from `oldestInUse` (else `installed`) to `latest`. `patch` and `minor` move overlays by
+  themselves (when `auto`); `major` waits for the operator (before 1.0.0 a minor bump counts as
+  major). `problem`: the last check failed, as a short code only (`rate-limited`, `no-release`…).
+- `notes`: at most 5 releases; `text` is at most 8 plain lines of 200 characters joined with `\n` (a
+  string, not an array: the OBS plugin's JSON reader drops arrays of strings).
+- `ui`: the admin UI's address (no credentials, query or fragment). The dock opens
+  `<ui>/#/overlays/<slug>` (control panel) and `<ui>/#/overlays/<slug>?tab=version` (upgrade).
+- Overlay ids are the part of each registered overlay resource's id before the first `:`.
+- Fields not listed here are **dropped** (an overlay's URL or key, a token, an error's text never
+  reach other apps). Kept in memory: a restart of CTD Relay forgets it until the app sends again;
+  it is forgotten when the app unregisters or another token takes its id.
+
+#### `GET /api/v1/profiles/{id}/overlay-summary` — `apps:read`
+
+`{ items: [ { appId, appName, appOnline, receivedAt, schema, server, ui, templates, overlays } ] }`:
+one item per app visible from the profile that sent a summary. `overlays` holds only those the app
+registered for this profile; `templates` those they use, plus templates no overlay uses. A token
+limited to a profile reads only its own (`403 profile_forbidden`). An older CTD Relay answers
+`404`: show no version information.
+
 ### 9.4 Typical set-ups
 
 - **CTD OBS plugin:** pair → the user picks a profile in the plugin → `GET /profiles/{id}/ingest`
@@ -1626,6 +1677,14 @@ The web UI uses the same routes under `/api/reports` (session cookie), plus, for
 `apiVersion` stays `1`: every change below is additive, so clients written for an earlier v1
 keep working (ignore event types and fields you don't know). `GET /api/v1/openapi.json` reports
 the revision in `info.version`.
+
+### Unreleased
+
+- **Overlay summaries (§9.5):** `PUT /apps/{appId}/summary` (`apps:write`, the registering token)
+  and `GET /profiles/{id}/overlay-summary` (`apps:read`): an overlay server's version, its
+  templates' installed and latest versions, update kind (patch / minor / major), overlays waiting
+  for a major upgrade and trimmed release notes, for the CTD OBS plugin's CTD Overlays dock. In
+  memory; unknown fields are dropped. The revision number is set when this ships.
 
 ### v1.13
 

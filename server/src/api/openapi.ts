@@ -264,6 +264,16 @@ export function openApiDocument(version: string): Record<string, unknown> {
           responses: { '200': { description: 'Overlays', content: json(ref('OverlaysResponse')) }, ...errors, ...profileErrors },
         },
       },
+      '/profiles/{id}/overlay-summary': {
+        get: {
+          summary: 'Overlay servers\' versions and template updates, seen from a profile (§9.5)',
+          operationId: 'getProfileOverlaySummary',
+          tags: ['profiles', 'apps'],
+          description: 'Needs `apps:read`. One item per connected app that sent a summary: its overlays registered for this profile, and the templates those use (or no overlay uses).',
+          parameters: [idPath],
+          responses: { '200': { description: 'Summaries', content: json(ref('OverlaySummariesResponse')) }, ...errors, ...profileErrors },
+        },
+      },
       '/profiles/{id}/obs': {
         get: {
           summary: 'Latest OBS state of a profile, per connected app (v1.4)',
@@ -343,6 +353,23 @@ export function openApiDocument(version: string): Record<string, unknown> {
             ...errors,
             '403': problemResponse('Token lacks apps:write (`missing_scope`)'),
             '404': problemResponse('Not registered (`not_found`)'),
+            '409': problemResponse('Registered by another token (`app_owned`)'),
+          },
+        },
+      },
+      '/apps/{appId}/summary': {
+        put: {
+          summary: 'An overlay server\'s versions and update state, for the CTD OBS plugin (§9.5)',
+          operationId: 'putAppSummary',
+          tags: ['apps'],
+          description: 'Needs `apps:write`; the registering token only. Body: `ctd-overlay-summary/1` (at most 64 KB). Fields the schema does not name are dropped. In memory: send it again after it changes, and every few minutes.',
+          parameters: [appIdPath],
+          requestBody: { required: true, content: json(ref('OverlaySummary')) },
+          responses: {
+            '204': { description: 'Stored' },
+            ...errors,
+            '403': problemResponse('Token lacks apps:write (`missing_scope`)'),
+            '404': problemResponse('Not registered (`not_found`): register with PUT /apps/{appId} first'),
             '409': problemResponse('Registered by another token (`app_owned`)'),
           },
         },
@@ -1053,6 +1080,23 @@ export function openApiDocument(version: string): Record<string, unknown> {
             height: int,
             meta: { type: 'object', description: 'The resource’s meta (canvas, fps, transparent, slot…)' },
           },
+        },
+        OverlaySummary: {
+          type: 'object',
+          required: ['schema', 'server', 'templates', 'overlays'],
+          description: 'docs/API.md §9.5. templates: { id, name, installed, oldestInUse?, latest?, source?: { kind, repo?, pinned? }, auto?, update?: none | patch | minor | major, checkedAt?, problem?, notes?: [{ version, text }] }; overlays: { id, slug, name?, show?, template: { id, name?, version }, waiting?: { to, major, why? } }',
+          properties: {
+            schema: { type: 'string', enum: ['ctd-overlay-summary/1'] },
+            server: { type: 'object', properties: { name: str, version: nullable(str) } },
+            ui: { ...nullable(str), description: 'The admin UI address (no query, fragment or credentials)' },
+            templates: { type: 'array', items: { type: 'object' } },
+            overlays: { type: 'array', items: { type: 'object' } },
+          },
+        },
+        OverlaySummariesResponse: {
+          type: 'object',
+          required: ['items'],
+          properties: { items: { type: 'array', items: { allOf: [ref('OverlaySummary'), { type: 'object', properties: { appId: str, appName: str, appOnline: { type: 'boolean' }, receivedAt: str } }] } } },
         },
         OverlaysResponse: { type: 'object', required: ['items'], properties: { items: { type: 'array', items: ref('Overlay') } } },
         MessageRequest: {
