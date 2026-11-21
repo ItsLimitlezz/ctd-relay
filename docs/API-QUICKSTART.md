@@ -24,6 +24,7 @@ Every request: `Authorization: Bearer ctd_pat_…`
 - `ingest:read`: OBS keys.
 - `apps:read` / `apps:write`: the hub.
 - `obs:write`: send OBS events (the CTD OBS plugin only).
+- `feeds:watch`: the feeds as live video with sound (LL-HLS, v1.14; `status:read` only gets still frames).
 
 ## Read
 

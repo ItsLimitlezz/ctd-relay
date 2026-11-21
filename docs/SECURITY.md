@@ -13,7 +13,7 @@ Please **don't open a public issue**. Report it privately through GitHub: the re
 | 8443 → 443 / 30443 | **Internet** (port-forwarded) | Web UI, REST API and WebSockets, over HTTPS |
 | 8080 → 80 / 30080 | Internet (port-forwarded) | Let's Encrypt HTTP-01 challenge responses and a redirect to HTTPS. For LAN clients only, also `/api/v1`, `/dock` and `/overlay/*` over plain HTTP (see [LAN plain HTTP](#lan-plain-http)) |
 | 1935 → 1935 | **LAN only** (never forward it) | RTMP ingest from OBS |
-| MediaMTX API, auth hook | Loopback inside the container | Internal only |
+| MediaMTX API, auth hook, live preview HLS (9996) | Loopback inside the container | Internal only. The live preview reaches browsers and apps only through Relay's own HTTPS server (see [Live preview](#live-preview)) |
 
 Public paths that work without logging in:
 
@@ -76,6 +76,16 @@ Environment variables (in `.env` for Docker, `environment:` in the TrueNAS app Y
 **Turn it off (or narrow it) where internet clients can look private.** Wherever a NAT or proxy hop replaces the client's address with a private one, every internet visitor looks like a LAN client: Docker Desktop on Windows/macOS, rootless Docker or Podman, IPv6 published into an IPv4-only Docker network, ports forwarded from a VPS through a tunnel, or your own reverse proxy in front of the HTTP port. There set `LAN_HTTP=off`, or `LAN_HTTP_CIDRS` to your real LAN only (leaving out the gateway/proxy address). Exposure would be limited to token-protected, read-only data, but plain HTTP across the internet should never happen. With `TLS_MODE=off` (your own HTTPS proxy in front) there is no separate HTTP port and these variables do nothing.
 
 RTMP publishing requires a random per-feed key. Reading a feed is only possible from inside the container with an internal password, so nobody on your LAN can pull your stream from the server.
+
+## Live preview
+
+The feed previews (thumbnails and **Watch**, [PREVIEW.md](PREVIEW.md)) are behind the same login as the rest of the web UI. In `/api/v1` the JPEG thumbnails need `status:read` and the live player needs its own scope, `feeds:watch` (live video and sound, and the feed's full bitrate per player, are more than the status every paired app gets).
+
+- MediaMTX's Low-Latency HLS server listens on **127.0.0.1 only** and answers only with the internal reader password, which only Relay's proxy sends (as a header, never in a URL). Nothing outside the container can reach it, and its port must never be mapped.
+- MediaMTX gives each HLS reader a session id that works without the password. It never leaves the server: Relay replaces it in every playlist with its own random viewer id (128 bits), which only works together with the login (session cookie) or token that opened the player, on that profile and feed. Logging out ends the player at its next request.
+- No credential is in any preview URL: the browser sends the `SameSite=Strict` session cookie with each request, apps send `Authorization: Bearer` (the live routes refuse `?access_token=`). Neither viewer ids nor HLS session ids are logged.
+- Players per feed are capped (`LIVE_PREVIEW_MAX_VIEWERS`, default 4), so a stolen login can't pull the feed many times over; a player holds its place from the moment it asks, so players opening at the same moment can't pass the cap together. The `live/{file}` requests of `/api/v1` have their own budget (1000 per 10 s per token) instead of the 600 a minute: they only reach files of a player the same token opened, so the larger budget buys nothing else. Each player costs upload bandwidth (the feed's bitrate), not CPU: nothing is transcoded.
+- The CSP adds `media-src 'self' blob:` (the player hands the `<video>` a Media Source `blob:` URL). Scripts stay same-origin; the player library is bundled, not loaded from a CDN.
 
 ## Protections
 

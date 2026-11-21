@@ -282,7 +282,7 @@ export const DOCK_SCOPES: readonly ApiScope[] = ['status:read', 'chat:read'];
 
 export const API_SCOPE_INFO: Readonly<Record<ApiScope, { label: string; help: string }>> = {
   'chat:read': { label: 'Read chat', help: 'Chat history and live chat: messages, alerts (subs, gifts, Super Chats…) and removed messages.' },
-  'status:read': { label: 'Read status', help: 'Stream, feed and destination status, bitrates, viewers, notices and the list of profiles.' },
+  'status:read': { label: 'Read status', help: 'Stream, feed and destination status, bitrates, viewers, notices, the list of profiles and a still frame of each feed.' },
   'ingest:read': {
     label: 'Read OBS stream keys',
     help: "The profile's OBS server and stream keys, so an app (the CTD OBS plugin) can set up OBS. Stream keys are secrets: only for apps that configure OBS.",
@@ -318,6 +318,10 @@ export const API_SCOPE_INFO: Readonly<Record<ApiScope, { label: string; help: st
   'system:admin': {
     label: 'Operator tools',
     help: 'Changes how this server works: replace or revert the Instagram chat reader’s selector pack and take its debug capture (page structure only, no names or comments). Only for an operator or a support agent you trust.',
+  },
+  'feeds:watch': {
+    label: 'Watch the feeds live',
+    help: 'The landscape and vertical feeds as live video with sound, about 1–3 s behind (CTD Live Studio, CTD Live mobile, the CTD OBS Producer). Each player uses the feed’s full bitrate, from your upload when watched from outside.',
   },
   'reports:read': {
     label: 'Read stream reports',

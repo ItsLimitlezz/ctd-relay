@@ -210,3 +210,24 @@ export const CoinIcon = (p: IconProps) => (
     <path d="M15 9.2c-.6-1-1.7-1.5-3-1.5-1.8 0-3 .9-3 2.1 0 2.9 6 1.5 6 4.4 0 1.2-1.3 2.1-3 2.1-1.4 0-2.6-.6-3.1-1.6M12 6v1.7M12 16.3V18" />
   </Icon>
 );
+
+/** Play (watch live). */
+export const PlayIcon = (p: IconProps) => (
+  <Icon {...p}>
+    <path d="M7 4.5v15l12-7.5-12-7.5Z" />
+  </Icon>
+);
+
+/** Sound on. */
+export const VolumeIcon = (p: IconProps) => (
+  <Icon {...p}>
+    <path d="M11 5 6 9H3v6h3l5 4V5ZM15.5 8.5a5 5 0 0 1 0 7M18.5 5.5a9 9 0 0 1 0 13" />
+  </Icon>
+);
+
+/** Sound off. */
+export const MuteIcon = (p: IconProps) => (
+  <Icon {...p}>
+    <path d="M11 5 6 9H3v6h3l5 4V5ZM22 9l-6 6M16 9l6 6" />
+  </Icon>
+);
