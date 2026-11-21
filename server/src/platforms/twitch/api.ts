@@ -30,8 +30,15 @@ export const SCOPES = ['channel:manage:broadcast', 'channel:read:stream_key'] as
  * connected before follows existed keep working without it until they reconnect.
  */
 export const ALERT_SCOPES = ['moderator:read:followers'] as const;
+/**
+ * Asked for on connect but not required: who is in the chat (GET /helix/chat/chatters), for
+ * stream reports' watch time (docs/REPORTS.md). Without it reports count chatters and joins only.
+ */
+export const PRESENCE_SCOPES = ['moderator:read:chatters'] as const;
 /** Everything a (re)connect asks Twitch for. */
-export const CONNECT_SCOPES = [...SCOPES, ...ALERT_SCOPES] as const;
+export const CONNECT_SCOPES = [...SCOPES, ...ALERT_SCOPES, ...PRESENCE_SCOPES] as const;
+/** Get Chatters returns at most 1000 per page; stop after this many pages (10,000 chatters). */
+export const CHATTERS_MAX_PAGES = 10;
 
 export const TITLE_MAX = 140;
 const VALIDATE_EVERY_MS = 60 * 60 * 1000;
@@ -51,6 +58,11 @@ export function missingScopes(info: Pick<TokenInfo, 'scopes'>): string[] {
 /** True when the login may read follows (EventSub channel.follow). */
 export function canReadFollows(info: Pick<TokenInfo, 'scopes'>): boolean {
   return ALERT_SCOPES.every((s) => info.scopes.includes(s));
+}
+
+/** True when the login may read the chatters list (stream reports' presence). */
+export function canReadChatters(info: Pick<TokenInfo, 'scopes'>): boolean {
+  return PRESENCE_SCOPES.every((s) => info.scopes.includes(s));
 }
 
 /** Shown on the account when it predates follow alerts. */
@@ -268,6 +280,36 @@ export class TwitchClient {
     if (!stream || (stream.type && stream.type !== 'live')) return null;
     const n = stream.viewer_count;
     return typeof n === 'number' && Number.isSafeInteger(n) && n >= 0 ? n : null;
+  }
+
+  /**
+   * Users connected to the channel's chat (GET /helix/chat/chatters, scope moderator:read:chatters;
+   * the broadcaster is its own moderator). Twitch lists logged-in chat users only and updates the
+   * list with a delay of a few minutes.
+   */
+  async chatters(broadcasterId: string, moderatorId: string, signal?: AbortSignal): Promise<{ id: string; login: string | null; name: string }[]> {
+    const out: { id: string; login: string | null; name: string }[] = [];
+    let after = '';
+    for (let page = 0; page < CHATTERS_MAX_PAGES; page++) {
+      const qs = new URLSearchParams({ broadcaster_id: broadcasterId, moderator_id: moderatorId, first: '1000' });
+      if (after) qs.set('after', after);
+      const json = await this.authed((token) =>
+        fetchJson<{ data?: { user_id?: unknown; user_login?: unknown; user_name?: unknown }[]; pagination?: { cursor?: unknown } }>(
+          `${HELIX}/chat/chatters?${qs.toString()}`,
+          { headers: this.helixHeaders(token), signal: signal ?? this.opts.signal },
+        ),
+      );
+      for (const u of json?.data ?? []) {
+        if (typeof u.user_id !== 'string' || !u.user_id) continue;
+        const login = typeof u.user_login === 'string' && u.user_login ? u.user_login : null;
+        const name = typeof u.user_name === 'string' && u.user_name ? u.user_name : (login ?? u.user_id);
+        out.push({ id: u.user_id, login, name });
+      }
+      const cursor = json?.pagination?.cursor;
+      if (typeof cursor !== 'string' || !cursor) break;
+      after = cursor;
+    }
+    return out;
   }
 
   /** POST /helix/eventsub/subscriptions on a WebSocket session (202; 409 = it already exists). */

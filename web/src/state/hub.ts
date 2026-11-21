@@ -14,8 +14,8 @@ export const APP_TOKEN_NAME_MAX = 60;
 export const BASIC_SCOPES: readonly ApiScope[] = ['chat:read', 'status:read'];
 /** Scopes that hand out secrets (stream keys, show-profile secrets): highlighted when approving. */
 export const SECRET_SCOPES: readonly ApiScope[] = ['ingest:read', 'show:secrets'];
-/** Scopes shown with a warning colour: the secret ones and the admin-only ones. */
-export const SENSITIVE_SCOPES: readonly ApiScope[] = [...SECRET_SCOPES, ...ADMIN_ONLY_SCOPES];
+/** Scopes shown with a warning colour: the secret ones, the admin-only ones, and viewer data (reports). */
+export const SENSITIVE_SCOPES: readonly ApiScope[] = [...SECRET_SCOPES, ...ADMIN_ONLY_SCOPES, 'reports:read'];
 
 // ---------------------------------------------------------------------------
 // Profile pickers

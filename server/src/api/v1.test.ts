@@ -48,7 +48,7 @@ describe('auth', () => {
       name: 'ctd-multi-stream',
       version: '9.9.9',
       build: { commit: null, date: null },
-      apiRevision: '1.12',
+      apiRevision: '1.13',
       apiVersion: 1,
       token: { name: 'test', scopes: ['chat:read', 'status:read'], profileId: null },
     });
@@ -179,6 +179,13 @@ describe('GET /openapi.json', () => {
       '/library',
       '/platforms/instagram/chat/selector-pack',
       '/platforms/instagram/chat/debug',
+      '/reports/sessions',
+      '/reports/sessions/{id}',
+      '/reports/sessions/{id}/export',
+      '/reports/summary',
+      '/reports/export',
+      '/reports/audience',
+      '/reports/audience/users/{userId}',
     ]);
     expect(doc.components.securitySchemes.bearer).toMatchObject({ type: 'http', scheme: 'bearer' });
     // Every $ref resolves.
@@ -365,7 +372,7 @@ describe('alert.*', () => {
     const doc = (await get('/api/v1/openapi.json')).json();
     expect(doc.components.schemas.Envelope.properties.type.enum).toEqual(expect.arrayContaining(['alert.superchat', 'alert.subscription', 'alert.tip']));
     expect(doc.components.schemas.Alert.properties.kind.enum).toHaveLength(9);
-    expect(doc.info.version).toMatch(/^1\.12 /);
+    expect(doc.info.version).toMatch(/^1\.13 /);
   });
 });
 

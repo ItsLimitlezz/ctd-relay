@@ -2,6 +2,31 @@
 
 Versions follow the hub's CONVENTIONS.md → Versioning. Each release that ships to a TrueNAS install has a runbook in `docs/RELEASE-*.md` (backup, update, verify, rollback).
 
+## 0.2.50 (2026-11-20)
+
+**Stream reports**: every stream's viewers per platform over time, chat per minute, what went wrong and when, and who in your audience chats, joins and watches the most, on a new **Reports** page with **Excel (.xlsx)**, CSV and JSON export. API revision **1.13** (additive). Database schema stays at **v4**: the report tables have their own schema track (`reports_meta`, r1), so 0.2.40 still opens `app.db` after a rollback and ignores them. See [docs/REPORTS.md](docs/REPORTS.md). Runbook: [docs/RELEASE-v0.2.50.md](docs/RELEASE-v0.2.50.md).
+
+### Added
+- **Reports page** (main menu, every signed-in user): every stream of a profile (session start to end) with duration, peak and average concurrent viewers, viewer-minutes (labelled as such, not unique viewers), chat messages and chat per 1k viewer-minutes, unique chatters, recoveries, errors and uptime, per platform and in total; date-range totals; a stream page with viewers over time per platform + total, chat per minute, the per-platform table, destinations (canvas, Dual Format), titles, feeds and the event timeline. Charts are built in (SVG, no new dependency), keyboard-readable and have a table view.
+- **Recording** from Relay's own events, never in the go-live path: titles with change times, test mode, destinations, live periods, recoveries, errors and blocked feeds, viewers every 30 s and on every change (unknown stays unknown, never 0), chat per platform per minute, feed codec/resolution/fps/bitrate/keyframe interval per minute and offline periods.
+- **Audience** (on your self-hosted Relay): per person and stream, messages, joins, other chat events and first/last message time; never message text. Leaderboards per stream or date range, all platforms or one: Top chatters, Most loyal, Longest watch time, Newest regulars; a page per viewer. Watch time only where the platform says who is there: Twitch's chatters list, read every 5 minutes (new optional Twitch permission `moderator:read:chatters`; reconnect the account once). Elsewhere "attended" means chatted or joined. Instagram's "and N others joined" counts as N anonymous joins.
+- **Privacy**: Reports → Recording and privacy (admin): turn recording or audience tracking off, keep reports for 90 or 365 days or everything, and **Forget this user** (audited without the name).
+- **Export**: **Excel (.xlsx)** by default, written by Relay itself (no add-ons or macros): sheets Summary, Per platform, Viewers (30 s samples, a column per platform + Total, with a native line chart), Chat per minute, Events, Top chatters, Audience, Anonymous joins, Feeds; frozen headers, real dates, durations and numbers, column widths, times in your time zone. Also CSV (a .zip, one file per sheet) and JSON. Per stream or date range.
+- **API**: scope `reports:read` ("Read stream reports" in Settings → API, shown as sensitive) and `GET /api/v1/reports/sessions`, `/reports/sessions/{id}`, `/reports/sessions/{id}/export?format=xlsx|csv|json`, `/reports/summary`, `/reports/export?from&to&format`, `/reports/audience`, `/reports/audience/users/{id}` (docs/API.md §16).
+
+### Changed (Senior check)
+- Recording does no database work while chat and status events are passed on: writes are queued and written together right after, chat counts and people every 30 s with the viewer sample. Settings are read once per sample, not per chat line.
+- **Forget this user** also forgets what the recorder holds in memory during a live, overwrites the deleted rows and empties the write-ahead log, so the name is not left in `app.db` or `app.db-wal` (backups and snapshots keep theirs). Turning audience tracking off during a live drops what was added up since the last write.
+- Retention deletes 20 streams per transaction and pauses every 50 ms.
+- The Reports list and date ranges read one stream at a time and keep the numbers of streams that have ended (worked out in the background after start-up), instead of reading every viewer sample on every look.
+- Exports: a name or detail cut in the middle of an emoji no longer makes an invalid .xlsx; event details never keep a URL's path or query or a key.
+- `scripts/report-sample.ts` writes a sample report (.xlsx, CSV, JSON) from a simulated stream with synthetic names.
+
+### Notes
+- Defaults: recording **on**, audience tracking **on** (names, counts and times per stream, never message text; the leaderboards of who chats, joins and watches the most), reports kept for **365 days**. All three are in Reports → Recording and privacy (admin), with **Forget this user** on each viewer's page.
+- Past streams are not backfilled: Relay kept no viewer or chat counts before this version.
+- Reconnect Twitch accounts once for watch time (new optional permission `moderator:read:chatters`); without it Twitch reports chatters and joins only, like the other platforms.
+
 ## 0.2.40 (2026-11-20)
 
 Feeds in HEVC/AV1 are blocked with a clear message instead of retrying forever, and Instagram comments get the fixes from the first live run on 0.2.30. API revision **1.12** (additive). Database schema stays at **v4** (no migration). Runbook: [docs/RELEASE-v0.2.40.md](docs/RELEASE-v0.2.40.md).

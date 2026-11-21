@@ -54,6 +54,17 @@ import type {
 } from '@shared/api';
 import { CSRF_HEADER } from '@shared/api';
 import type {
+  AudienceUserDetail,
+  Leaderboard,
+  ReportExportFormat,
+  ReportQuery,
+  ReportRangeSummary,
+  ReportSessionDetailResponse,
+  ReportSessionsResponse,
+  ReportSettings,
+  ReportSettingsResponse,
+} from '@shared/reports';
+import type {
   Account,
   ChatMessage,
   ConnectedApp,
@@ -200,6 +211,14 @@ async function uploadAsset(file: File, meta: AssetUploadMeta, onProgress?: (frac
   });
 }
 
+/** "?a=1&b=2" for a report query (empty values dropped). */
+export function reportSearch(q: ReportQuery & { format?: ReportExportFormat }): string {
+  const sp = new URLSearchParams();
+  for (const [k, v] of Object.entries(q)) if (v !== undefined && v !== null && v !== '') sp.set(k, String(v));
+  const s = sp.toString();
+  return s ? `?${s}` : '';
+}
+
 export const api = {
   // setup + auth
   setupStatus: () => get<SetupStatusResponse>('/api/setup/status'),
@@ -331,6 +350,22 @@ export const api = {
     update: (id: string, body: UpdateAssetRequest) => patch<AssetItem>(`/api/assets/${encodeURIComponent(id)}`, body),
     /** 409 code 'asset_in_use' while a show profile's current revision uses it. */
     remove: (id: string) => del<object>(`/api/assets/${encodeURIComponent(id)}`),
+  },
+
+  // stream reports (docs/REPORTS.md). Reading: any signed-in user; settings and forget: admin.
+  reports: {
+    sessions: (q: ReportQuery) => get<ReportSessionsResponse>(`/api/reports/sessions${reportSearch(q)}`),
+    session: (id: string, q: ReportQuery = {}) => get<ReportSessionDetailResponse>(`/api/reports/sessions/${encodeURIComponent(id)}${reportSearch(q)}`),
+    summary: (q: ReportQuery) => get<ReportRangeSummary>(`/api/reports/summary${reportSearch(q)}`),
+    audience: (q: ReportQuery) => get<Leaderboard>(`/api/reports/audience${reportSearch(q)}`),
+    user: (id: string, q: ReportQuery = {}) => get<AudienceUserDetail>(`/api/reports/audience/users/${encodeURIComponent(id)}${reportSearch(q)}`),
+    forgetUser: (id: string) => del<void>(`/api/reports/audience/users/${encodeURIComponent(id)}`),
+    settings: () => get<ReportSettingsResponse>('/api/reports/settings'),
+    saveSettings: (body: ReportSettings) => put<ReportSettingsResponse>('/api/reports/settings', body),
+    /** Download links (a plain GET with the session cookie). */
+    sessionExportUrl: (id: string, format: ReportExportFormat, q: ReportQuery = {}) =>
+      `/api/reports/sessions/${encodeURIComponent(id)}/export${reportSearch({ ...q, format })}`,
+    rangeExportUrl: (format: ReportExportFormat, q: ReportQuery) => `/api/reports/export${reportSearch({ ...q, format })}`,
   },
 
   // browser login viewer
