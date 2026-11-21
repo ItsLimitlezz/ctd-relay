@@ -69,7 +69,7 @@ With **Audience tracking** on (the default), Relay keeps, per person and per str
   message on. Distinct-chatter counts are still worked out in memory, never stored per person.
 - **Audience tracking** turned off during a live also drops what was added up about people since
   the last write (at most 30 s); nothing more about people is written.
-- **Keep reports for**: keep everything, 90 days or 365 days. Older streams are deleted (checked at
+- **Keep reports for**: **365 days** (the default), 90 days or keep everything. Older streams are deleted (checked at
   start-up, when you change the setting and every 6 hours), and so is everyone only seen in them.
   Deleting goes 20 streams per transaction and pauses every 50 ms, so a large clean-up never holds
   the database or the server for long.
@@ -156,9 +156,9 @@ continues where it left off. Back them up with `app.db` as usual.
 Size, measured on a simulated 90-minute stream on 6 destinations (`npx tsx scripts/report-sample.ts`):
 about 470 KiB in `app.db`, most of it viewer samples. Plan on **about 25–30 KiB per destination
 per hour** plus a little per chatter: a 4-hour stream on 5 destinations is roughly 0.6 MB, so
-streaming daily adds roughly 55 MB per 90 days or 220 MB per year. "Keep everything" (the default)
-grows by that much; 90 or 365 days keeps it bounded (freed space is reused, the file does not
-shrink).
+streaming daily adds roughly 55 MB per 90 days or 220 MB per year. The default, 365 days, keeps it
+at about that (freed space is reused, the file does not shrink); 90 days keeps less, "keep
+everything" keeps growing by that much.
 
 The report tables are created in a few milliseconds (new tables only; nothing existing is
 rewritten). Lists and date ranges keep the worked-out numbers of streams that have ended in memory,

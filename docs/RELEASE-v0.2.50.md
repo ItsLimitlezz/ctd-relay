@@ -13,7 +13,7 @@ Version: **`0.2.40` → `0.2.50`** (tag `v0.2.50`). Never a Major bump.
 | Reports page | New **Reports** entry in the main menu: every stream of a profile with duration, peak and average viewers, viewer-minutes, chat, unique chatters, uptime, recoveries and errors, per platform and in total; a page per stream (viewers over time, chat per minute, destinations, titles, feeds, event timeline) and per viewer; leaderboards (Top chatters, Most loyal, Longest watch time, Newest regulars). | Empty at first: **past streams are not backfilled** (Relay kept no viewer or chat counts before). The first report is the first stream after the update. |
 | Recording | Relay records every stream from its own events: titles, test mode, destinations, live periods, recoveries, errors, blocked feeds, viewers every 30 s, chat per minute, feed stats per minute. Never message text. Writes are queued and written together right after an event, chat every 30 s, so streaming and chat are not slowed. | **On by default.** About 25–30 KiB of `app.db` per destination per hour (docs/REPORTS.md → Storage). |
 | Audience | Per viewer per stream: messages, joins, other chat events, first/last message time; Twitch watch time from its chatters list every 5 minutes. Instagram "*name* and N others joined": *name* is a join, N are anonymous joins. | **On by default**: reports then hold viewer names and ids. Turn it off in Reports → Recording and privacy if you don't want that. |
-| Privacy | Reports → **Recording and privacy** (admin): Record stream reports, Audience tracking, **Keep reports for** (everything / 90 / 365 days), and **Forget this user** on a viewer's page (overwrites their rows, audited without the name). | Retention starts at **keep everything**. |
+| Privacy | Reports → **Recording and privacy** (admin): Record stream reports, Audience tracking, **Keep reports for** (everything / 90 / 365 days), and **Forget this user** on a viewer's page (overwrites their rows, audited without the name). Reports are kept for **365 days** by default (90 days or keep everything are the other choices). |
 | Export | **Excel (.xlsx)** by default (written by Relay, no macros or formulas), CSV (.zip) and JSON, per stream or date range; times in the browser's time zone. | Nothing to install. |
 | Twitch | Connecting or reconnecting a Twitch account also asks for `moderator:read:chatters` (watch time). | Accounts keep working without it. Reconnect once (Accounts) to get watch time; until then Twitch counts chatters and joins like every other platform. |
 | External API | Revision **1.12 → 1.13** (additive): scope `reports:read` ("Read stream reports", shown as sensitive) and `GET /api/v1/reports/…` ([API.md §16](API.md)). | Existing tokens and paired apps keep working and do **not** get `reports:read`; create or pair a token with it on purpose. The footer shows **API 1.13**. |
@@ -34,8 +34,8 @@ The backup is still the first step.
 
 ## Decide before updating
 
-- **Audience tracking** (on by default) stores viewer names and ids per stream. Keep it, or turn it off right after the update (step 3.6).
-- **Retention**: "keep everything" grows `app.db` by roughly 55 MB per 90 days if you stream about 4 hours a day to 5 destinations; **365 days** is a good default for a show that streams daily.
+- **Audience tracking** is on by default: it is what the leaderboards of who chats, joins and watches the most are made from, and it stores viewer names and ids per stream (never message text). Turn it off in step 3.6 only if you don't want that; one person can be forgotten on their page.
+- **Retention** is **365 days** by default: about 220 MB of `app.db` at most if you stream about 4 hours a day to 5 destinations. Choose 90 days for less, or keep everything (it keeps growing) in step 3.6.
 
 ## 1. Before the update
 
@@ -88,7 +88,7 @@ The image `ghcr.io/itslimitlezz/ctd-relay:0.2.50` exists once the `v0.2.50` tag 
 
    **Connected apps** (Settings → API) matches step 1.2 within 30 s; the CTD OBS dock is still *Connected*.
 5. **Reports page:** **Reports** is in the main menu and opens with **No streams in this period** (nothing is backfilled). No error banner.
-6. **Reports → Recording and privacy:** shows **Record stream reports** on, **Audience tracking** on, **Keep reports for** "everything". Set them as decided above, **Save**, reload: the values stay. (Admins only; the audit log shows `reports.settings`.)
+6. **Reports → Recording and privacy:** shows **Record stream reports** on, **Audience tracking** on (its one-line explanation under it), **Keep reports for** **365 days**. Change them only if decided above; a change saves at once and stays after a reload. (Admins only; the audit log shows `reports.settings`.)
 7. **A test-mode stream, about 5 minutes** (Twitch test mode, as for any Relay test): go live, write a few chat messages, end it. Then:
    - **Reports** with **Include test-mode streams** on lists the stream (test-mode streams are left out of date-range totals unless included).
    - The stream page shows the duration, the destinations with their live periods, the event timeline (stream started, live, stream ended) and your chat messages in Chat per minute. Viewer counts may be empty in a Twitch bandwidth test: empty means "not reported", never 0.

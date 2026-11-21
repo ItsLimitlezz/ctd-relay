@@ -23,7 +23,8 @@ export interface ReportSettings {
   retentionDays: ReportRetentionDays;
 }
 
-export const DEFAULT_REPORT_SETTINGS: ReportSettings = { recording: true, audience: true, retentionDays: 0 };
+/** Recording and audience tracking on, reports kept for 365 days (0.2.50 decision; changeable in Reports → Recording and privacy). */
+export const DEFAULT_REPORT_SETTINGS: ReportSettings = { recording: true, audience: true, retentionDays: 365 };
 
 // ---------------------------------------------------------------------------
 // Sessions

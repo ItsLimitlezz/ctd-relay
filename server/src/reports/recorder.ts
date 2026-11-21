@@ -641,7 +641,8 @@ export class ReportRecorder {
 
 export function reportSettingsFrom(raw: unknown): ReportSettings {
   const r = raw && typeof raw === 'object' ? (raw as Partial<ReportSettings>) : {};
-  const retention = r.retentionDays === 90 || r.retentionDays === 365 ? r.retentionDays : 0;
+  // 0 (keep everything) only when chosen; nothing stored (or anything else) is the default.
+  const retention = r.retentionDays === 0 || r.retentionDays === 90 || r.retentionDays === 365 ? r.retentionDays : DEFAULT_REPORT_SETTINGS.retentionDays;
   return {
     recording: typeof r.recording === 'boolean' ? r.recording : DEFAULT_REPORT_SETTINGS.recording,
     audience: typeof r.audience === 'boolean' ? r.audience : DEFAULT_REPORT_SETTINGS.audience,

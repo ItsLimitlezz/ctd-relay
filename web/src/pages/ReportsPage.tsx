@@ -468,7 +468,7 @@ function ReportSettingsCard({ isAdmin }: { isAdmin: boolean }) {
         <Field
           label="Audience tracking"
           inline
-          help="Who chatted, joined or (where the platform says) watched, per stream: names, counts and times, never message text. Off: counts only."
+          help="Keeps who chats, joins and watches the most (leaderboards): names, counts and times per stream, never message text. Off: counts only; forget one person on their page."
         >
           <Toggle checked={s.audience} disabled={!isAdmin} busy={busy} onChange={(on) => void save({ audience: on })} />
         </Field>

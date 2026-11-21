@@ -23,6 +23,7 @@ Versions follow the hub's CONVENTIONS.md → Versioning. Each release that ships
 - `scripts/report-sample.ts` writes a sample report (.xlsx, CSV, JSON) from a simulated stream with synthetic names.
 
 ### Notes
+- Defaults: recording **on**, audience tracking **on** (names, counts and times per stream, never message text; the leaderboards of who chats, joins and watches the most), reports kept for **365 days**. All three are in Reports → Recording and privacy (admin), with **Forget this user** on each viewer's page.
 - Past streams are not backfilled: Relay kept no viewer or chat counts before this version.
 - Reconnect Twitch accounts once for watch time (new optional permission `moderator:read:chatters`); without it Twitch reports chatters and joins only, like the other platforms.
 

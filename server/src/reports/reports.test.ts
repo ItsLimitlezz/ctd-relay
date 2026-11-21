@@ -7,7 +7,8 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { MIGRATIONS, migrate, openDatabase, schemaVersion } from '../db/database.js';
 import { collect, renderExport, tables, toCsv, wallClock } from './export.js';
 import { HOLD_MS, seriesStats, stepSeries, sumSeries, unionMs, valueAt } from './math.js';
-import { PRESENCE_MAX_CREDIT_SEC, PRESENCE_SAMPLE_MS, VIEWER_SAMPLE_MS, othersCount } from './recorder.js';
+import { PRESENCE_MAX_CREDIT_SEC, PRESENCE_SAMPLE_MS, VIEWER_SAMPLE_MS, othersCount, reportSettingsFrom } from './recorder.js';
+import { DEFAULT_REPORT_SETTINGS } from '../../../shared/reports.js';
 import { normalizeChatMessage } from '../chat/normalize.js';
 import { leaderboard, listSessions, rangeSummary, sessionDetail, userDetail } from './report.js';
 import { REPORT_MIGRATIONS, migrateReports, reportSchemaVersion } from './schema.js';
@@ -632,6 +633,37 @@ describe('SR check 0.2.50: live path, privacy, scale', () => {
     const files = unzip(renderExport(collect(rig.reports.context(), { sessionId: 's1' }, 'UTC')!, 'xlsx', 'r').body);
     const lone = /[\ud800-\udbff](?![\udc00-\udfff])|(?<![\ud800-\udbff])[\udc00-\udfff]/;
     for (const [n, data] of files) if (n.endsWith('.xml')) expect(lone.test(data.toString('utf8')), n).toBe(false);
+  });
+
+  it('defaults: recording and audience tracking on, reports kept for 365 days; "keep everything" only when chosen', () => {
+    expect(DEFAULT_REPORT_SETTINGS).toEqual({ recording: true, audience: true, retentionDays: 365 });
+    expect(reportSettingsFrom(null)).toEqual(DEFAULT_REPORT_SETTINGS);
+    expect(reportSettingsFrom({ recording: true, audience: true })).toMatchObject({ retentionDays: 365 });
+    expect(reportSettingsFrom({ retentionDays: 30 })).toMatchObject({ retentionDays: 365 });
+    expect(reportSettingsFrom({ retentionDays: 0 })).toMatchObject({ retentionDays: 0 });
+    expect(reportSettingsFrom({ retentionDays: 90 })).toMatchObject({ retentionDays: 90 });
+  });
+
+  it('with nothing saved, a stream older than 365 days is deleted; with "keep everything" it stays', () => {
+    const rig = createRig();
+    const tw = rig.destination('twitch');
+    rig.startSession('old');
+    rig.dest(tw, 'live', { viewers: 3 });
+    rig.clock.advance(MIN);
+    rig.stopSession();
+    rig.clock.advance(366 * 86_400_000);
+    rig.reports.recorder.retention(); // what start-up and the 6-hourly check do
+    expect(rig.reports.store.getSession('old')).toBeNull();
+
+    const keep = createRig();
+    keep.reports.saveSettings({ recording: true, audience: true, retentionDays: 0 });
+    const tw2 = keep.destination('twitch');
+    keep.startSession('kept');
+    keep.dest(tw2, 'live', { viewers: 3 });
+    keep.stopSession();
+    keep.clock.advance(3 * 365 * 86_400_000);
+    keep.reports.recorder.retention();
+    expect(keep.reports.store.getSession('kept')).not.toBeNull();
   });
 
   it('retention deletes in small transactions and finishes', () => {
