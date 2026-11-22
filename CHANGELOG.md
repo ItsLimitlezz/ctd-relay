@@ -2,6 +2,15 @@
 
 Versions follow the hub's CONVENTIONS.md → Versioning. Each release that ships to a TrueNAS install has a runbook in `docs/RELEASE-*.md` (backup, update, verify, rollback).
 
+## 0.2.70 (2026-11-21)
+
+**Overlay summaries** for the CTD OBS plugin's **CTD Overlays** dock: CTD Overlay's version and its templates' updates, through Relay (Relay is the hub: the plugin never talks to CTD Overlay). Includes everything in 0.2.60 (feed previews). API revision **1.15** (additive, no new scope). No database change: schema **v4**, reports **r1**, so 0.2.60 still opens `app.db` after a rollback. Runbook: [docs/RELEASE-v0.2.70.md](docs/RELEASE-v0.2.70.md).
+
+### Added
+- **API (1.15):** `PUT /api/v1/apps/{appId}/summary` (`apps:write`, only the token that registered the app: `404 not_found` before registration, `409 app_owned` for another token) and `GET /api/v1/profiles/{id}/overlay-summary` (`apps:read`; a token limited to a profile reads only that one, `403 profile_forbidden`). docs/API.md §9.5, OpenAPI schemas `OverlaySummary`, `OverlaySummaryTemplate`, `OverlaySummaryOverlay`.
+- The summary (`ctd-overlay-summary/1`): the server's version, the admin UI's address (origin only: no credentials, query or fragment), each template's installed, oldest-in-use and newest version, its source (`owner/name` and release tag prefix: one repository can hold several templates), whether updates move by themselves, the update kind (patch / minor / major), a problem **code** (never the message), up to 8 plain lines of release notes, and the overlays that wait for the operator and why.
+- Kept apart from the registration, so an overlay resource's `meta` stays within its 4 KB. At most 64 KB per app (200 templates, 500 overlays), **in memory only**, every field the schema doesn't name is dropped before it is stored (an overlay's URL or key, a token, an error's stack), control and bidi-override characters are refused. A profile's view holds only the overlays the app registered for that profile and the templates they use (plus templates no overlay uses). Forgotten when the app unregisters or another token takes its id.
+
 ## 0.2.60 (2026-11-21)
 
 **Feed previews**: see what OBS sends to Relay without leaving the web UI. Includes everything in 0.2.50 (Stream Reports). API revision **1.14** (additive). No database change: schema **v4**, reports **r1**, so 0.2.50 still opens `app.db` after a rollback. See [docs/PREVIEW.md](docs/PREVIEW.md). Runbook: [docs/RELEASE-v0.2.60.md](docs/RELEASE-v0.2.60.md).

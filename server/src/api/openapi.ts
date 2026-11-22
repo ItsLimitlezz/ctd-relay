@@ -18,7 +18,7 @@ import { reportPaths, reportSchemas } from './openapi-reports.js';
 import { showPaths, showSchemas } from './openapi-show.js';
 
 /** Minor revision of the v1 contract (additive changes only; see the changelog in docs/API.md). */
-export const API_REVISION = '1.14';
+export const API_REVISION = '1.15';
 
 const ref = (name: string) => ({ $ref: `#/components/schemas/${name}` });
 const nullable = (schema: object) => ({ oneOf: [schema, { type: 'null' }] });
@@ -265,6 +265,16 @@ export function openApiDocument(version: string): Record<string, unknown> {
           responses: { '200': { description: 'Overlays', content: json(ref('OverlaysResponse')) }, ...errors, ...profileErrors },
         },
       },
+      '/profiles/{id}/overlay-summary': {
+        get: {
+          summary: 'Overlay servers\' versions and template updates, seen from a profile (§9.5)',
+          operationId: 'getProfileOverlaySummary',
+          tags: ['profiles', 'apps'],
+          description: 'Needs `apps:read`. One item per connected app that sent a summary: its overlays registered for this profile, and the templates those use (or no overlay uses).',
+          parameters: [idPath],
+          responses: { '200': { description: 'Summaries', content: json(ref('OverlaySummariesResponse')) }, ...errors, ...profileErrors },
+        },
+      },
       '/profiles/{id}/obs': {
         get: {
           summary: 'Latest OBS state of a profile, per connected app (v1.4)',
@@ -387,6 +397,23 @@ export function openApiDocument(version: string): Record<string, unknown> {
             ...errors,
             '403': problemResponse('Token lacks apps:write (`missing_scope`)'),
             '404': problemResponse('Not registered (`not_found`)'),
+            '409': problemResponse('Registered by another token (`app_owned`)'),
+          },
+        },
+      },
+      '/apps/{appId}/summary': {
+        put: {
+          summary: 'An overlay server\'s versions and update state, for the CTD OBS plugin (§9.5)',
+          operationId: 'putAppSummary',
+          tags: ['apps'],
+          description: 'Needs `apps:write`; the registering token only. Body: `ctd-overlay-summary/1` (at most 64 KB). Fields the schema does not name are dropped. In memory: send it again after it changes, and every few minutes.',
+          parameters: [appIdPath],
+          requestBody: { required: true, content: json(ref('OverlaySummary')) },
+          responses: {
+            '204': { description: 'Stored' },
+            ...errors,
+            '403': problemResponse('Token lacks apps:write (`missing_scope`)'),
+            '404': problemResponse('Not registered (`not_found`): register with PUT /apps/{appId} first'),
             '409': problemResponse('Registered by another token (`app_owned`)'),
           },
         },
@@ -1097,6 +1124,70 @@ export function openApiDocument(version: string): Record<string, unknown> {
             height: int,
             meta: { type: 'object', description: 'The resource’s meta (canvas, fps, transparent, slot…)' },
           },
+        },
+        OverlaySummaryTemplate: {
+          type: 'object',
+          required: ['id', 'name', 'installed'],
+          properties: {
+            id: str,
+            name: str,
+            installed: { ...str, description: 'The newest installed version' },
+            oldestInUse: { ...str, description: 'The oldest version an overlay is on (absent: none uses it)' },
+            latest: { ...nullable(str), description: 'The newest release of its followed source' },
+            source: {
+              type: 'object',
+              required: ['kind'],
+              properties: {
+                kind: { type: 'string', enum: ['github', 'url', 'none'] },
+                repo: { ...str, description: 'owner/name' },
+                tagPrefix: { ...str, description: 'Release tag prefix (one repository can hold several templates)' },
+                pinned: { type: 'boolean' },
+              },
+            },
+            auto: { type: 'boolean', description: 'New releases move overlays by themselves' },
+            update: { type: 'string', enum: ['none', 'patch', 'minor', 'major'], description: 'oldestInUse → latest: patch/minor go by themselves, major waits' },
+            checkedAt: nullable(str),
+            problem: { ...str, description: 'The last check failed: a short code, never a message' },
+            notes: {
+              type: 'array',
+              maxItems: 5,
+              items: { type: 'object', required: ['version', 'text'], properties: { version: str, text: { ...str, description: 'At most 8 lines of 200 characters, joined with \\n' } } },
+            },
+          },
+        },
+        OverlaySummaryOverlay: {
+          type: 'object',
+          required: ['id', 'slug', 'template'],
+          properties: {
+            id: { ...str, description: 'The part of each registered overlay resource id before the first ":"' },
+            slug: str,
+            name: str,
+            show: nullable(str),
+            template: { type: 'object', required: ['id', 'version'], properties: { id: str, name: str, version: str } },
+            waiting: {
+              type: 'object',
+              required: ['to', 'major'],
+              description: 'A newer version waits for the operator',
+              properties: { to: str, major: { type: 'boolean' }, why: str },
+            },
+          },
+        },
+        OverlaySummary: {
+          type: 'object',
+          required: ['schema', 'server', 'templates', 'overlays'],
+          description: 'docs/API.md §9.5. Fields not listed are dropped.',
+          properties: {
+            schema: { type: 'string', enum: ['ctd-overlay-summary/1'] },
+            server: { type: 'object', properties: { name: str, version: nullable(str) } },
+            ui: { ...nullable(str), description: 'The admin UI address (no query, fragment or credentials)' },
+            templates: { type: 'array', maxItems: 200, items: ref('OverlaySummaryTemplate') },
+            overlays: { type: 'array', maxItems: 500, items: ref('OverlaySummaryOverlay') },
+          },
+        },
+        OverlaySummariesResponse: {
+          type: 'object',
+          required: ['items'],
+          properties: { items: { type: 'array', items: { allOf: [ref('OverlaySummary'), { type: 'object', properties: { appId: str, appName: str, appOnline: { type: 'boolean' }, receivedAt: str } }] } } },
         },
         OverlaysResponse: { type: 'object', required: ['items'], properties: { items: { type: 'array', items: ref('Overlay') } } },
         MessageRequest: {
