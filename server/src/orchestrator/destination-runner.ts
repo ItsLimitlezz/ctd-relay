@@ -560,11 +560,11 @@ export class DestinationRunner {
         this.clearAttempt();
         if (this.confirmState === 'none' && prepared.confirm) this.launchConfirm(prepared);
         if (this.confirmState === 'running') {
-          const stats = ev.stats ? { stats: ev.stats } : {};
+          const stats = { ...(ev.stats ? { stats: ev.stats } : {}), ...this.transcodePatch(ev) };
           if (this.recovery) this.setRecovering('Going live…', stats);
           else this.set({ phase: 'confirming', message: null, ...stats });
         } else {
-          this.goLive(prepared, ev.stats);
+          this.goLive(prepared, ev.stats, this.transcodePatch(ev));
         }
         return;
       }
@@ -572,9 +572,9 @@ export class DestinationRunner {
         this.pushStatus = 'retrying';
         this.lastPushError = ev.message;
         if (this.recovery) {
-          this.setRecovering(`Relay reconnecting${ev.message ? `: ${ev.message}` : ''}`, { retries: ev.attempt, stats: null });
+          this.setRecovering(`Relay reconnecting${ev.message ? `: ${ev.message}` : ''}`, { retries: ev.attempt, stats: null, ...this.transcodePatch(ev) });
         } else {
-          this.set({ phase: 'retrying', message: ev.message ?? 'Relay reconnecting', retries: ev.attempt, stats: null });
+          this.set({ phase: 'retrying', message: ev.message ?? 'Relay reconnecting', retries: ev.attempt, stats: null, ...this.transcodePatch(ev) });
         }
         this.armPushDown(prepared);
         return;
@@ -586,6 +586,15 @@ export class DestinationRunner {
         // 'starting' / 'stopped' carry no new information for us.
         return;
     }
+  }
+
+  /**
+   * The push's transcoding state for the destination card. Present only on pushes that transcode
+   * (or fell back from it), so a copy destination's state keeps the shape it always had.
+   */
+  private transcodePatch(ev: PushEvent): StatePatch {
+    if (ev.transcode) return { transcode: ev.transcode };
+    return this.host.state(this.id)?.transcode ? { transcode: null } : {};
   }
 
   private launchConfirm(prepared: PreparedLive): void {
@@ -649,7 +658,7 @@ export class DestinationRunner {
     return this.healthWarning ?? this.pushWarning;
   }
 
-  private goLive(prepared: PreparedLive, stats?: DestinationState['stats']): void {
+  private goLive(prepared: PreparedLive, stats?: DestinationState['stats'], transcode: StatePatch = {}): void {
     const firstTime = !this.wentLive;
     this.wentLive = true;
     const recovered = this.recovery;
@@ -661,6 +670,7 @@ export class DestinationRunner {
       watchUrl: prepared.watchUrl ?? null,
       retries: 0,
       ...(stats ? { stats } : {}),
+      ...transcode,
     };
     const count = recovered ? (this.host.state(this.id)?.recoveries ?? 0) + 1 : 0;
     if (recovered) patch.recoveries = count;

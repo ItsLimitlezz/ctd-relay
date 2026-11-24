@@ -173,8 +173,74 @@ export interface Destination {
   ingestUrl: string | null;
   /** Whether a stream key is stored. The key itself is never sent to the UI. */
   hasStreamKey: boolean;
+  /**
+   * Re-encode the feed for this destination (docs/TRANSCODING.md). null/absent = copy, as before:
+   * the platform gets the feed exactly as OBS sends it. Only used while Settings → Transcoding is on.
+   */
+  transcode?: TranscodeProfile | null;
   createdAt: string;
   updatedAt: string;
+}
+
+// ---------------------------------------------------------------------------
+// Transcoding (docs/TRANSCODING.md). Off unless the server's switch is on and the destination has a
+// profile with mode 'transcode'. Limits and defaults per platform: shared/transcode.ts.
+// ---------------------------------------------------------------------------
+
+export type VideoCodec = 'h264' | 'hevc' | 'av1';
+export const VIDEO_CODECS: readonly VideoCodec[] = ['h264', 'hevc', 'av1'];
+
+/** What a destination gets instead of the copied feed. */
+export interface TranscodeProfile {
+  /** 'copy' keeps today's behaviour (same as `transcode: null`); the saved settings stay for later. */
+  mode: 'copy' | 'transcode';
+  video: {
+    codec: VideoCodec;
+    /** Output frame size. The feed is scaled to fit and letterboxed/pillarboxed, never stretched. */
+    width: number;
+    height: number;
+    /** null = keep the feed's frame rate. Otherwise 24..120 (frames are dropped or repeated). */
+    fps: number | null;
+    /** Constant bitrate in kbit/s. */
+    bitrateKbps: number;
+    /** Keyframe every N seconds (every platform asks for 2). */
+    keyframeSec: number;
+    /** 'auto' = the best encoder that passed this machine's test encode, or one encoder by name. */
+    encoder: string;
+  };
+  /** 'copy' keeps the feed's audio when it is AAC (else AAC 160 kbps); or always re-encode to AAC. */
+  audio: 'copy' | { codec: 'aac'; bitrateKbps: number };
+  /**
+   * When the encode can't keep up or the encoder fails: 'copy' sends the original feed instead (only
+   * if the platform accepts it; otherwise Relay keeps transcoding and warns), 'stop' stops this
+   * destination with the reason. Other destinations are never affected.
+   */
+  fallback: 'copy' | 'stop';
+}
+
+/**
+ * - starting: the encode is starting
+ * - running: encoding in real time
+ * - behind: encoding slower than real time (viewers see stutters); falls back after a while
+ * - fallback-copy: gave up transcoding for this push; the platform gets the original feed
+ */
+export type TranscodeRunState = 'starting' | 'running' | 'behind' | 'fallback-copy';
+
+/** Live transcoding state of one destination (DestinationState.transcode). */
+export interface DestinationTranscodeStatus {
+  state: TranscodeRunState;
+  /** FFmpeg encoder in use, e.g. "libx264" (null in fallback-copy). */
+  encoder: string | null;
+  codec: VideoCodec;
+  width: number;
+  height: number;
+  /** Output frame rate; null = the feed's rate. */
+  fps: number | null;
+  bitrateKbps: number;
+  /** Encoding speed over the last seconds (1.00 = real time); null until measured. */
+  speed: number | null;
+  /** Why it is behind / fell back, in plain words. */
+  message: string | null;
 }
 
 // ---------------------------------------------------------------------------
@@ -237,6 +303,8 @@ export interface DestinationState {
    * send. Non-empty only while the phase is `waiting-for-feed`.
    */
   waitingFor?: Feed[];
+  /** Set while this destination's push transcodes (or fell back to copy); null/absent = plain copy. */
+  transcode?: DestinationTranscodeStatus | null;
   /**
    * Set while the feed is online but can't be sent (e.g. HEVC video): nothing is pushed and no
    * retries run until OBS sends H.264; then the destination starts by itself. Only while the phase is

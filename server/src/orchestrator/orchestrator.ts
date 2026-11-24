@@ -776,6 +776,9 @@ export class SessionOrchestrator implements Orchestrator {
   private update(id: string, patch: StatePatch): void {
     const cur = this.states.get(id);
     if (!cur) return;
+    // A destination that stops pushing (stats cleared) isn't transcoding any more either. Only
+    // destinations that were transcoding ever carry the field.
+    if (patch.stats === null && patch.transcode === undefined && cur.transcode) patch = { ...patch, transcode: null };
     const next: DestinationState = { ...cur, ...patch, profileId: this.profileId };
     if (patch.phase && patch.phase !== cur.phase) next.since = nowIso();
     if (
@@ -788,7 +791,8 @@ export class SessionOrchestrator implements Orchestrator {
       next.lastRecovery === cur.lastRecovery &&
       (next.viewers ?? null) === (cur.viewers ?? null) &&
       sameBlock(next.blocked, cur.blocked) &&
-      (next.waitingFor ?? []).join() === (cur.waitingFor ?? []).join()
+      (next.waitingFor ?? []).join() === (cur.waitingFor ?? []).join() &&
+      (next.transcode ?? null) === (cur.transcode ?? null)
     ) {
       return;
     }

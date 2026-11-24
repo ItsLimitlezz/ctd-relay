@@ -18,6 +18,7 @@ export const SETTINGS_TABS = [
   { id: 'users', label: 'Users' },
   { id: 'overlay', label: 'Chat overlay' },
   { id: 'spotify', label: 'Spotify' },
+  { id: 'transcoding', label: 'Transcoding' },
   { id: 'api', label: 'API' },
   { id: 'audit', label: 'Audit log' },
   { id: 'advanced', label: 'Advanced' },
@@ -470,6 +471,41 @@ export function hasErrors(errors: Readonly<Record<string, string | undefined>> |
 // ---------------------------------------------------------------------------
 
 const CODEC_LABELS: Record<TranscodeVideoCodec, string> = { h264: 'H.264', hevc: 'HEVC', av1: 'AV1' };
+
+const BACKEND_NAMES: Record<TranscodeEncoderResult['backend'], string> = {
+  software: 'CPU',
+  nvenc: 'NVIDIA GPU (NVENC)',
+  qsv: 'Intel GPU (Quick Sync)',
+  vaapi: 'GPU (VAAPI)',
+  amf: 'AMD GPU (AMF)',
+};
+
+export interface EncoderRow {
+  encoder: string;
+  codec: string;
+  runsOn: string;
+  ok: boolean;
+  /** "Works · 3.07× real time at 720p30" or the reason it failed. */
+  result: string;
+}
+
+/** Every encoder this FFmpeg build has, with how its test went (Settings → Transcoding table). */
+export function encoderRows(caps: TranscodeCapabilities): EncoderRow[] {
+  return caps.encoders.map((e) => ({
+    encoder: e.encoder,
+    codec: CODEC_LABELS[e.codec] ?? e.codec,
+    runsOn: BACKEND_NAMES[e.backend] ?? e.backend,
+    ok: e.ok,
+    result: e.ok ? (e.speed !== null ? `Works · ${e.speed}× real time at 720p30` : 'Works') : (e.error ?? 'Test encode failed'),
+  }));
+}
+
+/** "H.264, HEVC and AV1" from what works; null when nothing does. */
+export function workingCodecs(caps: TranscodeCapabilities): string | null {
+  const names = (['h264', 'hevc', 'av1'] as const).filter((c) => caps.supported[c]).map((c) => CODEC_LABELS[c]);
+  if (names.length === 0) return null;
+  return names.length === 1 ? names[0]! : `${names.slice(0, -1).join(', ')} and ${names.at(-1)}`;
+}
 
 /** "h264_nvenc (GPU)" / "libx264 (CPU, 2.2×)" for one working encoder. */
 function encoderLabel(e: TranscodeEncoderResult): string {

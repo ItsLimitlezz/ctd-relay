@@ -1,8 +1,9 @@
 // Pure helpers for the destination form: defaults, validation and request building.
 // Everything platform-specific comes from PlatformInfo (fields, feeds, connect method).
 
-import type { CreateDestinationRequest, UpdateDestinationRequest } from '@shared/api';
-import type { Account, AccountStatus, Destination, Feed, FieldSpec, PlatformInfo } from '@shared/types';
+import type { CreateDestinationRequest, TranscodeCapabilities, UpdateDestinationRequest } from '@shared/api';
+import { isTranscoding, validateTranscodeProfile } from '@shared/transcode';
+import type { Account, AccountStatus, Destination, Feed, FieldSpec, PlatformInfo, TranscodeProfile } from '@shared/types';
 import { FEEDS, PLATFORM_IDS } from '@shared/types';
 import {
   cleanValues,
@@ -16,6 +17,7 @@ import {
 } from '../../components/dynamic-form';
 import type { SelectOption } from '../../components/Select';
 import { fieldForMessage } from '../settings/settings-helpers';
+import { orientFor, transcodeChanged } from './transcode-form';
 
 export const FEED_LABEL: Record<Feed, string> = { landscape: 'Landscape', vertical: 'Vertical' };
 export const FEED_SOURCE: Record<Feed, string> = {
@@ -42,6 +44,8 @@ export interface DestinationDraft {
   values: FormValues;
   /** Remove the stored stream key on save (only when no new key was typed). */
   clearStreamKey: boolean;
+  /** Transcoding profile (null = never set: the platform gets the feed as OBS sends it). */
+  transcode: TranscodeProfile | null;
 }
 
 /** Position of a platform in the standard order (Twitch, YouTube, …, custom); unknown ids last. */
@@ -112,6 +116,7 @@ export function initialDraft(info: PlatformInfo, accounts: readonly Account[], e
       accountId: existing.accountId ?? '',
       values: destinationFormValues(info.destinationFields, existing),
       clearStreamKey: false,
+      transcode: existing.transcode ?? null,
     };
   }
   return {
@@ -120,6 +125,7 @@ export function initialDraft(info: PlatformInfo, accounts: readonly Account[], e
     accountId: usesAccounts(info) ? defaultAccountId(accounts, info.id) : '',
     values: initialValues(info.destinationFields),
     clearStreamKey: false,
+    transcode: null,
   };
 }
 
@@ -130,8 +136,28 @@ export function draftSecretsSet(info: PlatformInfo, existing: Destination | null
   return set;
 }
 
-export function validateDraft(info: PlatformInfo, draft: DestinationDraft, secretsSet: Readonly<Record<string, boolean>>): FormErrors {
+/** Form error key of the Transcoding section. */
+export const TRANSCODE_ERROR_KEY = 'transcode';
+
+/** The profile as it will be saved: its frame turned to match the chosen feed. */
+export function draftTranscode(draft: DestinationDraft): TranscodeProfile | null {
+  return draft.transcode ? orientFor(draft.transcode, draft.feed) : null;
+}
+
+export function validateDraft(
+  info: PlatformInfo,
+  draft: DestinationDraft,
+  secretsSet: Readonly<Record<string, boolean>>,
+  caps: TranscodeCapabilities | null = null,
+  feedFps: number | null = null,
+): FormErrors {
   const errors: FormErrors = { ...validateValues(info.destinationFields, draft.values, secretsSet) };
+  // Same checks as the server (platform limits; while it is switched on, a working encoder and the CPU guard).
+  const transcode = draftTranscode(draft);
+  if (transcode) {
+    const problem = validateTranscodeProfile(transcode, info.id, info.name, isTranscoding(transcode) ? caps : null, feedFps)[0];
+    if (problem) errors[TRANSCODE_ERROR_KEY] = problem;
+  }
   // The server only accepts RTMP(S) server URLs (any URL is fine for plain 'url' option fields).
   for (const f of info.destinationFields) {
     const v = draft.values[f.key];
@@ -184,11 +210,16 @@ export function buildCreateRequest(info: PlatformInfo, draft: DestinationDraft):
   };
   if (ingestUrl !== undefined) req.ingestUrl = ingestUrl;
   if (streamKey !== undefined) req.streamKey = streamKey;
+  const transcode = draftTranscode(draft);
+  if (transcode) req.transcode = transcode;
   return req;
 }
 
-/** PATCH body. streamKey: absent = keep, new value = replace, '' = remove the stored key. */
-export function buildUpdateRequest(info: PlatformInfo, draft: DestinationDraft): UpdateDestinationRequest {
+/**
+ * PATCH body. streamKey: absent = keep, new value = replace, '' = remove the stored key.
+ * transcode: only sent when it differs from the stored profile (`existing`).
+ */
+export function buildUpdateRequest(info: PlatformInfo, draft: DestinationDraft, existing: Pick<Destination, 'transcode'> | null = null): UpdateDestinationRequest {
   const { options, ingestUrl, streamKey } = splitValues(info, draft, true);
   const req: UpdateDestinationRequest = {
     name: draft.name.trim(),
@@ -199,6 +230,8 @@ export function buildUpdateRequest(info: PlatformInfo, draft: DestinationDraft):
   if (ingestUrl !== undefined) req.ingestUrl = ingestUrl;
   if (streamKey !== undefined) req.streamKey = streamKey;
   else if (draft.clearStreamKey) req.streamKey = '';
+  const transcode = draftTranscode(draft);
+  if (transcodeChanged(transcode, existing?.transcode)) req.transcode = transcode;
   return req;
 }
 
@@ -206,6 +239,7 @@ export function buildUpdateRequest(info: PlatformInfo, draft: DestinationDraft):
 export function destinationErrorField(info: PlatformInfo, message: string): string | null {
   const labels: Record<string, string> = { name: 'Name', accountId: 'Account' };
   for (const f of info.destinationFields) labels[f.key] = f.label;
+  if (/^Transcoding: /.test(message)) return TRANSCODE_ERROR_KEY;
   const byLabel = fieldForMessage(message, labels);
   if (byLabel) return byLabel;
   if (/does not accept the \w+ feed/i.test(message)) return 'feed';

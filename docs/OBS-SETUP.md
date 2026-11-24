@@ -65,12 +65,14 @@ Start the vertical stream from the Vertical dock's stream button. Aitum Vertical
 
 ## Why these settings
 
-The app **does not re-encode**: it copies video and audio to every platform as-is (`-c copy`). That keeps CPU use near zero, but each OBS output must suit the strictest platform bound to that feed:
+By default the app **does not re-encode**: it copies video and audio to every platform as-is (`-c copy`). That keeps CPU use near zero, but each OBS output must suit the strictest platform bound to that feed:
 
 - H.264 video with AAC audio is accepted everywhere. Other codecs are rejected by some platforms.
 - A **2-second keyframe interval** is required or recommended by Twitch, YouTube, Kick, Facebook and the vertical platforms.
 - **CBR at 6 Mbps or less** is within what Twitch recommends for most channels and is fine for the other landscape platforms.
 - Upload bandwidth: the server sends one copy per destination. 6 Mbps to four landscape destinations plus 4 Mbps to three vertical ones is about 36 Mbps of upload from the server.
+
+If you would rather send one high-quality feed (a larger size, a higher bitrate, HEVC or AV1) and let the server make each platform's version, turn on **Settings → Transcoding** and then **Transcoding** on the destinations that need it. That costs CPU on the server for every transcoded destination; see [TRANSCODING.md](TRANSCODING.md).
 
 | Feed | Resolution | FPS | Video | Keyframe | Audio |
 |---|---|---|---|---|---|

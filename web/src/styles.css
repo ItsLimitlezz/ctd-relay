@@ -2402,6 +2402,15 @@ img {
   flex: none;
   margin-top: 2px;
 }
+/* A destination that transcodes: what it encodes, with which encoder, how fast. */
+.dest-transcode {
+  font-size: 0.84rem;
+  color: var(--text-muted);
+  overflow-wrap: anywhere;
+}
+.dest-transcode.is-warn {
+  color: var(--warn);
+}
 .alerts-status {
   display: flex;
   flex-direction: column;

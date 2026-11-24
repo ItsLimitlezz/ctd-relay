@@ -1,5 +1,5 @@
 import { useEffect, useState, type FormEvent } from 'react';
-import type { Account, Destination, PlatformInfo } from '@shared/types';
+import type { Account, Destination, FeedState, PlatformInfo } from '@shared/types';
 import { api } from '../../api';
 import { Badge } from '../../components/Badge';
 import { Button } from '../../components/Button';
@@ -12,6 +12,7 @@ import { Spinner } from '../../components/Spinner';
 import { TextInput } from '../../components/TextInput';
 import { Link } from '../../router';
 import { errorMessage, isApiError } from '../../state/errors';
+import { useApi } from '../../state/hooks';
 import { useProfileId } from '../../state/profile';
 import { hasErrors } from '../settings/settings-helpers';
 import {
@@ -26,10 +27,12 @@ import {
   initialDraft,
   MAX_DESTINATION_NAME,
   streamKeyField,
+  TRANSCODE_ERROR_KEY,
   usesAccounts,
   validateDraft,
   type DestinationDraft,
 } from './destination-form';
+import { TranscodeSection } from './TranscodeSection';
 
 export interface DestinationFormProps {
   info: PlatformInfo;
@@ -41,10 +44,12 @@ export interface DestinationFormProps {
   onCancel: () => void;
   /** Back to the platform choice (create flow only). */
   onBack?: () => void;
+  /** The profile's OBS feeds right now, when known (transcoding defaults and load hint). */
+  liveFeeds?: readonly FeedState[] | undefined;
 }
 
 /** Create/edit form for one destination. Platform fields come from `info.destinationFields`. */
-export function DestinationForm({ info, accounts, existing, onSaved, onCancel, onBack }: DestinationFormProps) {
+export function DestinationForm({ info, accounts, existing, onSaved, onCancel, onBack, liveFeeds }: DestinationFormProps) {
   const [draft, setDraft] = useState<DestinationDraft>(() => initialDraft(info, accounts ?? [], existing));
   const [accountTouched, setAccountTouched] = useState(false);
   const [errors, setErrors] = useState<FormErrors>({});
@@ -52,6 +57,10 @@ export function DestinationForm({ info, accounts, existing, onSaved, onCancel, o
   const [busy, setBusy] = useState(false);
   // New destinations belong to the profile on screen (an existing one keeps its own).
   const profileId = useProfileId();
+  // This server's transcoding switch and working encoders; the feed OBS sends now (defaults, hints).
+  const transcoding = useApi(() => api.transcodeSettings(), []);
+  const transcodeContext = { settings: transcoding.data?.settings ?? null, caps: transcoding.data?.capabilities ?? null };
+  const feedVideo = liveFeeds?.find((f) => f.feed === draft.feed && f.online)?.video ?? null;
 
   // Accounts can arrive after the form opened: preselect one for a new destination.
   useEffect(() => {
@@ -69,14 +78,14 @@ export function DestinationForm({ info, accounts, existing, onSaved, onCancel, o
   const submit = async (e: FormEvent) => {
     e.preventDefault();
     if (busy) return;
-    const v = validateDraft(info, draft, secretsSet);
+    const v = validateDraft(info, draft, secretsSet, transcodeContext.caps, feedVideo?.fps ?? null);
     setErrors(v);
     setFormError(null);
     if (hasErrors(v)) return;
     setBusy(true);
     try {
       const saved = existing
-        ? await api.updateDestination(existing.id, buildUpdateRequest(info, draft))
+        ? await api.updateDestination(existing.id, buildUpdateRequest(info, draft, existing))
         : await api.createDestination({ ...buildCreateRequest(info, draft), profileId });
       setBusy(false);
       onSaved(saved);
@@ -170,6 +179,17 @@ export function DestinationForm({ info, accounts, existing, onSaved, onCancel, o
             </button>
           </p>
         ))}
+
+      <TranscodeSection
+        info={info}
+        feed={draft.feed}
+        value={draft.transcode}
+        onChange={(transcode) => update({ transcode })}
+        context={transcodeContext}
+        feedVideo={feedVideo}
+        error={errors[TRANSCODE_ERROR_KEY]}
+        disabled={busy}
+      />
 
       {formError && (
         <div className="alert alert-danger" role="alert">

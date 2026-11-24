@@ -153,6 +153,30 @@
 .form-actions.is-end {
   justify-content: flex-end;
 }
+
+/* Transcoding part of the destination form: a card of its own inside the form. */
+.transcode-section {
+  margin: 0;
+  min-width: 0;
+  padding: 14px 16px 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-elev-2);
+}
+.section-legend {
+  padding: 0 6px;
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+.transcode-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 220px), 1fr));
+  gap: 14px 16px;
+  align-items: start;
+}
 .inline-link-button {
   padding: 0;
   border: 0;

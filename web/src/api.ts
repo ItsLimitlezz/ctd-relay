@@ -45,6 +45,8 @@ import type {
   UpdateAssetRequest,
   TotpSetupResponse,
   TranscodeCapabilities,
+  TranscodeSettings,
+  TranscodeSettingsResponse,
   UpdateAccountRequest,
   UpdateDestinationRequest,
   UpdateObsRelayRequest,
@@ -303,6 +305,11 @@ export const api = {
   version: () => get<VersionResponse>('/api/version'),
   /** What this machine's FFmpeg can encode (read-only; state 'probing' right after startup). */
   transcodeCapabilities: () => get<TranscodeCapabilities>('/api/system/transcode-capabilities'),
+  /** Run the encoder check again [admin]; answers when it finished (can take a while). */
+  recheckTranscodeCapabilities: () => post<TranscodeCapabilities>('/api/system/transcode-capabilities/refresh'),
+  /** The server-wide transcoding switch plus the capabilities (one request for forms). */
+  transcodeSettings: () => get<TranscodeSettingsResponse>('/api/system/transcode'),
+  putTranscodeSettings: (body: Partial<TranscodeSettings>) => put<TranscodeSettingsResponse>('/api/system/transcode', body),
   putSettings: (body: Partial<AppSettings>) => put<SettingsResponse>('/api/settings', body),
   /** Settings → Advanced: the Instagram chat reader's selector pack (admin). */
   instagramChatPack: () => get<InstagramChatPackStatus>('/api/platforms/instagram/chat/selector-pack'),

@@ -27,6 +27,7 @@ import type {
   TitleResult,
   TlsMode,
   TlsStatus,
+  TranscodeProfile,
   User,
 } from '../../shared/types.js';
 import { DEFAULT_PROFILE_ID } from '../../shared/types.js';
@@ -156,6 +157,8 @@ export interface DestinationsRepo {
     enabled: boolean;
     options: Record<string, unknown>;
     ingestUrl: string | null;
+    /** Transcoding profile; omitted/null = copy. */
+    transcode?: TranscodeProfile | null;
   }): Destination;
   update(
     id: string,
@@ -167,6 +170,7 @@ export interface DestinationsRepo {
       options: Record<string, unknown>;
       ingestUrl: string | null;
       hasStreamKey: boolean;
+      transcode: TranscodeProfile | null;
     }>,
   ): Destination;
   delete(id: string): void;

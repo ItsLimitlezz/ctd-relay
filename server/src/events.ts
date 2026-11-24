@@ -5,6 +5,7 @@ import type {
   ChatMessage,
   ChatModeration,
   DestinationState,
+  DestinationTranscodeStatus,
   Feed,
   FeedState,
   PushStats,
@@ -24,6 +25,8 @@ export interface PushEvent {
   message: string | null;
   stats: PushStats | null;
   attempt: number;
+  /** Only on pushes that transcode (or fell back from it): the encode's state. Absent = plain copy. */
+  transcode?: DestinationTranscodeStatus;
 }
 
 export interface AppEvents {

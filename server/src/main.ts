@@ -20,6 +20,7 @@ import { buildApp } from './http/app.js';
 import { createPushSupervisor } from './media/ffmpeg-supervisor.js';
 import { createMediaServer } from './media/mediamtx.js';
 import { transcodeCapabilitiesFor } from './media/transcode-capabilities.js';
+import { createTranscodeRuntime } from './media/transcode-settings.js';
 import { errorMessage, redactText } from './orchestrator/async-utils.js';
 import { createOrchestratorRegistry } from './orchestrator/registry.js';
 import { chatPackStore } from './platforms/instagram/chat-pack.js';
@@ -137,7 +138,16 @@ export async function createServices(config: AppConfig): Promise<AppServices> {
   // Every profile's OBS ingest (the default profile keeps live/landscape|vertical and the 'ingest' keys).
   const media = createMediaServer({ config, bus, log: log.child({ mod: 'mediamtx' }), repos });
   // Push ids are destination ids; the supervisor reads the destination's profile to pick its feeds.
-  const pushes = createPushSupervisor({ config, bus, log: log.child({ mod: 'ffmpeg' }), media, repos });
+  // A destination with a transcoding profile encodes in its own push while Settings → Transcoding is
+  // on (off by default; docs/TRANSCODING.md). The capability service lives on `services`, built below.
+  const pushes = createPushSupervisor({
+    config,
+    bus,
+    log: log.child({ mod: 'ffmpeg' }),
+    media,
+    repos,
+    transcode: createTranscodeRuntime(repos.settings, () => transcodeCapabilitiesFor(services)),
+  });
   const browser = createBrowserManager({ config, log: log.child({ mod: 'browser' }), secrets: repos.secrets });
   // Per-profile chat + overlay tokens (the default profile keeps its 'chat' scope token, so the
   // existing OBS overlay URL keeps working).

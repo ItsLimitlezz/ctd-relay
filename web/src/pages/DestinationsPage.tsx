@@ -17,7 +17,7 @@ import { Toggle } from '../components/Toggle';
 import { cx } from '../components/utils';
 import { errorMessage } from '../state/errors';
 import { useApi, useDestinations } from '../state/hooks';
-import { useAccountsVersion } from '../state/live';
+import { useAccountsVersion, useSession } from '../state/live';
 import { useProfileId } from '../state/profile';
 import { DestinationForm } from './destinations/DestinationForm';
 import {
@@ -30,6 +30,7 @@ import {
   usesAccounts,
 } from './destinations/destination-form';
 import { PlatformPicker } from './destinations/PlatformPicker';
+import { transcodeListLine } from './destinations/transcode-form';
 import './settings/admin.css';
 
 type ModalState = { kind: 'add'; info: PlatformInfo | null } | { kind: 'edit'; dest: Destination } | null;
@@ -39,6 +40,8 @@ export default function DestinationsPage() {
   const profileId = useProfileId();
   const platforms = useApi(() => api.platforms(), []);
   const accountsVersion = useAccountsVersion();
+  // What OBS sends right now (when it is streaming): the transcoding form's defaults and load hint.
+  const liveFeeds = useSession()?.feeds;
   // Only this profile's accounts: a destination must use an account of its own profile.
   const accounts = useApi(() => api.accounts(profileId), [accountsVersion, profileId]);
   const [modal, setModal] = useState<ModalState>(null);
@@ -160,6 +163,7 @@ export default function DestinationsPage() {
             info={modal.info}
             accounts={accounts.data}
             existing={null}
+            liveFeeds={liveFeeds}
             onSaved={(d) => saved(d, true)}
             onCancel={closeModal}
             onBack={() => setModal({ kind: 'add', info: null })}
@@ -172,6 +176,7 @@ export default function DestinationsPage() {
               info={editInfo}
               accounts={accounts.data}
               existing={modal.dest}
+              liveFeeds={liveFeeds}
               onSaved={(d) => saved(d, false)}
               onCancel={closeModal}
             />
@@ -258,6 +263,7 @@ function DestinationRow({ dest, info, account, onEdit, onChanged, onDeleted }: D
   const problems = destinationProblems(info, dest, account);
   const host = info && !usesAccounts(info) ? ingestHostLabel(dest.ingestUrl) : null;
   const showKeySaved = !!info && !!streamKeyField(info) && dest.hasStreamKey;
+  const transcoded = transcodeListLine(dest.transcode);
 
   const toggle = async (enabled: boolean) => {
     setToggling(true);
@@ -295,6 +301,7 @@ function DestinationRow({ dest, info, account, onEdit, onChanged, onDeleted }: D
             {account && <span>{account.label}</span>}
             {host && <span className="mono">{host}</span>}
             {showKeySaved && <span>Stream key saved</span>}
+            {transcoded && <span>{transcoded}</span>}
             {problems.map((p) => (
               <span key={p} className="item-warn">
                 {p}

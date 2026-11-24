@@ -20,6 +20,7 @@ import { ObsTab } from './settings/ObsTab';
 import { OverlayTab } from './settings/OverlayTab';
 import { SETTINGS_TABS, settingsTab, type SettingsTabId } from './settings/settings-helpers';
 import { SpotifyTab } from './settings/SpotifyTab';
+import { TranscodingTab } from './settings/TranscodingTab';
 import { UsersTab } from './settings/UsersTab';
 import './settings/admin.css';
 
@@ -77,6 +78,8 @@ function TabContent({ tab, settings }: { tab: SettingsTabId; settings: ApiResour
       return <OverlayTab />;
     case 'spotify':
       return <SpotifyTab />;
+    case 'transcoding':
+      return <TranscodingTab />;
     case 'api':
       return <ApiTab />;
     case 'audit':
