@@ -58,7 +58,7 @@ Authorization: Bearer ctd_pat_3fK9wQ1v…
 | Scope | Grants |
 |---|---|
 | `chat:read` | `GET /chat`, `chat.*` and `alert.*` events |
-| `status:read` | `GET /status`, `GET /profiles`, `stream.*`, `feed.*`, `destination.*`, `issue.*` (v1.16), `profile.status`, `profiles.changed`, `system.notice` events |
+| `status:read` | `GET /status`, `GET /profiles`, `stream.*`, `feed.*`, `destination.*`, `issue.*` (v1.16), `profile.status`, `profiles.changed`, `system.notice` events; guest feed lists, previews and `guest.*` events (§18, v1.17) |
 | `ingest:read` | `GET /profiles/{id}/ingest`: OBS server URL and **stream keys** (only for apps that configure OBS) |
 | `apps:read` | `GET /apps`, `GET /profiles/{id}/overlays`, `GET /profiles/{id}/overlay-summary` (§9.5), `apps.changed` and `app.message` events |
 | `apps:write` | `PUT`/`DELETE /apps/{id}`, `POST /apps/{id}/heartbeat`, `POST /messages` |
@@ -72,7 +72,7 @@ Authorization: Bearer ctd_pat_3fK9wQ1v…
 | `show:secrets` | `GET /profiles/{id}/show/revisions/{rev}/secrets`: third-party secrets (URL keys, passwords) saved with a show profile. Grant it per trusted machine only (v1.9) |
 | `system:admin` | Operator tools (§15): read, replace and revert the Instagram chat reader's selector pack, and take its sanitised debug capture. Only for a token an admin creates for **every profile**; pairing never grants it (v1.11) |
 | `reports:read` | Stream reports (§16): `GET /reports/…` past streams, viewers over time, chat counts, events, leaderboards and exports. Holds viewers' names: give it only to apps you trust with your audience (v1.13) |
-| `feeds:watch` | Live preview (§10): `GET /profiles/{id}/feeds/{feed}/live.m3u8` and `…/live/{file}`, the feeds as live video **with sound**. Each player pulls the feed's full bitrate. The JPEG previews stay under `status:read` (v1.14) |
+| `feeds:watch` | Live preview (§10): `GET /profiles/{id}/feeds/{feed}/live.m3u8` and `…/live/{file}`, the feeds as live video **with sound**. Each player pulls the feed's full bitrate. The JPEG previews stay under `status:read` (v1.14). Also guest feeds live (§18, v1.17): `…/guest-feeds/{slot}/live.m3u8` and `…/live/{file}` |
 
 A token may also be **limited to one profile** (§9.1). `/`, `/events` and `/events/poll` return
 whatever the token's scopes allow. Browser-only fallback: `GET /events` also accepts
@@ -112,6 +112,7 @@ counts as none).
 | 400 | `invalid` | Bad query parameter or body (`413` when the body is too large) |
 | 404 | `not_found` | Unknown `/api/v1` path, or no app registered under that id |
 | 404 | `unknown_profile` | No profile with that id |
+| 404 | `unknown_guest_feed` | No guest feed slot with that id on that profile (v1.17, §18) |
 | 409 | `app_owned` | The app id was registered by another token (`PUT /apps/{id}` takes the id over when that token is revoked, or when yours is newer, the app is of the same kind and it is offline (v1.6) or has the same `name` and your token covers that token's profile (the same app paired again; see §9.3)) |
 | 409 | `limit` | Too many apps registered (100 in all, 20 per token) |
 | 403 / 410 | `denied` / `expired` | Pairing poll: denied by the admin / expired, collected or unknown (§9.3) |
@@ -1903,11 +1904,221 @@ and the plugin's next state resend raises its issues again.
 | `title` | Text for people |
 
 
+## 18. Guest feeds: remote video into CTD OBS (v1.17)
+
+A **guest feed** is a video feed someone else sends to Relay over the internet — a remote camera
+operator, a guest on a laptop, a phone running Larix — that the production machine pulls into CTD OBS
+as a source (the CTD OBS plugin's **CTD Relay Feed** source). Each Relay profile has up to
+`maxSlots` guest feed **slots** (default 4, the server's `GUEST_FEEDS_MAX`); each slot has a name and
+its own ingest key.
+
+What Relay does with a guest feed, and doesn't:
+
+- It takes the guest's RTMP stream on the same RTMP ingest as OBS's landscape and vertical feeds
+  (MediaMTX, the same port, the same key check), under its own path (`guest/<slot>`).
+- It passes it on **unchanged** (no transcoding) as Low-Latency HLS to players that hold
+  `feeds:watch`, exactly like the live preview of §10.
+- It **never restreams** a guest feed to a destination (Twitch, YouTube…). A guest feed reaches the
+  platforms only through OBS's program output, like any other source.
+- H.264 video and AAC audio only, like the main feeds (the codec guard, `problem` below).
+
+Slots are made, renamed and removed, and keys rotated and revoked, by an admin in the web UI
+(profile page → **Guest feeds**). The external API only **reads** them: there is no route that
+returns a guest's ingest key.
+
+### 18.1 The guest feed object
+
+```json
+{
+  "slot": "q7m2x9k4tb",
+  "name": "Remote cam 1",
+  "key": "active",
+  "online": true,
+  "since": "2026-11-24T20:00:01.000Z",
+  "video": { "codec": "h264", "width": 1280, "height": 720 },
+  "audio": { "codec": "aac", "sampleRate": 48000, "channels": 2 },
+  "bitrateKbps": 3480,
+  "bitrateWarning": false,
+  "problem": null,
+  "limitedAt": null
+}
+```
+
+| Field | Meaning |
+|---|---|
+| `slot` | The slot's id: 10 characters `[a-z0-9]`, fixed for the slot's life (renaming keeps it), never reused. The `{slot}` in every route below. |
+| `name` | Name for people, set in the web UI ("Remote cam 1"). 1–60 characters. |
+| `key` | `active`: the slot has an ingest key and accepts a guest. `revoked`: an admin revoked the key; nobody can send until a new key is made (rotating gives a revoked slot a new key). |
+| `online` | The guest is sending right now. |
+| `since` | When the guest started sending (ISO 8601), `null` while offline. |
+| `video`, `audio` | What the guest sends, from the ingest server's track list, like `feeds[]` in `/status` (§4): `codec` (`h264`, `hevc`, `av1`; `aac`, `opus`…), `width`/`height`, `sampleRate`/`channels`. `null` while offline or not known yet; `audio` is `null` when the guest sends no sound. |
+| `bitrateKbps` | Inbound bitrate, measured over the last ~2.5 s. `null` while offline. |
+| `bitrateWarning` | `true` while `bitrateKbps` is above the server's `warnAboveKbps`: show a warning (the guest should lower their bitrate). Nothing is cut at this level. |
+| `problem` | The codec guard's verdict (same shape as `feeds[].problem`, §4), or `null`: `{ "reason": "feed-video-codec", "codec": "hevc", "label": "HEVC", "blocking": true, "message": "Guest feed \"Remote cam 1\" is HEVC. …" }`. `blocking: true`: it can't be watched (`409 feed_codec`); show `message` instead of a player. `blocking: false`: the audio isn't AAC; it plays, players may get no sound. |
+| `limitedAt` | When Relay last **disconnected** this guest for sending more than the server's `maxKbps` for 10 s (ISO 8601), kept for 10 minutes, else `null`. See §18.6. |
+
+New fields may be added (ignore what you don't know). A later revision may add a read path over SRT
+(§18.7) as a new field.
+
+### 18.2 `GET /api/v1/profiles/{id}/guest-feeds` — `status:read`
+
+The profile's guest feed slots, in the order they were made, and the server's limits.
+
+```json
+{
+  "profileId": "default",
+  "maxSlots": 4,
+  "maxViewers": 2,
+  "warnAboveKbps": 8000,
+  "maxKbps": 20000,
+  "guestFeeds": [
+    { "slot": "q7m2x9k4tb", "name": "Remote cam 1", "key": "active", "online": true,
+      "since": "2026-11-24T20:00:01.000Z",
+      "video": { "codec": "h264", "width": 1280, "height": 720 },
+      "audio": { "codec": "aac", "sampleRate": 48000, "channels": 2 },
+      "bitrateKbps": 3480, "bitrateWarning": false, "problem": null, "limitedAt": null },
+    { "slot": "c4n8w1p6zd", "name": "Guest laptop", "key": "active", "online": false,
+      "since": null, "video": null, "audio": null, "bitrateKbps": null,
+      "bitrateWarning": false, "problem": null, "limitedAt": null }
+  ]
+}
+```
+
+| Field | Meaning |
+|---|---|
+| `maxSlots` | Most slots per profile (`GUEST_FEEDS_MAX`, default 4). `0`: guest feeds are off on this server (the list is empty and no guest can send). |
+| `maxViewers` | Players per guest feed at once (`GUEST_FEED_MAX_VIEWERS`, default 2). `0`: guest feeds can't be watched on this server (`503 live_off`). |
+| `warnAboveKbps` | `bitrateWarning` threshold (`GUEST_FEED_WARN_KBPS`, default 8000). |
+| `maxKbps` | Hard limit (`GUEST_FEED_MAX_KBPS`, default 20000; `0` = none): a guest above it for 10 s is disconnected. |
+
+Errors: `404 unknown_profile`, `403 profile_forbidden`.
+
+### 18.3 `GET /api/v1/profiles/{id}/guest-feeds/{slot}/live.m3u8` — `feeds:watch`
+
+The guest feed live, as Low-Latency HLS. **It works exactly like a main feed's live preview (§10):**
+same scope, same rules, same player set-up. Only the URL differs:
+
+```
+GET /api/v1/profiles/{id}/guest-feeds/{slot}/live.m3u8            → opens a player ("viewer"):
+                                                                      multivariant playlist
+GET /api/v1/profiles/{id}/guest-feeds/{slot}/live/{file}?v=<viewer> → its media playlists and fMP4
+                                                                      init/part/segment files
+```
+
+- **Auth:** `Authorization: Bearer <token with feeds:watch>` on `live.m3u8` **and on every request
+  the player makes**. `?access_token=` is refused here.
+- **URIs in the playlists are relative** (`live/<file>?v=<viewer>` in `live.m3u8`, `<file>?v=<viewer>` in
+  the media playlists): resolve them against the playlist's URL and request them as given; LL-HLS
+  players add `_HLS_msn` / `_HLS_part` / `_HLS_skip`. `{file}` is `[A-Za-z0-9_-]{1,128}.(m3u8|mp4)`.
+- **A viewer** only works with the token that opened it, on that profile and slot. It ends 15 s after
+  its last request, or when the muxer stops; then requests answer `410 live_ended`: request
+  `live.m3u8` again.
+- **At most `maxViewers` players per guest feed** (default 2: CTD OBS plus one person watching in the
+  web UI). Over it: `429 viewer_cap` with `Retry-After`; a token that opens another player while the
+  feed is full replaces its own oldest one.
+- **On demand:** the first `live.m3u8` starts muxing (the first answer takes about 2–3 s); it stops
+  about 30 s after the last request. A guest feed nobody watches costs nothing beyond its ingest.
+- **Passthrough:** H.264 + AAC in fMP4, 200 ms parts, 1 s segments, unchanged from what the guest
+  sends (resolution, frame rate, bitrate).
+- **Rate limit:** `live.m3u8` counts like any request; `live/{file}` shares the live budget of §10
+  (1000 per 10 s per token, for every feed and guest feed the token plays).
+- **Errors** (problem+json): `404 unknown_guest_feed` (no such slot on this profile), `404
+  feed_offline` (the guest isn't sending, or the key is revoked), `409 feed_codec` (HEVC/AV1:
+  `detail` is the guard's message), `429 viewer_cap`, `503 live_off` (`maxViewers` is 0), `503
+  unavailable` (retry after `Retry-After`), `410 live_ended` (on `live/{file}`), plus `401`/`403`/`404
+  unknown_profile`.
+- Headers: `Content-Type: application/vnd.apple.mpegurl` (playlists) or `video/mp4` (parts),
+  `Cache-Control: no-store`.
+
+**Latency (v1 target: about 2 s).** An LL-HLS player that follows the parts plays about 1.5–2.5 s
+behind the guest's encoder (hls.js: `lowLatencyMode: true, liveSyncDuration: 2`). A player that only
+knows plain HLS (whole segments) works too, about 3–4 s behind. FFmpeg's `hls` demuxer (what a media
+source built on libavformat uses) is a plain HLS player: pass the header with `-headers
+"Authorization: Bearer <token>\r\n"` (it is sent on every playlist and segment request) and start at
+the newest segment with `-live_start_index -1`.
+
+```
+ffplay -headers $'Authorization: Bearer ctd_pat_…\r\n' -live_start_index -1 \
+  "https://<relay host>/api/v1/profiles/default/guest-feeds/q7m2x9k4tb/live.m3u8"
+```
+
+### 18.4 `GET /api/v1/profiles/{id}/guest-feeds/{slot}/preview` — `status:read`
+
+A JPEG of the guest feed, like the feed previews of §10: 640 px wide, one keyframe, made on request
+and cached 2.5 s; poll every 3–5 s while you show it. `?access_token=` works too.
+`404 feed_offline` while the guest isn't sending, `404 unknown_guest_feed`, `503 unavailable` (with
+`Retry-After`).
+
+### 18.5 Events
+
+On `/events` and `/events/poll` (§4), `status:read`, `src` = `core` with `src.profile` = the profile:
+
+- **`guest.feed.status`**: `data` = one guest feed object (§18.1). Sent at once when a guest starts
+  or stops sending, or its codec, resolution, `problem`, `key` or `name` changes; when only
+  `bitrateKbps` (and `bitrateWarning`) change, at most every 2 s.
+- **`guest.feeds.changed`**: `data` = the whole list, as `GET /profiles/{id}/guest-feeds` returns
+  it. Sent when a slot is added, renamed or removed, or its key rotated or revoked. Replace what you
+  hold.
+
+Keep a profile's guest feeds by `slot`: take the list from `GET …/guest-feeds` (open `/events`
+first, as in §17.4), replace it on `guest.feeds.changed`, replace one entry on `guest.feed.status`.
+
+**Issues (§17).** Two kinds report a guest feed's problems with the suite's one alert contract,
+`subject` = `{ "type": "guest.feed", "slot": "q7m2x9k4tb", "name": "Remote cam 1" }`:
+
+| `kind` | `id` | Severity | Raised when | Cleared when |
+|---|---|---|---|---|
+| `guest.feed.offline` | `guest.feed.offline\|<slot>` | warning | During a running session (`starting`/`live`), a guest feed that was sending stops and stays stopped **5 s**. Not when an admin removed the slot or rotated or revoked its key (on purpose) | The guest is back (`recovered`), the session ends (`ended`), the slot is removed or its key rotated or revoked (`removed`) |
+| `guest.feed.codec` | `guest.feed.codec\|<slot>` | warning | A guest sends video that isn't H.264 (as soon as its tracks are known, session or not) | The guest sends H.264 (`recovered`), stops sending (`ended`), the slot is removed (`removed`) |
+
+A guest feed on program in CTD OBS is the plugin's to report (its `obs.issue`, with `onProgram`):
+Relay can't see what is on program.
+
+### 18.6 Sending video (for the people setting it up)
+
+Not part of the API (keys never are), here so the whole flow is in one place. The admin copies a
+slot's **ingest details** from the web UI and gives them to the guest:
+
+| | |
+|---|---|
+| Server | `rtmp://<relay host>:<RTMP port>/guest` |
+| Stream key | `<slot>?key=<key>` |
+| Full URL (apps with one field, e.g. Larix) | `rtmp://<relay host>:<RTMP port>/guest/<slot>?key=<key>` |
+
+H.264 video, AAC audio, keyframe every 1–2 s, CBR. A slot takes one guest at a time; a new connection
+with the same key replaces the old one. Rotating a key disconnects the guest at once (the old key
+stops working); revoking it does too and leaves the slot without a key. The web UI's "How a guest
+sends video" help covers OBS, Larix and other apps; the operator guide is
+[GUEST-FEEDS.md](GUEST-FEEDS.md).
+
+Limits that keep guests from starving the main feeds (measured in GUEST-FEEDS.md): no transcoding or
+probing of guest feeds, muxing only while someone watches, `maxViewers` players per guest feed,
+`maxSlots` per profile, and the hard `maxKbps` limit — a guest above it for 10 s is disconnected and
+`limitedAt` is set (it can reconnect, and is disconnected again if it stays over).
+
+### 18.7 Later: an SRT read path
+
+v1.17 reads guest feeds over LL-HLS (TCP, through Relay's HTTPS port, behind its auth). A later
+revision may add an SRT read path for lower latency (under 1 s): MediaMTX can serve each guest path
+over SRT, but that needs a **UDP port** forwarded to Relay and its own per-reader credentials, so it
+is out of scope now. When it comes it will be additive: a new field on the guest feed object and a
+route that hands out a short-lived SRT `streamid`; the LL-HLS routes above stay.
+
 ## Changelog
 
 `apiVersion` stays `1`: every change below is additive, so clients written for an earlier v1
 keep working (ignore event types and fields you don't know). `GET /api/v1/openapi.json` reports
 the revision in `info.version`.
+
+### v1.17
+
+- **Guest feeds (§18):** remote video into CTD OBS. Per profile up to `GUEST_FEEDS_MAX` (default
+  4) guest feed slots, each with a name and its own ingest key, managed in the web UI. Read-only
+  routes: `GET /profiles/{id}/guest-feeds` and `…/guest-feeds/{slot}/preview` (`status:read`),
+  `…/guest-feeds/{slot}/live.m3u8` and `…/live/{file}` (`feeds:watch`, LL-HLS passthrough like the
+  live preview). Events `guest.feed.status` and `guest.feeds.changed` (`status:read`); issue kinds
+  `guest.feed.offline` and `guest.feed.codec` with subject type `guest.feed` (§17). New problem code
+  `unknown_guest_feed` (404). Guest feeds are never restreamed to destinations.
 
 ### v1.16
 
