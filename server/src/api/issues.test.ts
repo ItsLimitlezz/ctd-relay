@@ -471,6 +471,23 @@ describe('OBS issues', () => {
     expect(log().slice(2)).toEqual([`raised:obs.output.down|${APP}|main`, `cleared:obs.output.down|${APP}|main:ended`]);
   });
 
+  it('obs.output.down is folded into a lost feed\'s feed.offline, but raised for a feed that never came', () => {
+    // SR check: a session running while OBS can't get its stream to Relay at all (the feed was never online)
+    // raises no feed.offline, so the reconnecting output must not be swallowed by it.
+    tracker.session(P, true);
+    tracker.obsEvent(P, APP, 'obs.output', { output: 'main', canvas: 'landscape', state: 'reconnecting', error: 'Connection refused' });
+    vi.advanceTimersByTime(ISSUE_HOLDS.output);
+    expect(log()).toEqual([`raised:obs.output.down|${APP}|main`]);
+    tracker.obsEvent(P, APP, 'obs.output', { output: 'main', canvas: 'landscape', state: 'live' });
+    tracker.feed(P, 'landscape', true);
+    expect(log().at(-1)).toBe(`cleared:obs.output.down|${APP}|main:recovered`);
+    // Now the feed was live and goes away while OBS reconnects: one alert, feed.offline.
+    tracker.feed(P, 'landscape', false);
+    tracker.obsEvent(P, APP, 'obs.output', { output: 'main', canvas: 'landscape', state: 'reconnecting', error: 'Connection reset' });
+    vi.advanceTimersByTime(ISSUE_HOLDS.feed);
+    expect(log().slice(2)).toEqual(['raised:feed.offline|landscape']);
+  });
+
   it('maps OBS outputs to Relay feeds, leaving recordings out', () => {
     expect(outputFeed({ output: 'main' })).toBe('landscape');
     expect(outputFeed({ output: 'Aitum Stream Suite Output Vertical Stream', canvas: 'vertical' })).toBe('vertical');

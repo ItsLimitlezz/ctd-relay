@@ -397,8 +397,9 @@ export class IssueTracker {
     const st = this.profiles.get(profileId);
     const rec = st?.reconnecting.get(id);
     if (!st || !rec) return null;
-    // OBS streams this to Relay and Relay is live: feed.offline already tells it (and says "reconnecting").
-    if (!st.open.has(id) && rec.feed && st.running && st.feeds.get(rec.feed) !== true) return null;
+    // OBS streams this to Relay, Relay is live and lost that feed: feed.offline already tells it (and says
+    // "reconnecting"). A feed that never came this session raises no feed.offline, so the output is the alert.
+    if (!st.open.has(id) && rec.feed && st.running && st.feeds.get(rec.feed) !== true && (this.hasIssue(st, `feed.offline|${rec.feed}`) || st.lostAt.has(rec.feed))) return null;
     return {
       id,
       kind: 'obs.output.down',
