@@ -45,6 +45,9 @@ export type ApiEventType =
   | 'obs.issue.raised'
   | 'obs.issue.cleared'
   | 'obs.sync.status'
+  | 'obs.failover'
+  | 'issue.raised'
+  | 'issue.cleared'
   | 'music.nowplaying'
   | 'music.request'
   | 'show.changed'
@@ -83,6 +86,9 @@ export const EVENT_SCOPES: Record<ApiEventType, ApiScope | null> = {
   'obs.issue.raised': 'status:read',
   'obs.issue.cleared': 'status:read',
   'obs.sync.status': 'status:read',
+  'obs.failover': 'status:read',
+  'issue.raised': 'status:read',
+  'issue.cleared': 'status:read',
   'music.nowplaying': 'status:read',
   'music.request': 'chat:read',
   'show.changed': 'show:read',
@@ -184,6 +190,8 @@ export interface ApiStatus {
   feeds: ApiFeed[];
   destinations: ApiDestination[];
   platforms: ApiPlatform[];
+  /** Open issues of the profile, oldest first (v1.16, docs/API.md §17). */
+  issues: ApiIssue[];
 }
 
 // ---- chat ----
@@ -299,6 +307,59 @@ export interface ApiNotice {
   subject?: { type: 'feed'; feed: Feed };
   /** feed.codec: the feed's codec in question ('hevc', 'av1', 'opus'; 'h264' when it is fine again). */
   codec?: string;
+}
+
+// ---- issues: the suite's alert contract (v1.16, docs/API.md §17) ----
+
+export type IssueSeverity = 'info' | 'warning' | 'critical';
+export const ISSUE_SEVERITIES: readonly IssueSeverity[] = ['info', 'warning', 'critical'];
+
+export type IssueKind = 'feed.offline' | 'destination.down' | 'stream.down' | 'obs.output.down' | 'obs.issue';
+
+export type IssueResolution = 'recovered' | 'ended' | 'removed' | 'stale';
+
+export type ApiIssueSubject =
+  | { type: 'feed'; feed: Feed }
+  | { type: 'destination'; destinationId: string; platform: PlatformId; name: string }
+  | { type: 'stream' }
+  | { type: 'obs.output'; appId: string; output: string; canvas: string | null }
+  | { type: 'obs.source'; appId: string; source: string; path: string | null };
+
+/** An open issue (GET /status → issues; issue.raised without `update`). */
+export interface ApiIssue {
+  /** `<kind>|<subject key>`: the one key for raise, update, clear and dedupe. Opaque to clients. */
+  id: string;
+  kind: IssueKind;
+  /** obs.issue only: the plugin's rule (camera-offline, …); null otherwise. */
+  rule: string | null;
+  severity: IssueSeverity;
+  title: string;
+  message: string | null;
+  subject: ApiIssueSubject;
+  /** OBS sources: visible on a program scene (true/false); null = unknown or not an OBS source. */
+  onProgram: boolean | null;
+  /** The program scene the source is on when onProgram, else null. */
+  scene: string | null;
+  /** Epoch ms the problem started (after its hold time); unchanged by updates. */
+  firstSeen: number;
+  updatedAt: number;
+}
+
+/** issue.raised data. `update`: false = a new problem (notify), true = the open one changed. */
+export interface ApiIssueRaised extends ApiIssue {
+  update: boolean;
+}
+
+/** issue.cleared data. */
+export interface ApiIssueCleared {
+  id: string;
+  kind: IssueKind;
+  rule: string | null;
+  subject: ApiIssueSubject;
+  title: string;
+  firstSeen: number;
+  durationMs: number;
+  resolution: IssueResolution;
 }
 
 // ---- profiles + the hub (v1.2) ----

@@ -223,6 +223,9 @@ All of these are documented in `docs/API.md` and need scopes the token already h
 - `GET {api}/status`: live state and destinations.
 - `GET {api}/events` (Server-Sent Events): `stream.status` carries total viewers across platforms;
   also `destination.down`/`destination.up` and `chat.message`.
+- Alerts (API 1.16, `docs/API.md` §17): `GET {api}/status` → `issues` once on connect, then
+  `issue.raised` / `issue.cleared` on the event stream. One `id` per problem; notify on
+  `update: false`.
 - `GET {api}/profiles/{id}/obs`: OBS issues reported by the CTD OBS plugin.
 - `GET {api}/clock`: shared timecode.
 

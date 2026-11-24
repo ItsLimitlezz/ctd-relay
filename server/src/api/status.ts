@@ -155,7 +155,8 @@ export function platformRollup(destinations: readonly ApiDestination[], title: s
   return [...out.values()];
 }
 
-export function buildStatus(src: StatusSources): ApiStatus {
+/** Everything of GET /status but `issues` (the event hub adds the open issues: issues.ts). */
+export function buildStatus(src: StatusSources): Omit<ApiStatus, 'issues'> {
   const state = src.state();
   const byId = new Map(state.destinations.map((d) => [d.destinationId, d]));
   const destinations = src.destinations().map((d) => apiDestination(d, byId.get(d.id), state, src.platformInfo(d.platform)));
