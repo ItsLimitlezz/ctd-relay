@@ -2,9 +2,9 @@
 
 Versions follow the hub's CONVENTIONS.md → Versioning. Each release that ships to a TrueNAS install has a runbook in `docs/RELEASE-*.md` (backup, update, verify, rollback).
 
-## Unreleased
+## 0.2.80 (2026-11-24)
 
-API revision **1.16** (issues). No database migration: schema stays **v4** (a destination's transcoding profile is one settings row, `transcode.profile.<id>`), so 0.2.70 still opens `app.db` after a rollback.
+**Alerts and transcoding.** One alert contract for the suite, `issue.raised` / `issue.cleared` (Relay F2), that CTD Live and the CTD OBS plugin build on; and per-destination transcoding (Relay F3, #1), CPU-first and **off by default**, with a CPU guard. Includes everything in 0.2.70 (overlay summaries). API revision **1.16** (additive, no new scope). No database change: schema **v4**, reports **r1** (a destination's transcoding profile is one settings row, `transcode.profile.<id>`), so 0.2.70 still opens `app.db` after a rollback. Runbook: [docs/RELEASE-v0.2.80.md](docs/RELEASE-v0.2.80.md).
 
 ### Added
 - **Issues: one alert contract for the suite (Relay F2).** Two new events on `/api/v1/events`, `issue.raised` and `issue.cleared` (`status:read`), tell every CTD app that something is wrong and when it is fixed. Relay raises `feed.offline` (a live session's feed from OBS went away and OBS didn't stop on purpose), `destination.down` (a destination stayed down 5 s; critical once Relay gave up), `stream.down` (every destination is down) and `obs.output.down` (OBS reconnecting), and passes on the CTD OBS plugin's issues as `obs.issue`. Each issue has a stable `id`, a `severity` (`info` / `warning` / `critical`), a `subject`, and a `resolution` when it clears (`recovered`, `ended`, `removed`, `stale`). Hold times keep one-second blips from becoming alerts, an OBS stream stopped on purpose is not one, and a show still being set up (a session waiting for its first feed) gets 30 s before anything is said. `GET /api/v1/status` carries the open ones in `issues`. Kept in memory only. See docs/API.md §17 and docs/CONTRACTS.md → Alert contract.
@@ -15,8 +15,19 @@ API revision **1.16** (issues). No database migration: schema stays **v4** (a de
 - **Settings → Transcoding** also lists every encoder with its test result and has **Check again**. At most 2 destinations transcode at once by default (1 to 8).
 - **CPU guard.** A CPU encode the server's own test puts at 100 % or more of real time is refused on save, with what to lower (on a 3.07× libx264: 1080p60 refused, 1080p30 and 720p60 allowed). At every start, a CPU encode doesn't start while Twitch Dual Format through Relay or another CPU transcode is already behind, or when it and the CPU transcodes already running would reach 100 %: the destination sends the original feed (or stops, or transcodes with a "may stutter" warning when the platform can't take the original). The destination form shows a CPU warning for every CPU encode, and Settings → Transcoding a "CPU only" warning when no GPU encoder works.
 
+### Changed (SR check)
+- The alert contract is **API 1.16 / docs/API.md §17**: it was written as 1.12 / §16, which 0.2.40 and 0.2.50 took in the meantime. Event names, fields, kinds, severities, hold times and resolutions are as documented in PR #25.
+- `obs.output.down` is raised for an OBS output that keeps reconnecting while its feed never reached Relay this session (no `feed.offline` covers it then), as §17.2 says; it is still folded into a lost feed's `feed.offline`.
+- Transcoding stores its profile in the settings table instead of migration v5's `destinations.transcode_json`, so the schema stays v4 and the rollback is "change the image back".
+
 ### Docs
-- [docs/TRANSCODING.md](docs/TRANSCODING.md) §0: what the first version does and where it differs from the design.
+- [docs/TRANSCODING.md](docs/TRANSCODING.md) §0: what the first version does, where it differs from the design, the CPU guard, and why the feed must be H.264.
+- docs/DEVELOPMENT.md: `scripts/transcode-cpu.ts`, transcoding's CPU check (copy vs libx264 through MediaMTX, next to the guard's estimate).
+
+### Not in this release
+- Transcoding an HEVC or AV1 feed: Relay reads feeds over classic RTMP, so the feed codec guard holds those for every destination, transcoding ones included (a read path that carries HEVC/AV1 is a follow-up).
+- Issues in the web dashboard (it keeps its toasts); open issues are in memory only.
+- CTD Overlay's two addresses (`meta.addresses`, ctd-overlay#23) need no Relay change: overlay `meta` is stored and passed to `apps:read` as sent.
 
 ## 0.2.70 (2026-11-21)
 
