@@ -5,11 +5,14 @@ import type { TranscodeCapabilities, TranscodeEncoderResult, TranscodeSettings }
 import {
   CODEC_LABELS,
   codecOptions,
+  CPU_REFUSE_LOAD,
+  CPU_WARN_LOAD,
+  cpuEstimate,
+  cpuRefusal,
   defaultTranscodeProfile,
   describeTranscode,
-  effectiveFps,
-  estimateLoad,
   fpsOptions,
+  loadPercent,
   isTranscoding,
   pickEncoder,
   sizeOptions,
@@ -140,28 +143,49 @@ export const FALLBACK_OPTIONS: SelectOption[] = [
 ];
 
 export interface LoadHint {
-  tone: 'ok' | 'warn';
+  tone: 'ok' | 'warn' | 'error';
   text: string;
 }
 
 /**
- * How heavy this encode looks next to what the encoder managed in the server's startup test.
- * null = can't tell (no test speed, or the frame rate isn't known yet). A rough guide only.
+ * The CPU warning shown whenever a destination's transcoding is on and encodes on the CPU (the prod
+ * server has no working GPU encoder): it costs CPU the whole time the destination is live, and the
+ * same CPU runs Twitch Dual Format and every other encode.
+ */
+export const CPU_WARNING =
+  "Transcoding runs on this server's CPU for as long as this destination is live. One 1080p60 encode can take a home server's whole CPU, and the same CPU also encodes Twitch Dual Format through Relay and every other transcoding destination: when it falls behind, all of them stutter. Try it in test mode before a show.";
+
+/**
+ * How heavy this encode looks next to what the encoder managed in the server's startup test, from
+ * the same estimate the server checks (cpuEstimate): `error` = it would be refused on save.
+ * null = nothing to say yet (encoders not checked, or no working encoder).
  */
 export function loadHint(profile: TranscodeProfile, info: Pick<PlatformInfo, 'id'>, caps: TranscodeCapabilities | null, video: FeedVideo): LoadHint | null {
   if (caps?.state !== 'ready') return null;
   const encoder = pickEncoder(profile.video.codec, profile.video.encoder, caps);
   if (!encoder) return null;
   if (encoder.backend !== 'software') return { tone: 'ok', text: `Encodes on the ${BACKEND_LABELS[encoder.backend]} with ${encoder.encoder}.` };
-  const feedFps = video?.fps ?? null;
-  const load = estimateLoad(profile.video.width, profile.video.height, effectiveFps(profile, info.id, feedFps), encoder, feedFps);
-  if (load === null) return { tone: 'ok', text: `Encodes on the CPU with ${encoder.encoder}. Start OBS to see whether this server keeps up.` };
-  const pct = Math.round(load * 100);
-  if (load <= 1) return { tone: load > 0.8 ? 'warn' : 'ok', text: `Encodes on the CPU with ${encoder.encoder}: about ${pct}% of what it managed in this server's test.` };
-  return {
-    tone: 'warn',
-    text: `Encodes on the CPU with ${encoder.encoder}: about ${pct}% of what it managed in this server's short test, so it may not keep up. Try it in test mode; the dashboard warns when it falls behind.`,
-  };
+  const cpu = cpuEstimate(profile, info.id, caps, video?.fps ?? null);
+  if (!cpu || cpu.load === null) {
+    return { tone: 'warn', text: `Encodes on the CPU with ${encoder.encoder}. Its test gave no speed figure, so there is no estimate: try it in test mode, the dashboard warns when it falls behind.` };
+  }
+  if (cpu.load >= CPU_REFUSE_LOAD) return { tone: 'error', text: cpuRefusal(cpu) };
+  const assumed = cpu.assumedFps ? ' (at 60 fps: the feed\'s rate is not known yet)' : '';
+  const pct = loadPercent(cpu.load);
+  if (cpu.load >= CPU_WARN_LOAD) {
+    return {
+      tone: 'warn',
+      text: `Encodes on the CPU with ${encoder.encoder}: ${pct} of what it managed in this server's short test${assumed}, close to its limit before decoding and everything else the server runs. Prefer a smaller size or frame rate.`,
+    };
+  }
+  return { tone: 'ok', text: `Encodes on the CPU with ${encoder.encoder}: ${pct} of what it managed in this server's test${assumed}.` };
+}
+
+/** Whether the chosen encoder for this profile is a CPU one (the CPU warning is shown then). */
+export function encodesOnCpu(profile: TranscodeProfile, caps: TranscodeCapabilities | null): boolean {
+  if (caps?.state !== 'ready') return true; // unknown yet: the prod case, so say it
+  const encoder = pickEncoder(profile.video.codec, profile.video.encoder, caps);
+  return !encoder || encoder.backend === 'software';
 }
 
 /** Whether two profiles differ (the PATCH only sends a changed one). */
@@ -184,8 +208,9 @@ export function transcodeStatusLine(t: DestinationTranscodeStatus | null | undef
     case 'behind':
       return { text: `Transcoding ${what} with ${t.encoder ?? 'the encoder'}: ${t.speed !== null ? `${t.speed.toFixed(2)}× real time` : 'behind'}`, tone: 'warn' };
     case 'starting':
-      return { text: `Transcoding ${what} with ${t.encoder ?? 'the encoder'}: starting`, tone: 'ok' };
+      return { text: `Transcoding ${what} with ${t.encoder ?? 'the encoder'}: starting`, tone: t.message ? 'warn' : 'ok' };
     default:
-      return { text: `Transcoding ${what} with ${t.encoder ?? 'the encoder'}${t.speed !== null ? ` · ${t.speed.toFixed(2)}× real time` : ''}`, tone: 'ok' };
+      // A message on a running encode is the CPU guard's "may stutter" (the platform can't take the original).
+      return { text: `Transcoding ${what} with ${t.encoder ?? 'the encoder'}${t.speed !== null ? ` · ${t.speed.toFixed(2)}× real time` : ''}`, tone: t.message ? 'warn' : 'ok' };
   }
 }

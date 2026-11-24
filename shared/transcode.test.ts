@@ -1,7 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import type { TranscodeCapabilities, TranscodeEncoderResult } from './api.js';
 import {
+  ASSUMED_FEED_FPS,
   codecOptions,
+  CPU_REFUSE_LOAD,
+  CPU_WARN_LOAD,
+  cpuEstimate,
   defaultTranscodeProfile,
   describeTranscode,
   effectiveFps,
@@ -137,8 +141,9 @@ describe('defaultTranscodeProfile', () => {
 
 describe('validateTranscodeProfile', () => {
   it('accepts a fitting profile', () => {
-    expect(validateTranscodeProfile(profile(), 'twitch', 'Twitch', CPU_ONLY)).toEqual([]);
-    expect(validateTranscodeProfile(profile({ codec: 'av1', width: 3840, height: 2160, bitrateKbps: 20000 }), 'youtube', 'YouTube', CPU_ONLY)).toEqual([]);
+    expect(validateTranscodeProfile(profile(), 'twitch', 'Twitch')).toEqual([]);
+    expect(validateTranscodeProfile(profile({ width: 1280, height: 720, fps: 30 }), 'twitch', 'Twitch', CPU_ONLY)).toEqual([]);
+    expect(validateTranscodeProfile(profile({ codec: 'av1', width: 3840, height: 2160, bitrateKbps: 20000 }), 'youtube', 'YouTube')).toEqual([]);
     expect(validateTranscodeProfile(profile({ width: 1080, height: 1920, fps: 30, bitrateKbps: 4000 }), 'instagram', 'Instagram', CPU_ONLY)).toEqual([]);
   });
 
@@ -166,7 +171,7 @@ describe('validateTranscodeProfile', () => {
     expect(validateTranscodeProfile(profile({ encoder: 'h264_nvenc' }), 'twitch', 'Twitch', h264Only)[0]).toMatch(/h264_nvenc failed its test encode on this server \(Cannot load libcuda\.so\.1\)/);
     expect(validateTranscodeProfile(profile({ encoder: 'h264_qsv' }), 'twitch', 'Twitch', h264Only)[0]).toMatch(/Unknown encoder h264_qsv/);
     expect(validateTranscodeProfile(profile({ encoder: 'libx265' }), 'twitch', 'Twitch', CPU_ONLY)[0]).toMatch(/libx265 doesn't encode H\.264/);
-    expect(validateTranscodeProfile(profile({ encoder: 'libx264' }), 'twitch', 'Twitch', h264Only)).toEqual([]);
+    expect(validateTranscodeProfile(profile({ encoder: 'libx264', fps: 30 }), 'twitch', 'Twitch', h264Only)).toEqual([]);
     expect(validateTranscodeProfile(profile(), 'twitch', 'Twitch', caps([], 'unavailable'))[0]).toMatch(/can't transcode: FFmpeg not found/);
   });
 
@@ -178,7 +183,46 @@ describe('validateTranscodeProfile', () => {
   it('says so when "Auto" has only a software encoder that is too slow', () => {
     const slow = caps([enc('libx264', 'h264', 'software', true, 1.1)]);
     expect(validateTranscodeProfile(profile(), 'twitch', 'Twitch', slow)[0]).toMatch(/fast enough for "Auto"/);
-    expect(validateTranscodeProfile(profile({ encoder: 'libx264' }), 'twitch', 'Twitch', slow)).toEqual([]);
+    // Named, it is used, within what the CPU guard allows: 720p30 at 1.1× is about 91 %, 1080p (at 60 fps) far over.
+    expect(validateTranscodeProfile(profile({ encoder: 'libx264', width: 1280, height: 720, fps: 30 }), 'twitch', 'Twitch', slow)).toEqual([]);
+    expect(validateTranscodeProfile(profile({ encoder: 'libx264' }), 'twitch', 'Twitch', slow)[0]).toMatch(/can't encode 1920×1080 at 60 fps/);
+  });
+});
+
+describe('the CPU guard (SR check, 0.2.80: the prod server encodes on its CPU only)', () => {
+  // The prod probe: libx264 3.07×, libx265 1.78×, libsvtav1 2.01× in the 720p30 test; every GPU encoder failed.
+  it('estimates a CPU encode from the test, at the feed\'s rate or 60 fps when unknown', () => {
+    const e = cpuEstimate(profile(), 'twitch', CPU_ONLY, 60)!;
+    expect(e.encoder.encoder).toBe('libx264');
+    expect(e.load).toBeCloseTo(1.466, 2); // 1080p60 = 4.5× the test's pixels, at 3.07×
+    expect(e.assumedFps).toBe(false);
+    expect(cpuEstimate(profile(), 'twitch', CPU_ONLY, null)).toMatchObject({ fps: 60, assumedFps: true });
+    expect(cpuEstimate(profile(), 'twitch', CPU_ONLY, 30)?.load).toBeCloseTo(0.733, 2);
+    expect(cpuEstimate(profile({ fps: 30 }), 'twitch', CPU_ONLY, 60)?.load).toBeCloseTo(0.733, 2);
+    // Instagram caps a 60 fps feed at 30.
+    expect(cpuEstimate(profile({ width: 1080, height: 1920 }), 'instagram', CPU_ONLY, 60)?.fps).toBe(30);
+    // GPU encoders, or encoders not checked yet: no CPU estimate.
+    expect(cpuEstimate(profile(), 'twitch', caps([enc('h264_nvenc', 'h264', 'nvenc', true, 12)]), 60)).toBeNull();
+    expect(cpuEstimate(profile(), 'twitch', caps([], 'probing'), 60)).toBeNull();
+    expect(cpuEstimate(profile(), 'twitch', null, 60)).toBeNull();
+  });
+
+  it('refuses a profile the CPU test says can\'t keep real time, and says what to lower', () => {
+    const problems = validateTranscodeProfile(profile(), 'twitch', 'Twitch', CPU_ONLY, 60);
+    expect(problems).toEqual([
+      "This server's CPU can't encode 1920×1080 at 60 fps in real time: about 147 % of what libx264 managed in its test. Lower the frame size or the frame rate (for example 1280×720 at 30 fps), or leave transcoding off.",
+    ]);
+    expect(validateTranscodeProfile(profile(), 'twitch', 'Twitch', CPU_ONLY, 30)).toEqual([]);
+    expect(validateTranscodeProfile(profile({ width: 1280, height: 720, fps: 60 }), 'twitch', 'Twitch', CPU_ONLY, 60)).toEqual([]); // about 65 %
+    expect(validateTranscodeProfile(profile({ codec: 'hevc', width: 1280, height: 720, fps: 60 }), 'youtube', 'YouTube', CPU_ONLY, 60)[0]).toMatch(/about 112 % of what libx265/);
+    // Exactly at the limit is refused: it has nothing left for decoding the feed.
+    expect(validateTranscodeProfile(profile({ width: 1280, height: 720, fps: 30, encoder: 'libx264' }), 'twitch', 'Twitch', caps([enc('libx264', 'h264', 'software', true, 1)]), 30)[0]).toMatch(/about 100 %/);
+    // A copy-mode profile (kept for later) and a GPU encode are never refused for the CPU.
+    expect(validateTranscodeProfile(profile({}, { mode: 'copy' }), 'twitch', 'Twitch', CPU_ONLY, 60)).toEqual([]);
+    expect(validateTranscodeProfile(profile(), 'twitch', 'Twitch', caps([enc('h264_nvenc', 'h264', 'nvenc', true, 12)]), 60)).toEqual([]);
+    expect(CPU_REFUSE_LOAD).toBe(1);
+    expect(CPU_WARN_LOAD).toBeLessThan(CPU_REFUSE_LOAD);
+    expect(ASSUMED_FEED_FPS).toBe(60);
   });
 });
 

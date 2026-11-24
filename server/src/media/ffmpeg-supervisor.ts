@@ -14,7 +14,7 @@ import type { Readable } from 'node:stream';
 import type { Logger } from 'pino';
 import { explainNoStreamError } from '../../../shared/feed-codec.js';
 import type { TranscodeCapabilities, TranscodeSettings } from '../../../shared/api.js';
-import { CODEC_LABELS, feedFitsPlatform, isTranscoding } from '../../../shared/transcode.js';
+import { ASSUMED_FEED_FPS, CODEC_LABELS, CPU_REFUSE_LOAD, estimateLoad, feedFitsPlatform, isTranscoding, loadPercent } from '../../../shared/transcode.js';
 import {
   DEFAULT_PROFILE_ID,
   type Destination,
@@ -206,6 +206,8 @@ interface TranscodeRun {
   okSince: number | null;
   /** While behind and not falling back: why the platform can't be sent the original feed instead. */
   cantCopy: string | null;
+  /** The CPU test's estimate of this encode's share of the CPU (software encoders); null = GPU or unknown. */
+  load: number | null;
 }
 
 interface Push {
@@ -507,7 +509,8 @@ export function createPushSupervisor({ config, bus, log, media, repos, transcode
       p.lastStatsAt = t;
       if (p.transcode) p.transcode.status.state = 'running';
       p.log.info({ target: redactUrl(p.plan.url) }, 'push running');
-      emit(p, 'running', p.fallback?.message ?? null, stats);
+      // A plain copy push has no fallback or transcode state: null, as it always was.
+      emit(p, 'running', p.fallback?.message ?? p.transcode?.status.message ?? null, stats);
       return;
     }
     const wasSlow = p.slowMessage;
@@ -694,6 +697,41 @@ export function createPushSupervisor({ config, bus, log, media, repos, transcode
     child.on('close', (code, signal) => end(code, signal));
   }
 
+  /** The CPU test's estimate for a resolved job: software encoders only (null = GPU, or no test speed). */
+  function jobLoad(job: TranscodeJob, caps: TranscodeCapabilities, fps: number): number | null {
+    if (job.encoder.backend !== 'software' || caps.state !== 'ready') return null;
+    const tested = caps.encoders.find((e) => e.encoder === job.encoder.encoder && e.ok) ?? null;
+    return estimateLoad(job.width, job.height, fps, tested);
+  }
+
+  /**
+   * The CPU guard at launch (SR check for 0.2.80): why this software encode shouldn't start now, or
+   * null. Another encode on this server's CPU is already slower than real time (Twitch Dual Format
+   * through Relay, or a CPU transcode), or the CPU test says this one plus the CPU transcodes already
+   * running can't keep real time. GPU encodes are not counted. Never looks at plain copy pushes.
+   */
+  function cpuBusy(self: Push, job: TranscodeJob, load: number | null, fps: number): string | null {
+    if (job.encoder.backend !== 'software') return null;
+    let others = 0;
+    let count = 0;
+    for (const other of pushes.values()) {
+      if (other === self || other.stopped) continue;
+      if (other.slowMessage) return 'Twitch Dual Format on this server is already encoding slower than real time';
+      const run = other.fallback ? null : other.transcode;
+      if (!run || run.job.encoder.backend !== 'software') continue;
+      if (run.status.state === 'behind') return "another destination's transcoding on this server is already slower than real time";
+      if (run.load !== null) {
+        others += run.load;
+        count++;
+      }
+    }
+    if (load === null || load + others < CPU_REFUSE_LOAD) return null;
+    const what = `${job.width}×${job.height} at ${Math.round(fps)} fps`;
+    return count > 0
+      ? `this server's CPU test puts ${what} at ${loadPercent(load)} of the CPU and the ${count} transcode${count === 1 ? '' : 's'} already running at ${loadPercent(others)}: together they can't keep real time`
+      : `this server's CPU test says it can't encode ${what} in real time (${loadPercent(load)})`;
+  }
+
   /**
    * Whether this push should transcode: a copy push whose destination has a transcoding profile,
    * while the server's switch is on and this push hasn't given up on it. Synchronous, so a push
@@ -737,6 +775,24 @@ export function createPushSupervisor({ config, bus, log, media, repos, transcode
     }
 
     const job = resolved.job;
+    const fps = job.fps ?? feed?.video?.fps ?? ASSUMED_FEED_FPS;
+    const load = jobLoad(job, caps, fps);
+    const busy = cpuBusy(p, job, load, fps);
+    let cpuWarning: string | null = null;
+    if (busy) {
+      if (profile.fallback === 'stop') {
+        fail(p, `Can't transcode: ${busy}. (This destination is set to stop instead of sending the original feed.)`);
+        return null;
+      }
+      if (feedFitsPlatform(dest.platform, feed?.video)) {
+        p.fallback = fallbackStatus(profile.video, busy);
+        p.log.warn({ why: busy, load }, "CPU can't keep up; sending the original feed");
+        return null;
+      }
+      // The platform can't take the original: transcode anyway (as when it falls behind), and say so.
+      cpuWarning = `Transcoding may stutter: ${busy}. Relay transcodes anyway because ${cantCopyReason(dest, feed?.video)}.`;
+      p.log.warn({ why: busy, load }, "CPU may not keep up; transcoding anyway (the platform can't take the original feed)");
+    }
     const input = inputs[p.plan.feeds[0]!];
     if (!input) throw new Error('No input URL for the feed');
     p.transcode = {
@@ -750,13 +806,14 @@ export function createPushSupervisor({ config, bus, log, media, repos, transcode
         fps: job.fps,
         bitrateKbps: job.bitrateKbps,
         speed: null,
-        message: null,
+        message: cpuWarning,
       },
       expectedFps: job.fps ?? feed?.video?.fps ?? null,
       samples: [],
       behindSince: null,
       okSince: null,
       cantCopy: null,
+      load,
     };
     p.log.info(
       { encoder: job.encoder.encoder, codec: job.codec, size: `${job.width}x${job.height}`, fps: job.fps ?? 'source', bitrateKbps: job.bitrateKbps },

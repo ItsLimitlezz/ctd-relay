@@ -336,6 +336,105 @@ describe('when the encode cannot start', () => {
   });
 });
 
+describe('the CPU guard at launch (SR check, 0.2.80)', () => {
+  // The prod server: libx264 3.07× in the 720p30 test, no working GPU encoder.
+  const dest = (id: string, p: TranscodeProfile = profile()): Partial<Destination> => ({ id, profileId: 'default', platform: 'twitch', name: id, transcode: p });
+  const HD60 = profile({}, { width: 1920, height: 1080, fps: 60, bitrateKbps: 6000 });
+  const P720_60 = profile({}, { fps: 60 });
+
+  it('sends the original feed instead of an encode the CPU test says cannot keep real time', async () => {
+    const rig = setup({ destinations: { d1: dest('d1', HD60) } });
+    rig.sup.start('d1', plan);
+    await flush();
+    expect(rig.sp.calls[0]!.args).toEqual(COPY_ARGS);
+    await new Encode(rig).run(2);
+    const why = "this server's CPU test says it can't encode 1920×1080 at 60 fps in real time (about 147 %)";
+    expect(rig.last()).toMatchObject({ status: 'running', message: transcodeFallbackMessage(why), transcode: { state: 'fallback-copy', encoder: null } });
+    await rig.sup.stop('d1');
+  });
+
+  it('counts the CPU transcodes already running: a second 720p60 (65 % each) copies', async () => {
+    const rig = setup({ destinations: { d1: dest('d1', P720_60), d2: dest('d2', P720_60) }, settings: { enabled: true, maxWorkers: 4 } });
+    rig.sup.start('d1', plan);
+    await flush();
+    rig.sup.start('d2', plan);
+    await flush();
+    expect(rig.sp.calls.map((c) => c.args.includes('libx264'))).toEqual([true, false]);
+    await new Encode(rig, rig.sp.calls[1]!.child).run(2);
+    expect(rig.events.filter((e) => e.id === 'd2').at(-1)).toMatchObject({
+      status: 'running',
+      transcode: {
+        state: 'fallback-copy',
+        message: transcodeFallbackMessage("this server's CPU test puts 1280×720 at 60 fps at about 65 % of the CPU and the 1 transcode already running at about 65 %: together they can't keep real time"),
+      },
+    });
+    // 720p30 (33 %) still fits next to the first one.
+    rig.w.destinations.d3 = dest('d3');
+    rig.sup.start('d3', plan);
+    await flush();
+    expect(rig.sp.last()!.args).toContain('libx264');
+    await rig.sup.stopAll();
+  });
+
+  it('starts nothing new on the CPU while another encode there is already behind', async () => {
+    const rig = setup({ destinations: { d1: dest('d1'), d2: dest('d2') }, settings: { enabled: true, maxWorkers: 4 } });
+    rig.sup.start('d1', plan);
+    await flush();
+    const first = new Encode(rig, rig.sp.calls[0]!.child);
+    await first.run(24); // settles, keeps up
+    await first.run(16, 0.8); // then falls behind (0.80×, the prod Dual Format figure)
+    expect(rig.events.filter((e) => e.id === 'd1').at(-1)?.transcode).toMatchObject({ state: 'behind' });
+    rig.sup.start('d2', plan);
+    await flush();
+    expect(rig.sp.calls[1]!.args).toEqual(COPY_ARGS);
+    await new Encode(rig, rig.sp.calls[1]!.child).run(2);
+    expect(rig.events.filter((e) => e.id === 'd2').at(-1)?.transcode).toMatchObject({
+      state: 'fallback-copy',
+      message: transcodeFallbackMessage("another destination's transcoding on this server is already slower than real time"),
+    });
+    await rig.sup.stopAll();
+  });
+
+  it("transcodes anyway, and says it may stutter, when the platform can't take the original feed", async () => {
+    const rig = setup({ destinations: { d1: dest('d1', HD60) }, feed: AV1_FEED });
+    rig.sup.start('d1', plan);
+    await flush();
+    expect(rig.sp.calls[0]!.args).toContain('libx264');
+    await new Encode(rig).run(2);
+    const warning =
+      "Transcoding may stutter: this server's CPU test says it can't encode 1920×1080 at 60 fps in real time (about 147 %). Relay transcodes anyway because d1 can't take the feed as it is (AV1 3440×1440 60 fps).";
+    expect(rig.last()).toMatchObject({ status: 'running', message: warning, transcode: { state: 'running', encoder: 'libx264', message: warning } });
+    await rig.sup.stop('d1');
+  });
+
+  it("fails with the reason when the profile says 'stop'", async () => {
+    const rig = setup({ destinations: { d1: dest('d1', { ...HD60, fallback: 'stop' }) } });
+    rig.sup.start('d1', plan);
+    await flush();
+    expect(rig.sp.calls).toHaveLength(0);
+    expect(rig.last()).toMatchObject({
+      status: 'failed',
+      message: "Can't transcode: this server's CPU test says it can't encode 1920×1080 at 60 fps in real time (about 147 %). (This destination is set to stop instead of sending the original feed.)",
+    });
+  });
+
+  it('leaves GPU encodes and plain copy pushes alone', async () => {
+    const gpu = caps([enc('h264_nvenc', 'h264', 'nvenc', true, 12), enc('libx264', 'h264', 'software', true, 3.07)]);
+    const rig = setup({ destinations: { d1: dest('d1', HD60), d2: { id: 'd2', profileId: 'default', platform: 'twitch', name: 'd2' } }, caps: gpu });
+    rig.sup.start('d1', plan);
+    await flush();
+    expect(rig.sp.calls[0]!.args).toContain('h264_nvenc');
+    rig.sup.start('d2', plan);
+    await flush();
+    expect(rig.sp.calls[1]!.args).toEqual(COPY_ARGS);
+    await new Encode(rig, rig.sp.calls[1]!.child).run(4);
+    const d2 = rig.events.filter((e) => e.id === 'd2');
+    expect(d2.every((e) => !('transcode' in e))).toBe(true);
+    expect(d2.find((e) => e.status === 'running')?.message).toBeNull();
+    await rig.sup.stopAll();
+  });
+});
+
 describe('when the encode keeps failing', () => {
   it('gives up after three encode failures in two minutes and copies', async () => {
     const rig = setup();

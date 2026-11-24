@@ -192,10 +192,6 @@ export const MIGRATIONS: readonly string[] = [
   );
   CREATE INDEX asset_library_sha ON asset_library(sha256);
   `,
-  // v5: per-destination transcoding profile (docs/TRANSCODING.md §2). NULL = copy, as before.
-  `
-  ALTER TABLE destinations ADD COLUMN transcode_json TEXT;
-  `,
 ];
 
 /** Run `fn` inside a transaction (BEGIN IMMEDIATE), rolling back on error. Not reentrant. */

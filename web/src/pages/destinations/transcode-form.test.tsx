@@ -170,19 +170,29 @@ describe('transcoding helpers', () => {
     expect(audioSelectOptions({ codec: 'aac', bitrateKbps: 96 }).at(-1)?.value).toBe('96');
   });
 
-  it('gives a plain load estimate from the server test', () => {
-    // 1080p60 on libx264 at 3.07×: about 147% of the test.
+  it('gives a plain load estimate from the server test, and the CPU guard\'s refusal', () => {
+    // 1080p60 on libx264 at 3.07×: about 147% of the test, so the server refuses it (SR check, 0.2.80).
     const heavy = loadHint(profile(), twitch, CPU, ULTRAWIDE);
-    expect(heavy).toMatchObject({ tone: 'warn' });
-    expect(heavy?.text).toMatch(/libx264: about 147% of what it managed in this server's short test, so it may not keep up/);
+    expect(heavy?.tone).toBe('error');
+    expect(heavy?.text).toMatch(/^This server's CPU can't encode 1920×1080 at 60 fps in real time: about 147 % of what libx264 managed/);
+    expect(heavy?.text).toMatch(/1280×720 at 30 fps/);
+    // 720p60: about 65%, close to the limit.
+    const close = loadHint(profile({ width: 1280, height: 720, fps: 60 }), twitch, CPU, ULTRAWIDE);
+    expect(close?.tone).toBe('warn');
+    expect(close?.text).toMatch(/libx264: about 65 % of what it managed in this server's short test, close to its limit/);
     const light = loadHint(profile({ width: 1280, height: 720, fps: 30 }), twitch, CPU, ULTRAWIDE);
-    expect(light).toEqual({ tone: 'ok', text: "Encodes on the CPU with libx264: about 33% of what it managed in this server's test." });
-    // The feed isn't running and the profile keeps its rate: nothing to estimate from.
-    expect(loadHint(profile(), twitch, CPU, null)?.text).toMatch(/Start OBS to see whether this server keeps up/);
+    expect(light).toEqual({ tone: 'ok', text: "Encodes on the CPU with libx264: about 33 % of what it managed in this server's test." });
+    // The feed isn't running and the profile keeps its rate: 60 fps is assumed, never something lighter.
+    const unknown = loadHint(profile({ width: 1280, height: 720 }), twitch, CPU, null);
+    expect(unknown?.text).toMatch(/about 65 % .*\(at 60 fps: the feed's rate is not known yet\)/);
+    expect(loadHint(profile(), twitch, CPU, null)?.tone).toBe('error');
+    // A 30 fps feed kept at its rate counts as 30.
+    expect(loadHint(profile(), twitch, CPU, { ...ULTRAWIDE, fps: 30 })?.text).toMatch(/about 73 %/);
     const gpu = caps([enc('h264_nvenc', 'h264', 'nvenc', true, 12)]);
     expect(loadHint(profile(), twitch, gpu, ULTRAWIDE)).toEqual({ tone: 'ok', text: 'Encodes on the NVIDIA GPU with h264_nvenc.' });
     expect(loadHint(profile(), twitch, null, ULTRAWIDE)).toBeNull();
     expect(loadHint(profile({ codec: 'hevc' }), twitch, caps([enc('libx264', 'h264', 'software', true, 3)]), ULTRAWIDE)).toBeNull();
+    expect(loadHint(profile({ encoder: 'libx264' }), twitch, caps([enc('libx264', 'h264', 'software', true, null)]), ULTRAWIDE)?.text).toMatch(/no speed figure/);
   });
 
   it('describes a destination and a running encode', () => {
@@ -259,7 +269,12 @@ describe('destination form requests', () => {
     expect(validateDraft(twitch, { ...draft, transcode: profile({ encoder: 'h264_nvenc' }) }, {}, CPU)[TRANSCODE_ERROR_KEY]).toMatch(/h264_nvenc failed its test encode/);
     // Switched off: kept for later, the machine isn't asked.
     expect(validateDraft(twitch, { ...draft, transcode: profile({ encoder: 'h264_nvenc' }, { mode: 'copy' }) }, {}, CPU)[TRANSCODE_ERROR_KEY]).toBeUndefined();
-    expect(validateDraft(twitch, { ...draft, transcode: profile() }, {}, CPU)[TRANSCODE_ERROR_KEY]).toBeUndefined();
+    // The CPU guard, as on the server: 1080p at the feed's rate is refused at 60 fps (or an unknown rate), fine at 720p30.
+    expect(validateDraft(twitch, { ...draft, transcode: profile() }, {}, CPU)[TRANSCODE_ERROR_KEY]).toMatch(/^This server's CPU can't encode 1920×1080 at 60 fps \(the feed's rate is not known yet/);
+    expect(validateDraft(twitch, { ...draft, transcode: profile() }, {}, CPU, 60)[TRANSCODE_ERROR_KEY]).toMatch(/can't encode 1920×1080 at 60 fps in real time/);
+    expect(validateDraft(twitch, { ...draft, transcode: profile() }, {}, CPU, 30)[TRANSCODE_ERROR_KEY]).toBeUndefined();
+    expect(validateDraft(twitch, { ...draft, transcode: profile({ width: 1280, height: 720, fps: 30 }) }, {}, CPU)[TRANSCODE_ERROR_KEY]).toBeUndefined();
+    expect(validateDraft(twitch, { ...draft, transcode: profile({}, { mode: 'copy' }) }, {}, CPU, 60)[TRANSCODE_ERROR_KEY]).toBeUndefined();
     expect(validateDraft(twitch, { ...draft, transcode: null }, {})[TRANSCODE_ERROR_KEY]).toBeUndefined();
     expect(destinationErrorField(twitch, "Transcoding: Twitch doesn't accept AV1 (it takes H.264)")).toBe(TRANSCODE_ERROR_KEY);
   });
@@ -309,8 +324,22 @@ describe('TranscodeSection (static render)', () => {
     expect(out).toContain('Same as the feed (60 fps now)');
     expect(out).not.toContain('HEVC');
     expect(out).not.toContain('3840×2160');
-    expect(out).toContain('about 147% of what it managed');
+    // The CPU guard's refusal (1080p60 on a 3.07× libx264) and the CPU warning, always there for a CPU encoder.
+    expect(out).toContain('class="small field-error" role="alert">This server&#x27;s CPU can&#x27;t encode 1920×1080 at 60 fps in real time: about 147 %');
+    expect(out).toContain('class="small item-warn transcode-cpu-warning" role="note"><strong>CPU:</strong> Transcoding runs on this server&#x27;s CPU');
     expect(out).toContain('a running stream is never interrupted');
+  });
+
+  it('shows the CPU warning for every CPU encode, and not for a GPU one', () => {
+    const light = section(profile({ width: 1280, height: 720, fps: 30 }), ON, twitch, ULTRAWIDE);
+    expect(light).toContain('transcode-cpu-warning');
+    expect(light).toContain('about 33 % of what it managed');
+    expect(light).not.toContain('field-error');
+    const gpu: TranscodeContext = { ...ON, caps: caps([enc('h264_nvenc', 'h264', 'nvenc', true, 12), enc('libx264', 'h264', 'software', true, 3.07)]) };
+    const onGpu = section(profile(), gpu, twitch, ULTRAWIDE);
+    expect(onGpu).not.toContain('transcode-cpu-warning');
+    expect(onGpu).toContain('Encodes on the NVIDIA GPU with h264_nvenc.');
+    expect(section(null, ON)).not.toContain('transcode-cpu-warning'); // off: no warning
   });
 
   it('shows a validation error in the section', () => {
@@ -341,6 +370,16 @@ describe('Settings → Transcoding (static render)', () => {
     const out = html(<SwitchCard data={response(true)} isAdmin saving={false} onSave={save} />);
     expect(out).toContain('aria-checked="true"');
     expect(out).toContain('this server can encode H.264, HEVC and AV1');
+  });
+
+  it('warns that a CPU-only server encodes on its CPU, on or off; not with a working GPU encoder', () => {
+    for (const enabled of [false, true]) {
+      const out = html(<SwitchCard data={response(enabled)} isAdmin saving={false} onSave={save} />);
+      expect(out).toContain('class="small item-warn transcode-cpu-warning" role="note"><strong>CPU only:</strong>');
+      expect(out).toContain('Relay refuses a destination setting the CPU test says can&#x27;t keep real time');
+    }
+    const gpu = html(<SwitchCard data={response(true, caps([enc('h264_nvenc', 'h264', 'nvenc', true, 12), enc('libx264', 'h264', 'software', true, 3)]))} isAdmin saving={false} onSave={save} />);
+    expect(gpu).not.toContain('transcode-cpu-warning');
   });
 
   it("can't be turned on where no encoder works, and is read-only for operators", () => {

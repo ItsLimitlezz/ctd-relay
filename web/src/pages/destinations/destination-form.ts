@@ -149,12 +149,13 @@ export function validateDraft(
   draft: DestinationDraft,
   secretsSet: Readonly<Record<string, boolean>>,
   caps: TranscodeCapabilities | null = null,
+  feedFps: number | null = null,
 ): FormErrors {
   const errors: FormErrors = { ...validateValues(info.destinationFields, draft.values, secretsSet) };
-  // Same checks as the server (platform limits, and a working encoder while it is switched on).
+  // Same checks as the server (platform limits; while it is switched on, a working encoder and the CPU guard).
   const transcode = draftTranscode(draft);
   if (transcode) {
-    const problem = validateTranscodeProfile(transcode, info.id, info.name, isTranscoding(transcode) ? caps : null)[0];
+    const problem = validateTranscodeProfile(transcode, info.id, info.name, isTranscoding(transcode) ? caps : null, feedFps)[0];
     if (problem) errors[TRANSCODE_ERROR_KEY] = problem;
   }
   // The server only accepts RTMP(S) server URLs (any URL is fine for plain 'url' option fields).

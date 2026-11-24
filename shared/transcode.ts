@@ -144,7 +144,13 @@ const isInt = (n: unknown): n is number => typeof n === 'number' && Number.isInt
  * checks: the codec needs an encoder that passed its test here; a named encoder must have passed.
  * While the probe is still running (or caps is null) only the platform checks apply.
  */
-export function validateTranscodeProfile(profile: TranscodeProfile, platform: PlatformId, platformName: string, caps: TranscodeCapabilities | null = null): string[] {
+export function validateTranscodeProfile(
+  profile: TranscodeProfile,
+  platform: PlatformId,
+  platformName: string,
+  caps: TranscodeCapabilities | null = null,
+  feedFps: number | null = null,
+): string[] {
   const errors: string[] = [];
   const lim = transcodeLimits(platform);
   const v = profile.video;
@@ -188,6 +194,11 @@ export function validateTranscodeProfile(profile: TranscodeProfile, platform: Pl
     else if (e.codec !== v.codec) errors.push(`${v.encoder} doesn't encode ${CODEC_LABELS[v.codec]}`);
     else if (!e.ok) errors.push(`${v.encoder} failed its test encode on this server${e.error ? ` (${e.error})` : ''}`);
   }
+  // The CPU guard: a software encode the server's own test says can't keep real time is refused.
+  if (errors.length === 0 && isTranscoding(profile)) {
+    const cpu = cpuEstimate(profile, platform, caps, feedFps);
+    if (cpu && cpu.load !== null && cpu.load >= CPU_REFUSE_LOAD) errors.push(cpuRefusal(cpu));
+  }
   return errors;
 }
 
@@ -219,6 +230,55 @@ export function estimateLoad(width: number, height: number, fps: number | null, 
   const rate = fps ?? feedFps;
   if (!encoder?.speed || !rate) return null;
   return (width * height * rate) / (1280 * 720 * 30) / encoder.speed;
+}
+
+// ---- The CPU guard (SR check for 0.2.80: the prod server encodes on its CPU only) ----
+
+/** Frame rate assumed for "same as the feed" while the feed's own isn't known: OBS's usual 60. */
+export const ASSUMED_FEED_FPS = 60;
+/** A software encode estimated at this share of the encoder's test speed or more can't keep real time: refused. */
+export const CPU_REFUSE_LOAD = 1;
+/** From this share on, the form, Settings and the card say the CPU is close to its limit. */
+export const CPU_WARN_LOAD = 0.6;
+
+/** A software encode's estimated CPU share (see estimateLoad); `load` null = no test speed. */
+export interface CpuEstimate {
+  encoder: TranscodeEncoderResult;
+  load: number | null;
+  width: number;
+  height: number;
+  /** The frame rate the estimate is for (the profile's, the feed's, or ASSUMED_FEED_FPS). */
+  fps: number;
+  /** True when `fps` is ASSUMED_FEED_FPS because the feed's frame rate isn't known. */
+  assumedFps: boolean;
+}
+
+/**
+ * The CPU estimate of a profile on this machine: null when it doesn't encode on the CPU (a GPU
+ * encoder, no working encoder, or the encoders aren't checked yet). "Same as the feed" counts the
+ * feed's frame rate, else ASSUMED_FEED_FPS, so an unknown rate never looks lighter than it may be.
+ */
+export function cpuEstimate(profile: TranscodeProfile, platform: PlatformId, caps: TranscodeCapabilities | null, feedFps: number | null = null): CpuEstimate | null {
+  if (caps?.state !== 'ready') return null;
+  const encoder = pickEncoder(profile.video.codec, profile.video.encoder || 'auto', caps);
+  if (!encoder || encoder.backend !== 'software') return null;
+  // effectiveFps is null for "keep the feed's rate" (no fps filter): then the feed's own rate counts.
+  const known = effectiveFps(profile, platform, feedFps) ?? (feedFps && feedFps > 0 ? feedFps : null);
+  const fps = known ?? ASSUMED_FEED_FPS;
+  const { width, height } = profile.video;
+  return { encoder, load: estimateLoad(width, height, fps, encoder), width, height, fps, assumedFps: known === null };
+}
+
+/** "about 147 %" */
+export const loadPercent = (load: number): string => `about ${Math.round(load * 100)} %`;
+
+/** Why a profile is refused: the server's own CPU test says it can't keep real time. */
+export function cpuRefusal(cpu: CpuEstimate): string {
+  const fps = `${Math.round(cpu.fps)} fps${cpu.assumedFps ? ' (the feed\'s rate is not known yet, so 60 is assumed)' : ''}`;
+  return (
+    `This server's CPU can't encode ${cpu.width}×${cpu.height} at ${fps} in real time: ${loadPercent(cpu.load ?? 0)} of what ${cpu.encoder.encoder} managed in its test. ` +
+    'Lower the frame size or the frame rate (for example 1280×720 at 30 fps), or leave transcoding off.'
+  );
 }
 
 /**

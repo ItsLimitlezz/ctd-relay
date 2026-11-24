@@ -142,12 +142,23 @@ const destinationRoutes: FastifyPluginAsync<RouteOptions> = async (app, { servic
    * when it is switched on, this machine (a working encoder). null = copy. A profile saved in 'copy'
    * mode is only checked against the platform: it is kept for later and nothing encodes.
    */
-  function checkTranscode(info: PlatformInfo, profile: TranscodeProfile | null): TranscodeProfile | null {
+  function checkTranscode(info: PlatformInfo, profile: TranscodeProfile | null, profileId: string, feed: Feed): TranscodeProfile | null {
     if (profile === null) return null;
     const caps = isTranscoding(profile) ? transcodeCapabilitiesFor(services).get() : null;
-    const problems = validateTranscodeProfile(profile, info.id, info.name, caps);
+    // The CPU guard counts "same as the feed" at the feed's frame rate when OBS is sending it, else 60.
+    const problems = validateTranscodeProfile(profile, info.id, info.name, caps, caps ? feedFps(profileId, feed) : null);
     if (problems.length > 0) throw badRequest(`Transcoding: ${problems[0]}`, 'transcode_invalid');
     return profile;
+  }
+
+  /** The feed's frame rate as MediaMTX sees it now; null when it is offline or unknown. */
+  function feedFps(profileId: string, feed: Feed): number | null {
+    try {
+      const state = services.media.feed(profileId, feed);
+      return state.online ? (state.video?.fps ?? null) : null;
+    } catch {
+      return null;
+    }
   }
 
   /** The destination's profile orchestrator (read lazily: wired after the routes are built). */
@@ -177,7 +188,7 @@ const destinationRoutes: FastifyPluginAsync<RouteOptions> = async (app, { servic
     const options = normalizeFields(fields.options, body.options);
     const ingestUrl = ingestUrlValue(info, fields.ingestUrl, body.ingestUrl);
     const streamKey = streamKeyValue(info, fields.streamKey, body.streamKey);
-    const transcode = checkTranscode(info, body.transcode ?? null);
+    const transcode = checkTranscode(info, body.transcode ?? null, profileId, body.feed);
 
     let dest = repos.destinations.create({
       profileId,
@@ -229,7 +240,7 @@ const destinationRoutes: FastifyPluginAsync<RouteOptions> = async (app, { servic
     if (body.enabled !== undefined) patch.enabled = body.enabled;
     if (body.options != null) patch.options = normalizeFields(fields.options, body.options, current.options);
     if (body.ingestUrl !== undefined) patch.ingestUrl = ingestUrlValue(info, fields.ingestUrl, body.ingestUrl);
-    if (body.transcode !== undefined) patch.transcode = checkTranscode(info, body.transcode);
+    if (body.transcode !== undefined) patch.transcode = checkTranscode(info, body.transcode, profileId, patch.feed ?? current.feed);
     // streamKey: undefined = keep, '' / null = clear, otherwise replace.
     const newKey = body.streamKey === undefined ? undefined : streamKeyValue(info, fields.streamKey, body.streamKey);
 

@@ -11,6 +11,8 @@ import {
   audioSelectOptions,
   audioValue,
   codecSelectOptions,
+  CPU_WARNING,
+  encodesOnCpu,
   encoderSelectOptions,
   FALLBACK_OPTIONS,
   fpsSelectOptions,
@@ -152,7 +154,16 @@ export function TranscodeSection({ info, feed, value, onChange, context, feedVid
               onValueChange={(v) => onChange({ ...value, fallback: v === 'stop' ? 'stop' : 'copy' })}
             />
           </Field>
-          {hint && <p className={hint.tone === 'warn' ? 'small item-warn' : 'muted small'}>{hint.text}</p>}
+          {encodesOnCpu(value, context.caps) && (
+            <p className="small item-warn transcode-cpu-warning" role="note">
+              <strong>CPU:</strong> {CPU_WARNING}
+            </p>
+          )}
+          {hint && (
+            <p className={hint.tone === 'error' ? 'small field-error' : hint.tone === 'warn' ? 'small item-warn' : 'muted small'} role={hint.tone === 'error' ? 'alert' : undefined}>
+              {hint.text}
+            </p>
+          )}
           <p className="muted small">Keyframes every {value.video.keyframeSec} s. Changes apply the next time this destination starts streaming; a running stream is never interrupted.</p>
         </>
       )}

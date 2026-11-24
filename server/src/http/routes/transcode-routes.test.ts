@@ -95,7 +95,8 @@ async function cpuOnly(counter?: { probes: number }): Promise<TranscodeCapabilit
 
 const profile = (video: Partial<TranscodeProfile['video']> = {}, rest: Partial<TranscodeProfile> = {}): TranscodeProfile => ({
   mode: 'transcode',
-  video: { codec: 'h264', width: 1920, height: 1080, fps: null, bitrateKbps: 6000, keyframeSec: 2, encoder: 'auto', ...video },
+  // 1080p30: within what the prod CPU test allows (about 73 % at libx264's 3.07×); 1080p60 is refused.
+  video: { codec: 'h264', width: 1920, height: 1080, fps: 30, bitrateKbps: 6000, keyframeSec: 2, encoder: 'auto', ...video },
   audio: 'copy',
   fallback: 'copy',
   ...rest,
@@ -242,6 +243,27 @@ describe('destination transcoding profile', () => {
     // ...but switching it on is checked.
     res = await call(admin, 'PATCH', `/api/destinations/${res.json<Destination>().id}`, { transcode: profile({ codec: 'av1' }) });
     expect(res.statusCode).toBe(400);
+  });
+
+  it('refuses what the CPU test says this server cannot encode in real time (SR check, 0.2.80)', async () => {
+    setTranscodeCapabilitiesFor(services, await cpuOnly());
+    const admin = login();
+    // 1080p60 on libx264 at 3.07×: about 147 %. "Same as the feed" with no feed online counts as 60 fps.
+    for (const transcode of [profile({ fps: 60 }), profile({ fps: null })]) {
+      const res = await call(admin, 'POST', '/api/destinations', custom(transcode));
+      expect(res.statusCode).toBe(400);
+      expect(res.json()).toMatchObject({ code: 'transcode_invalid' });
+      expect(res.json<{ error: string }>().error).toMatch(/^Transcoding: This server's CPU can't encode 1920×1080 at 60 fps .*in real time: about 147 % of what libx264 managed in its test\. Lower the frame size or the frame rate/);
+    }
+    expect(repos.destinations.list()).toEqual([]);
+    // Saved switched off it is kept, and switching it on is refused the same way.
+    const off = await call(admin, 'POST', '/api/destinations', custom(profile({ fps: 60 }, { mode: 'copy' })));
+    expect(off.statusCode).toBe(201);
+    const res = await call(admin, 'PATCH', `/api/destinations/${off.json<Destination>().id}`, { transcode: profile({ fps: 60 }) });
+    expect(res.statusCode).toBe(400);
+    expect(res.json<{ error: string }>().error).toMatch(/can't encode 1920×1080 at 60 fps in real time/);
+    // 720p60 (about 65 %) is accepted.
+    expect((await call(admin, 'POST', '/api/destinations', custom(profile({ width: 1280, height: 720, fps: 60 })))).statusCode).toBe(201);
   });
 
   it('checks only the platform while the startup probe is still running', async () => {

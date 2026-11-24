@@ -112,6 +112,14 @@ export function SwitchCard({
           label="Allow transcoding on this server"
           onChange={(enabled) => void onSave({ enabled }, enabled ? 'Transcoding is allowed. Turn it on per destination.' : 'Transcoding is off. Every destination gets the original feed.')}
         />
+        {cpuOnly(caps) && (
+          <p className="small item-warn transcode-cpu-warning" role="note">
+            <strong>CPU only:</strong> no GPU encoder works on this server, so every transcode runs on its CPU, next to Twitch Dual Format through Relay and
+            everything else the server does. One 1080p60 encode can take a home server&apos;s whole CPU. Relay refuses a destination setting the CPU test says
+            can&apos;t keep real time, and sends the original feed instead of starting an encode while the CPU is already behind. Start with 1280×720 at 30 fps and
+            try it in test mode.
+          </p>
+        )}
         {cantEncode ? (
           <p className="small item-warn">No video encoder works on this server, so there is nothing to turn on. See the table below.</p>
         ) : settings.enabled ? (
@@ -143,6 +151,13 @@ export function SwitchCard({
       </div>
     </Card>
   );
+}
+
+/** Encoders checked, some work, and none of the working ones is on a GPU (the prod server). */
+export function cpuOnly(caps: TranscodeCapabilities): boolean {
+  if (caps.state !== 'ready') return false;
+  const working = caps.encoders.filter((e) => e.ok);
+  return working.length > 0 && working.every((e) => e.backend === 'software');
 }
 
 export function EncodersCard({ caps, isAdmin, checking, onRecheck }: { caps: TranscodeCapabilities; isAdmin: boolean; checking: boolean; onRecheck: () => void }) {

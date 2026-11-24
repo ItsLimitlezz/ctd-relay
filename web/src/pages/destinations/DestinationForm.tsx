@@ -78,7 +78,7 @@ export function DestinationForm({ info, accounts, existing, onSaved, onCancel, o
   const submit = async (e: FormEvent) => {
     e.preventDefault();
     if (busy) return;
-    const v = validateDraft(info, draft, secretsSet, transcodeContext.caps);
+    const v = validateDraft(info, draft, secretsSet, transcodeContext.caps, feedVideo?.fps ?? null);
     setErrors(v);
     setFormError(null);
     if (hasErrors(v)) return;
