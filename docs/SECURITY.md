@@ -13,7 +13,7 @@ Please **don't open a public issue**. Report it privately through GitHub: the re
 | 8443 → 443 / 30443 | **Internet** (port-forwarded) | Web UI, REST API and WebSockets, over HTTPS |
 | 8080 → 80 / 30080 | Internet (port-forwarded) | Let's Encrypt HTTP-01 challenge responses and a redirect to HTTPS. For LAN clients only, also `/api/v1`, `/dock` and `/overlay/*` over plain HTTP (see [LAN plain HTTP](#lan-plain-http)) |
 | 1935 → 1935 | **LAN only** (never forward it) | RTMP ingest from OBS |
-| MediaMTX API, auth hook | Loopback inside the container | Internal only |
+| MediaMTX API, auth hook, live preview HLS (9996) | Loopback inside the container | Internal only. The live preview reaches browsers and apps only through Relay's own HTTPS server (see [Live preview](#live-preview)) |
 
 Public paths that work without logging in:
 
@@ -24,11 +24,28 @@ Public paths that work without logging in:
 
 ## External API tokens
 
-- An admin creates tokens in **Settings → API**. A token has scopes (`chat:read`, `status:read`, …) and cannot start or stop a stream, change the title or touch settings. The write scopes only let an app register itself, message other apps, send OBS events, relay OBS control, or (v1.9) save show profiles and upload files.
+- An admin creates tokens in **Settings → API**. A token has scopes (`chat:read`, `status:read`, …) and cannot start or stop a stream, change the title or touch settings. The write scopes only let an app register itself, message other apps, send OBS events, relay OBS control, or (v1.9) save show profiles and upload files. The one scope that changes how the server itself works is the operator scope `system:admin` (v1.11, below), which no app gets by pairing.
 - The secret is shown once and stored only as a SHA-256 hash. Revoking a token takes effect immediately (open event streams close within 30 s). Creating and revoking tokens is in the audit log.
 - Each token is limited to 600 requests per minute and 5 open event streams. The API never sets or reads cookies.
 - A token holder can read your chat and stream status (titles, destination names, watch URLs, error messages). Stream keys, account tokens and settings are never part of the API.
 - Treat a token like a password: give each app its own, and revoke it when an app is retired or a dock URL (`/dock#token=…`) may have leaked.
+
+### Operator tools (v1.11)
+
+One scope is for **operators**, not apps: `system:admin` ([API.md §15](API.md#15-operator-tools-the-instagram-chat-reader-v111)). It can replace the selectors the Instagram comments reader uses and take a debug capture of the comments panel.
+
+- Only an admin can put it on a token, in **Settings → API**, and only on a token for every profile. An app can't get it by pairing, whatever it asks for and whatever is ticked when approving.
+- A selector pack is data: CSS selectors, attribute names and text patterns with size and speed limits. It can't run code in the browser or on the server. A bad pack makes the reader miss or misread Instagram comments until someone reverts it (**Settings → Advanced → Revert to built-in**).
+- The speed limit on text patterns is a test, not a proof: each pattern is timed on long made-up input before it is accepted, which catches the usual mistakes (nested repetitions). A pattern built to get past that test could still keep the Instagram page busy until the live is restarted; comments, viewer count and "End live" for Instagram would stop answering, the stream itself would go on. Only give `system:admin` to someone you would give the admin login.
+- The debug capture returns the page's structure only. Text is replaced by its length; user names, comment text, link and image addresses, cookies and typed input are never in it, so a capture can be pasted into a ticket.
+- That protects what a capture shows, not the page from the token's holder: a capture also counts how many elements each selector of the pack matches, and the holder picks the selectors. With enough tries, counts can tell what an attribute on the Instagram page holds. This is one more reason to treat the token like the admin login, and to revoke it when the work is done.
+- Every pack change, revert and capture is in the audit log with the token's or user's name. Revoke the token when the work is done.
+
+### Stream reports (v1.13)
+
+- Reports hold personal data about viewers: platform user ids, display names, and when they chatted, joined or (Twitch) were in the chat. Never message text. `reports:read` tokens and report exports carry that data; grant and share them accordingly. The scope is shown as sensitive when approving a pairing.
+- An admin can turn audience tracking off (counts only), set a retention (90 or 365 days) and forget one viewer (Reports page). Forgetting is audited without the viewer's name.
+- CSV exports prefix cells that start like a spreadsheet formula with `'`; the .xlsx writes every name as text, never as a formula.
 
 ### Show profiles and uploaded files (v1.9)
 
@@ -59,6 +76,16 @@ Environment variables (in `.env` for Docker, `environment:` in the TrueNAS app Y
 **Turn it off (or narrow it) where internet clients can look private.** Wherever a NAT or proxy hop replaces the client's address with a private one, every internet visitor looks like a LAN client: Docker Desktop on Windows/macOS, rootless Docker or Podman, IPv6 published into an IPv4-only Docker network, ports forwarded from a VPS through a tunnel, or your own reverse proxy in front of the HTTP port. There set `LAN_HTTP=off`, or `LAN_HTTP_CIDRS` to your real LAN only (leaving out the gateway/proxy address). Exposure would be limited to token-protected, read-only data, but plain HTTP across the internet should never happen. With `TLS_MODE=off` (your own HTTPS proxy in front) there is no separate HTTP port and these variables do nothing.
 
 RTMP publishing requires a random per-feed key. Reading a feed is only possible from inside the container with an internal password, so nobody on your LAN can pull your stream from the server.
+
+## Live preview
+
+The feed previews (thumbnails and **Watch**, [PREVIEW.md](PREVIEW.md)) are behind the same login as the rest of the web UI. In `/api/v1` the JPEG thumbnails need `status:read` and the live player needs its own scope, `feeds:watch` (live video and sound, and the feed's full bitrate per player, are more than the status every paired app gets).
+
+- MediaMTX's Low-Latency HLS server listens on **127.0.0.1 only** and answers only with the internal reader password, which only Relay's proxy sends (as a header, never in a URL). Nothing outside the container can reach it, and its port must never be mapped.
+- MediaMTX gives each HLS reader a session id that works without the password. It never leaves the server: Relay replaces it in every playlist with its own random viewer id (128 bits), which only works together with the login (session cookie) or token that opened the player, on that profile and feed. Logging out ends the player at its next request.
+- No credential is in any preview URL: the browser sends the `SameSite=Strict` session cookie with each request, apps send `Authorization: Bearer` (the live routes refuse `?access_token=`). Neither viewer ids nor HLS session ids are logged.
+- Players per feed are capped (`LIVE_PREVIEW_MAX_VIEWERS`, default 4), so a stolen login can't pull the feed many times over; a player holds its place from the moment it asks, so players opening at the same moment can't pass the cap together. The `live/{file}` requests of `/api/v1` have their own budget (1000 per 10 s per token) instead of the 600 a minute: they only reach files of a player the same token opened, so the larger budget buys nothing else. Each player costs upload bandwidth (the feed's bitrate), not CPU: nothing is transcoded.
+- The CSP adds `media-src 'self' blob:` (the player hands the `<video>` a Media Source `blob:` URL). Scripts stay same-origin; the player library is bundled, not loaded from a CDN.
 
 ## Protections
 

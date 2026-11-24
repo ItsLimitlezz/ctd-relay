@@ -2,13 +2,13 @@
 > Team rules live in the hub: github.com/ItsLimitlezz/CTD-Software-Suite → AGENTS.md (read it first). This file is repo-specific.
 
 ## What this is
-**CTD Relay** (package `ctd-relay` v0.2.20, status "early"): self-hosted multistreaming server. OBS sends a landscape and a vertical RTMP feed; Relay copies each (no re-encode by default; optional per-destination transcoding, `docs/TRANSCODING.md`) to Twitch, YouTube, Kick, Facebook, X, Instagram, TikTok and custom RTMP, keeps one title, merges chat, and is the API hub the other CTD apps (OBS plugin, Overlay, Live mobile) connect through.
+**CTD Relay** (package `ctd-relay` v0.2.70, status "early"): self-hosted multistreaming server. OBS sends a landscape and a vertical RTMP feed; Relay copies each (no re-encode by default; optional per-destination transcoding, `docs/TRANSCODING.md`) to Twitch, YouTube, Kick, Facebook, X, Instagram, TikTok and custom RTMP, keeps one title, merges chat, and is the API hub the other CTD apps (OBS plugin, Overlay, Live mobile) connect through.
 Runs as one multi-arch Docker image (amd64/arm64; TrueNAS or Docker Compose) or from source on Windows/Linux. Public repo, AGPL-3.0 (open-source).
 
 ## Layout
 | Path | What |
 | --- | --- |
-| `server/src/` | Fastify + TypeScript backend: `main.ts` (composition root), `media/` (MediaMTX + FFmpeg push), `orchestrator/` (go-live), `platforms/<id>/` (one driver per platform), `browser/` (Playwright), `chat/`, `music/`, `db/` (node:sqlite), `security/`, `tls/`, `http/`, `api/` |
+| `server/src/` | Fastify + TypeScript backend: `main.ts` (composition root), `media/` (MediaMTX + FFmpeg push), `orchestrator/` (go-live), `platforms/<id>/` (one driver per platform), `browser/` (Playwright), `chat/`, `music/`, `reports/` (stream reports, xlsx writer), `db/` (node:sqlite), `security/`, `tls/`, `http/`, `api/` |
 | `shared/` | `types.ts`, `api.ts`: contract shared by server and web |
 | `web/` | React 19 + Vite SPA (talks to the server only via `web/src/api.ts`) |
 | `scripts/` | `setup-tools.mjs` (pinned MediaMTX + FFmpeg), `smoke-test.ts`, `dev-sim.mts`, `healthcheck.mjs` |
@@ -32,7 +32,7 @@ Open-source (AGPL-3.0), so prod builds may use GitHub Actions. Per `docs/DEVELOP
 - Contract files (`shared/types.ts`, `shared/api.ts`, `server/src/services.ts`, `server/src/platforms/types.ts`, `server/src/http/guards.ts`, `web/src/api.ts`, etc., full list in `docs/CONTRACTS.md`) are owned by the maintainer: propose changes, don't edit in a feature change.
 - Server imports use `.js` extensions (NodeNext). TypeScript 7, ESM.
 - Never log secrets (stream keys, ingest URLs with keys, tokens, cookies). Validate bodies with zod; admin routes use `requireAdmin`; audit state changes.
-- Platform drivers: only ever set the title, never the category/game. Browser-automated platforms (Instagram, TikTok, X, Facebook profile) are experimental. Keep selectors in `selectors.ts`.
+- Platform drivers: only ever set the title, never the category/game. Browser-automated platforms (Instagram, TikTok, X, Facebook profile) are experimental. Keep selectors in `selectors.ts`. Exception: the Instagram **chat reader's** selectors and patterns live in a JSON selector pack (`platforms/instagram/chat-pack.ts`) that an operator can replace on a running server (docs/PLATFORMS.md → Instagram); its fixtures (`platforms/instagram/fixtures/`) are synthetic, never markup or names from a real stream.
 - Never forward port 1935 (RTMP ingest) to the internet.
 - Tests never touch the network or real platform accounts.
 - `.claude/launch.json` is a PowerShell dev launch config (port 8443) for Windows.

@@ -1,11 +1,13 @@
 // Stream Guard port, end to end in real headless Chromium against the local instagram.com fixture:
 // takedown detection (health), recovery policy, link rotation, prepare after a takedown.
 
+import pino from 'pino';
 import { chromium, type Browser, type BrowserContext } from 'playwright';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import type { LiveHealthEvent, PlatformDriver, PreparedLive } from '../types.js';
 import { createInstagramDriver } from './index.js';
-import { VIEWERS_UNAVAILABLE_WARNING } from './health.js';
+import { DEFAULT_TIMEOUTS } from './flow.js';
+import { captureEndState, DEFAULT_HEALTH_TIMINGS, HealthMonitor, VIEWERS_UNAVAILABLE_WARNING, watchHealth } from './health.js';
 import { sel } from './selectors.js';
 import {
   FakeBrowserManager,
@@ -81,7 +83,7 @@ describe.skipIf(!!process.env.CI_NO_BROWSER)('instagram stream guard (Chromium +
     driver = createInstagramDriver({
       baseUrl: fx.origin,
       timeouts: TIMEOUTS,
-      chat: { markMs: 200, pollMs: 200 },
+      chat: { pollMs: 200, tabRetryMs: 2_000 },
       health: HEALTH,
       now: () => clock,
     });
@@ -175,6 +177,82 @@ describe.skipIf(!!process.env.CI_NO_BROWSER)('instagram stream guard (Chromium +
     await again.end!();
     expect(fx.events).toContainEqual({ type: 'end' });
   }, 90_000);
+
+  it('when Instagram ends the live, the log has the whole notice and the state of the page; an unknown dialog is logged once, without names', async () => {
+    const live = await goLive();
+    const p = await page();
+    const lines: Record<string, unknown>[] = [];
+    const log = pino({ level: 'info' }, { write: (line: string) => void lines.push(JSON.parse(line) as Record<string, unknown>) });
+    const marks = { liveAt: 0, sawLive: false };
+    const monitor = new HealthMonitor({ audience: 'public', zeroViewerSec: 0, timings: { ...DEFAULT_HEALTH_TIMINGS, ...HEALTH }, startedAt: 0, marks });
+    const ctl = new AbortController();
+    const events: LiveHealthEvent[] = [];
+    const done = (async () => {
+      for await (const ev of watchHealth(p, ctl.signal, { cfg: { baseUrl: fx.origin, timeouts: DEFAULT_TIMEOUTS }, monitor, pollMs: 150, now: () => clock, isCurrent: () => true, log })) events.push(ev);
+    })();
+    const logged = (msg: RegExp) => lines.filter((l) => msg.test(String(l.msg)));
+    try {
+      // Comments that read like notices, and dialogs that could carry names, never reach the log.
+      await p.evaluate(`(() => {
+        window.__addComment('fixture_viewer', 'your live video has ended lol');
+        const add = (id, html) => { const d = document.createElement('div'); d.setAttribute('role', 'dialog'); d.id = id; d.innerHTML = html; document.body.appendChild(d); };
+        add('named', '<img alt="fixture_viewer\\'s profile picture" src="data:image/gif;base64,R0lGODlhAQABAAAAACH5BAEKAAEALAAAAAABAAEAAAICTAEAOw=="><p>fixture_viewer wants to join</p><button>Accept</button>');
+        add('linked', '<p>Read <a href="/fixture_viewer/">this</a> first</p><button>OK then</button>');
+        add('prompt', '<h3>Made-up prompt nobody has seen</h3><p>Do you want to keep going?</p><button>Keep going</button><div role="button">Stop</div>');
+      })()`);
+      await until('the unknown dialog in the log', () => logged(/dialog the health watcher does not know/).length > 0);
+      await sleep(600); // several more reads
+      expect(logged(/dialog the health watcher does not know/)).toEqual([
+        // Only interface words and the length: any other word could be a name.
+        expect.objectContaining({ text: '####-up ###### ###### has #### Do you want to keep going?', length: 57, buttons: ['Keep going', 'Stop'], liveForSec: 0 }),
+      ]);
+      expect(events).toEqual([]); // an unknown dialog ends nothing, and nothing was clicked
+      expect(await p.locator('#prompt').count()).toBe(1);
+      await p.evaluate(`for (const id of ['named', 'linked', 'prompt']) document.getElementById(id).remove()`);
+      // A name in plain text (no avatar, no link) is masked too.
+      await p.evaluate(`(() => {
+        const d = document.createElement('div'); d.setAttribute('role', 'dialog'); d.id = 'plain';
+        d.innerHTML = '<p>fixture_zed wants to go live with you</p><button>Accept</button><button>Decline</button>';
+        document.body.appendChild(d);
+      })()`);
+      await until('the plain-text dialog in the log', () => logged(/dialog the health watcher does not know/).length > 1);
+      expect(logged(/dialog the health watcher does not know/)[1]).toMatchObject({ text: '#######_### wants to go live with you', length: 37, buttons: ['Accept', 'Decline'] });
+      await p.evaluate(`document.getElementById('plain').remove()`);
+
+      clock = 70 * 60_000 + 46_000;
+      const long = 'It was ended for a made-up reason. ' + 'More detail about that reason. '.repeat(8).trim();
+      await p.evaluate(`window.__takedown('Live video ended', ${JSON.stringify(long)})`);
+      await until('the ended event', () => events.some((e) => e.type === 'ended'));
+      expect(events).toEqual([{ type: 'ended', reason: `${`Live video ended ${long}`.slice(0, 157)}…` }]); // the event keeps its short reason
+      const [line] = logged(/^Instagram ended the live$/);
+      expect(line).toMatchObject({
+        level: 40,
+        rule: 'notice',
+        liveForSec: 70 * 60 + 46,
+        endButton: false,
+        page: {
+          notices: [{ role: 'dialog', text: `Live video ended ${long}`, length: `Live video ended ${long}`.length, buttons: ['Share', 'Done'] }],
+          visibility: 'visible',
+          focused: true,
+          online: true,
+          pathDepth: expect.any(Number),
+        },
+      });
+      const json = JSON.stringify(lines);
+      expect(json).not.toContain('fixture_viewer');
+      expect(json).not.toContain('fixture_zed');
+      expect(json).not.toContain('lol');
+      expect(json).not.toMatch(/https?:\/\/|sessionid|test-session/);
+      // The capture is a read: the notice is still there for end() to close.
+      expect(fx.events).not.toContainEqual({ type: 'takedown-dismissed' });
+      expect(await captureEndState(p)).toMatchObject({ notices: [{ role: 'dialog' }] });
+    } finally {
+      ctl.abort();
+      await done;
+    }
+    await live.end!();
+    expect(fx.events).not.toContainEqual({ type: 'share' });
+  }, 60_000);
 
   it('a "share your live?" leftover is closed with "Don\'t share" before the new live', async () => {
     await setup({ leftover: 'share' });

@@ -400,6 +400,14 @@ export interface MediaServer {
   readonly appName: string;
   /** The IP address OBS streams a profile's feeds from (null when it isn't streaming). */
   publisherAddress?(profileId: string): Promise<string | null>;
+  /**
+   * Live preview: where the feed's Low-Latency HLS is on the loopback MediaMTX (`baseUrl` ends in
+   * '/', e.g. `http://127.0.0.1:9996/live/landscape/`) and the Authorization header with the internal
+   * reader password. Only Relay's own proxy uses it (never sent to a client, never logged). null
+   * while HLS is off (LIVE_PREVIEW_MAX_VIEWERS=0) or the media server isn't running; throws
+   * UnknownProfileError for an unknown profile.
+   */
+  hlsSource?(profileId: string, feed: Feed): { baseUrl: string; authorization: string } | null;
 }
 
 /** Supervises one FFmpeg process per destination. Emits 'push' events on the EventBus. */

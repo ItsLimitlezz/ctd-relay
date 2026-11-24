@@ -355,6 +355,16 @@ export interface VersionResponse {
 }
 
 // ---------------------------------------------------------------------------
+// Feed previews (docs/PREVIEW.md). Any logged-in user; the session cookie authenticates them.
+// GET /api/profiles/:id/feeds/:feed/preview.jpg -> image/jpeg (404 feed_offline, 503 unavailable)
+// GET /api/profiles/:id/feeds/:feed/live.m3u8   -> LL-HLS multivariant playlist (a new viewer)
+// GET /api/profiles/:id/feeds/:feed/live/:file  -> its media playlists and fMP4 parts (?v=<viewer>)
+//   Errors (ApiError codes): 404 feed_offline | unknown_profile | not_found, 409 feed_codec (HEVC/AV1),
+//   410 live_ended (open live.m3u8 again), 429 viewer_cap (Retry-After), 503 live_off | unavailable.
+// The same live routes are in /api/v1 (status:read, Authorization header only): docs/API.md §10.
+// ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
 // Transcoding capabilities (docs/TRANSCODING.md §4). Read-only: what this machine's FFmpeg can encode.
 // GET /api/system/transcode-capabilities [user] and GET /api/v1/system/transcode-capabilities
 // (status:read) -> TranscodeCapabilities
@@ -731,6 +741,34 @@ export interface UpdateAssetRequest {
   profileId?: string | null;
 }
 /** DELETE /api/assets/:id [admin] -> {}. 409 'asset_in_use' while a head revision references it. */
+
+// ---------------------------------------------------------------------------
+// Instagram chat reader: the selector pack (docs/PLATFORMS.md → Instagram, docs/API.md §15).
+// GET | PUT | DELETE /api/platforms/instagram/chat/selector-pack [admin] -> InstagramChatPackStatus
+//   (PUT body: a pack override; DELETE reverts to the built-in pack)
+// POST /api/platforms/instagram/chat/debug [admin] -> the sanitised debug capture
+// The same four routes exist under /api/v1 for tokens with the system:admin scope.
+// ---------------------------------------------------------------------------
+
+export interface InstagramChatPackStatus {
+  /** 'builtin': the pack shipped with this version; 'override': an operator's pack is active. */
+  source: 'builtin' | 'override';
+  /** Version label of the active pack. */
+  version: string;
+  builtinVersion: string;
+  note: string | null;
+  /** When and by whom the override was stored (null for the built-in pack). */
+  updatedAt: string | null;
+  updatedBy: string | null;
+  /** Instagram lives whose comments are being read right now. */
+  readers: number;
+  /** Largest override accepted, in bytes of JSON. */
+  maxBytes: number;
+  /** The pack the reader runs with (the built-in one with the override on top). */
+  pack: Record<string, unknown>;
+  /** The override as stored, or null. */
+  override: Record<string, unknown> | null;
+}
 
 // ---------------------------------------------------------------------------
 // Live events WebSocket

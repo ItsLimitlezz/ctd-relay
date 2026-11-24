@@ -298,10 +298,27 @@ export interface DestinationState {
   lastRecovery: { at: string; reason: string } | null;
   /** Current viewers on the platform, when the driver can read them (null = unknown). */
   viewers?: number | null;
-  /** Feeds this destination needs that are offline now. Non-empty only while the phase is `waiting-for-feed`. */
+  /**
+   * Feeds this destination is waiting for: offline ones, or (with `blocked`) the online feed it can't
+   * send. Non-empty only while the phase is `waiting-for-feed`.
+   */
   waitingFor?: Feed[];
   /** Set while this destination's push transcodes (or fell back to copy); null/absent = plain copy. */
   transcode?: DestinationTranscodeStatus | null;
+  /**
+   * Set while the feed is online but can't be sent (e.g. HEVC video): nothing is pushed and no
+   * retries run until OBS sends H.264; then the destination starts by itself. Only while the phase is
+   * `waiting-for-feed`; `message` says what to change.
+   */
+  blocked?: DestinationBlock | null;
+}
+
+/** Why a destination can't send an online feed (shared/feed-codec.ts). */
+export interface DestinationBlock {
+  reason: 'feed-video-codec' | 'feed-audio-codec' | 'feed-audio-missing';
+  feed: Feed;
+  /** The feed's codec that can't be sent ('hevc', 'av1', 'opus'…); null when the feed has no audio. */
+  codec: string | null;
 }
 
 export type SessionStatus = 'offline' | 'starting' | 'live' | 'stopping';
@@ -374,6 +391,11 @@ export interface ChatMessage {
    * and TikTok's live chat). Only on `kind: 'event'` lines.
    */
   join?: boolean;
+  /**
+   * On a `join` line that names one user and a number of others ("dj_fan and 3 others joined" in
+   * Instagram's live chat): that number. `author` is the named user.
+   */
+  othersCount?: number;
 }
 
 export type ChatAlertKind = 'follow' | 'subscription' | 'gift' | 'cheer' | 'kicks' | 'raid' | 'membership' | 'superchat' | 'tip';
@@ -448,6 +470,13 @@ export interface AuditEntry {
  * show:read    = show profiles (manifests, bundles), their assets and the asset library (CTD OBS plugin; v1.9)
  * show:write   = save show-profile revisions and upload blobs (v1.9)
  * show:secrets = the encrypted third-party secrets of a show profile, e.g. browser-source URL keys (v1.9)
+ * system:admin = operator tools that change how this server works, e.g. the Instagram chat reader's
+ *                selector pack and its debug capture (v1.11). Only for tokens an admin creates in
+ *                Settings → API for every profile; never granted through pairing (ADMIN_ONLY_SCOPES).
+ * reports:read = stream reports: viewers, chat counts, events, the audience leaderboards and
+ *                exports (v1.13, docs/REPORTS.md). Holds viewer names: grant it with care.
+ * feeds:watch  = watch a feed live, video and sound (LL-HLS, v1.14, docs/PREVIEW.md). Each player
+ *                pulls the feed's full bitrate. The JPEG thumbnails stay under status:read.
  */
 export type ApiScope =
   | 'chat:read'
@@ -459,7 +488,10 @@ export type ApiScope =
   | 'obs:control'
   | 'show:read'
   | 'show:write'
-  | 'show:secrets';
+  | 'show:secrets'
+  | 'system:admin'
+  | 'reports:read'
+  | 'feeds:watch';
 export const API_SCOPES: readonly ApiScope[] = [
   'chat:read',
   'status:read',
@@ -471,7 +503,12 @@ export const API_SCOPES: readonly ApiScope[] = [
   'show:read',
   'show:write',
   'show:secrets',
+  'system:admin',
+  'reports:read',
+  'feeds:watch',
 ];
+/** Scopes an app cannot ask for by pairing, and that a token limited to one profile cannot hold. */
+export const ADMIN_ONLY_SCOPES: readonly ApiScope[] = ['system:admin'];
 
 // ---------------------------------------------------------------------------
 // Connected apps (the hub): other apps register themselves and what they offer, so apps can

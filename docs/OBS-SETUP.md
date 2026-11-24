@@ -161,4 +161,5 @@ Reporting a GPU you don't have and a different client name is a workaround Twitc
 | OBS connects, then disconnects immediately | The stream key is wrong, was rotated, or was pasted into the wrong output (`landscape` vs `vertical`). |
 | Feed shows offline on the dashboard | That OBS output isn't streaming. The vertical stream is started separately in the Vertical dock. |
 | A platform rejects the stream | Video must be H.264 with a 2-second keyframe interval and AAC audio at 48 kHz. Lower the bitrate if the platform has a limit. |
+| A feed shows `HEVC ⚠` (or `AV1 ⚠`) and its destinations are **Blocked** | OBS is sending HEVC or AV1. Relay passes the feed on unchanged and platforms need H.264. In CTD OBS: Relay dock → Send stream, or set the video encoder to H.264 for that output, then restart the stream. The destinations start by themselves. See [PLATFORMS.md](PLATFORMS.md#what-every-platform-receives-h264-video-aac-audio). |
 | Destination stuck in "waiting for feed" | It is bound to a feed that isn't streaming. Change its feed or start that output. |

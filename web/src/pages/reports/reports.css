@@ -1,0 +1,231 @@
+/* Reports page and its charts. Series slots: the validated categorical palette (8 hues in a
+   fixed order, one per platform in PLATFORM_IDS order), stepped for the Night surface and for
+   Paper. Checked with the data-viz palette validator against --bg-elev in both themes:
+   lightness band, chroma, adjacent colour-blind separation (>= 8.4) and contrast. On Paper three
+   slots sit under 3:1, so charts always have a legend, direct labels and a table view. */
+
+.report-viz,
+.report-tiles {
+  --series-1: #3987e5;
+  --series-2: #d95926;
+  --series-3: #199e70;
+  --series-4: #c98500;
+  --series-5: #d55181;
+  --series-6: #0ca30c;
+  --series-7: #9085e9;
+  --series-8: #e66767;
+}
+@media (prefers-color-scheme: light) {
+  .report-viz,
+  .report-tiles {
+    --series-1: #2a78d6;
+    --series-2: #eb6834;
+    --series-3: #1baf7a;
+    --series-4: #eda100;
+    --series-5: #e87ba4;
+    --series-6: #008300;
+    --series-7: #6250d6;
+    --series-8: #e34948;
+  }
+}
+
+.report-title {
+  overflow-wrap: anywhere;
+}
+
+.report-filters {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 12px 16px;
+  align-items: end;
+}
+.report-filter-toggles {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+/* Stat tiles */
+.report-tiles {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap: 12px;
+  margin: 0;
+}
+.report-tile {
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  background: var(--bg-elev-2);
+  min-width: 0;
+}
+.report-tile dt {
+  color: var(--text-muted);
+  font-size: 0.8rem;
+}
+.report-tile dd {
+  margin: 4px 0 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.report-tile-value {
+  font-family: var(--font-display);
+  font-size: 1.5rem;
+  font-weight: 700;
+  line-height: 1.1;
+  color: var(--text);
+}
+.report-tile-hint {
+  color: var(--text-faint);
+  font-size: 0.75rem;
+}
+
+.report-details {
+  margin-top: 14px;
+}
+.report-details summary,
+.viz-table summary {
+  cursor: pointer;
+  color: var(--accent-text);
+  font-size: 0.85rem;
+}
+.report-details summary:focus-visible,
+.viz-table summary:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+.report-table tr.is-total td {
+  border-top: 2px solid var(--border-strong);
+}
+
+.report-columns {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  gap: 20px;
+}
+.report-list,
+.report-timeline {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  overflow-wrap: anywhere;
+}
+.report-timeline {
+  max-height: 420px;
+  overflow-y: auto;
+}
+.report-subhead {
+  margin: 16px 0 8px;
+  font-size: 0.9rem;
+  color: var(--text-muted);
+}
+
+/* Charts */
+.viz {
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+.viz-title {
+  font-family: var(--font-heading);
+  font-size: 0.9rem;
+  color: var(--text-muted);
+}
+.viz-legend {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 14px;
+  font-size: 0.8rem;
+  color: var(--text-muted);
+}
+.viz-legend li {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.viz-swatch {
+  display: inline-block;
+  width: 14px;
+  height: 3px;
+  border-radius: 2px;
+}
+.viz-swatch.is-strong {
+  height: 4px;
+}
+.viz-plot {
+  position: relative;
+  width: 100%;
+  min-width: 0;
+  overflow: hidden;
+}
+.viz-plot:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+.viz-plot svg {
+  display: block;
+  touch-action: pan-y;
+}
+.viz-grid {
+  stroke: var(--border);
+  stroke-width: 1;
+}
+.viz-axis,
+.viz-direct {
+  fill: var(--text-muted);
+  font-family: var(--font);
+  font-size: 11px;
+}
+.viz-direct {
+  fill: var(--text);
+}
+.viz-crosshair {
+  stroke: var(--text-faint);
+  stroke-width: 1;
+  stroke-dasharray: 3 3;
+}
+.viz-tooltip {
+  position: absolute;
+  top: 6px;
+  min-width: 160px;
+  max-width: 220px;
+  padding: 8px 10px;
+  background: var(--bg-elev-2);
+  border: 1px solid var(--border-strong);
+  color: var(--text);
+  font-size: 0.78rem;
+  pointer-events: none;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  z-index: 2;
+}
+.viz-tooltip-time {
+  color: var(--text-muted);
+}
+.viz-tooltip-row {
+  display: grid;
+  grid-template-columns: 14px 1fr auto;
+  align-items: center;
+  gap: 6px;
+}
+.viz-table .table-wrap {
+  max-height: 320px;
+  overflow: auto;
+  margin-top: 8px;
+}
+
+@media (forced-colors: active) {
+  .viz-swatch {
+    forced-color-adjust: none;
+  }
+}

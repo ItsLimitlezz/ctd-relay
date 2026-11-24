@@ -11,6 +11,7 @@ import type { Account, PlatformInfo } from '../../../../shared/types.js';
 import { requireLoggedIn } from '../../browser/helpers.js';
 import { DriverError, type DriverContext, type PlatformDriver, type PreparedLive } from '../types.js';
 import { DEFAULT_CHAT_TIMINGS, instagramChat, TEST_COMMENT, type ChatTimings } from './chat.js';
+import { newChatMemory } from './chat-scan.js';
 import {
   checkpointError,
   DEFAULT_TIMEOUTS,
@@ -261,6 +262,9 @@ export function createInstagramDriver(opts: InstagramDriverOptions = {}): Platfo
     const marks: LiveMarks = { liveAt: null, sawLive: false };
     // Practice test lives: one test comment per live (only the account sees it), once the reader runs.
     const chatTest = { comment: testMode && options.audience === 'practice' ? TEST_COMMENT : null, posted: false };
+    // What the comments reader remembers for this live, kept across restarts of the chat source.
+    // When the live started is set in confirm(): until then it counts as unknown (no grace).
+    const chatMemory = newChatMemory();
     let ending: Promise<void> | null = null;
     return {
       push: { url: joinStreamUrl(details.server, details.key), mode: 'copy', feeds: ['vertical'] },
@@ -278,6 +282,8 @@ export function createInstagramDriver(opts: InstagramDriverOptions = {}): Platfo
           throw toDriverError(err, 'Instagram automation failed', signal); // the runner prefixes "Couldn't go live"
         }
         marks.liveAt = now();
+        // The comments reader's clock: a live this young has no comments from before the reader started.
+        chatMemory.liveStartedAt = Date.now();
         if (await visibleNow(sel.endLiveButton(page))) marks.sawLive = true;
         log.info({ audience: options.audience }, 'Instagram live started');
         await addLinkAfterGoLive(parts, signal, started);
@@ -311,7 +317,7 @@ export function createInstagramDriver(opts: InstagramDriverOptions = {}): Platfo
         return ending;
       },
 
-      chat: (signal) => instagramChat(page, signal, log, chatTimings, chatTest),
+      chat: (signal) => instagramChat(page, signal, log, chatTimings, chatTest, chatMemory),
 
       health(signal) {
         const monitor = new HealthMonitor({

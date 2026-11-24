@@ -23,7 +23,9 @@ import { transcodeCapabilitiesFor } from './media/transcode-capabilities.js';
 import { createTranscodeRuntime } from './media/transcode-settings.js';
 import { errorMessage, redactText } from './orchestrator/async-utils.js';
 import { createOrchestratorRegistry } from './orchestrator/registry.js';
+import { chatPackStore } from './platforms/instagram/chat-pack.js';
 import { createPlatformRegistry } from './platforms/registry.js';
+import { bindReportsDatabase, reportsFor } from './reports/index.js';
 import type { DriverContext } from './platforms/types.js';
 import { createSecretBox, loadMasterKey } from './security/secretbox.js';
 import { announceSetupCodeIfNeeded } from './security/setup-code.js';
@@ -214,6 +216,8 @@ export async function createServices(config: AppConfig): Promise<AppServices> {
 
   // One go-live engine per profile; profiles run independently and can be live at the same time.
   services.orchestrators = createOrchestratorRegistry(services);
+  // Stream reports keep their tables in app.db, on their own schema track (reports/schema.ts).
+  bindReportsDatabase(services, db);
   return services;
 }
 
@@ -240,8 +244,17 @@ export async function main(): Promise<void> {
   const transcodeCaps = transcodeCapabilitiesFor(services);
   void transcodeCaps.start();
 
+  // The Instagram chat reader's selector pack: load the operator's override, if one is stored
+  // (docs/PLATFORMS.md → Instagram). A stored pack that no longer validates is ignored.
+  const packProblems = chatPackStore.attach(services.repos.settings);
+  if (packProblems.length > 0) log.warn({ problems: packProblems }, 'stored Instagram chat selector pack ignored; using the built-in one');
+  else if (chatPackStore.state().source === 'override') log.info({ version: chatPackStore.active().version }, 'Instagram chat selector pack: operator override active');
+
   await services.media.start();
   await services.orchestrators.init();
+  // Stream reports (docs/REPORTS.md): listens to the event bus; never in the go-live path.
+  const reports = reportsFor(services);
+  reports.start();
 
   const tlsMaterial = await services.tls.init();
   const app = await buildApp(services, tlsMaterial);
@@ -283,6 +296,7 @@ export async function main(): Promise<void> {
       await services.tls.stop();
       await app.close();
       music.close();
+      reports.close();
       stopBlobGc();
       transcodeCaps.close();
       apiEvents.close();

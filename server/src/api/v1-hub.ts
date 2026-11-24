@@ -5,7 +5,7 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { z } from 'zod';
 import { API_SCOPES, DEFAULT_PROFILE_ID, type ApiScope } from '../../../shared/types.js';
 import { OBS_BODY_LIMIT, OBS_POSTS_PER_MINUTE, ObsEventsBody, obsStoreFor, parseObsEvents } from './obs.js';
-import { grabWithFfmpeg, previewServiceFor } from './previews.js';
+import { livePreviewOf, previewsOf, registerLiveRoutes } from './live.js';
 import { connectOffersFor, DEVICE_NAME_MAX } from './connect.js';
 import { API_REVISION } from './openapi.js';
 import type { AppMessage } from '../events.js';
@@ -14,7 +14,7 @@ import { APP_ID_RE, APP_KIND_RE, issuesText, overlaysFor, parseAppRegistration, 
 import { LAN_HTTP_PORT_ENV, LAN_HTTP_PORT_SETTING, parsePortOverride } from './access.js';
 import { SlidingWindowLimiter, addressBucket, params, query, sendProblem } from './http.js';
 import { CONTROL_RE, jsonBytes } from './json.js';
-import { PAIRING_POLL_INTERVAL_SEC, TOKEN_NAME_MAX } from './pairing.js';
+import { PAIRING_POLL_INTERVAL_SEC, PAIRING_SCOPES, TOKEN_NAME_MAX } from './pairing.js';
 import { apiProfile, buildApiIngest } from './profiles.js';
 import { createUlidGenerator, parseUlid } from './ulid.js';
 import { showSummary } from './v1-show.js';
@@ -109,10 +109,7 @@ export function registerHubRoutes(app: FastifyInstance, ctx: V1Context): void {
   const messageId = createUlidGenerator(ctx.now);
   const obsLimiter = new SlidingWindowLimiter(OBS_POSTS_PER_MINUTE, 60_000, ctx.now);
   const obsStore = obsStoreFor(services);
-  const previews = ctx.previews ?? previewServiceFor(services, () => ({
-    online: (profileId, feed) => services.media.feed(profileId, feed).online,
-    grab: (profileId, feed) => grabWithFfmpeg(services.config.ffmpegBin, services.media.readUrl(profileId, feed)),
-  }));
+  const previews = ctx.previews ?? previewsOf(services);
 
   /** The `{id}` profile of a path, checked against the token; sends the problem and returns null otherwise. */
   const pathProfile = (req: FastifyRequest, reply: FastifyReply): string | null => {
@@ -275,6 +272,20 @@ export function registerHubRoutes(app: FastifyInstance, ctx: V1Context): void {
       .send(preview.jpeg);
   });
 
+  // ---- live preview (v1.14, §10): LL-HLS, Authorization header only (no ?access_token=) ----
+  // Its own scope: live video and sound (and the feed's full bitrate per player) is more than the
+  // status and thumbnails every paired app gets with status:read.
+
+  registerLiveRoutes(app, {
+    base: '/profiles/:id/feeds/:feed',
+    preHandler: requireToken('feeds:watch'),
+    filePreHandler: requireToken('feeds:watch', false, 'live'),
+    profile: pathProfile,
+    who: (req) => `token:${authOf(req).token.id}`,
+    error: (reply, status, code, message) => sendProblem(reply, status, code, message),
+    live: () => ctx.live ?? livePreviewOf(services),
+  });
+
   // ---- app-to-app messages ----
 
   app.post('/messages', { preHandler: requireToken('apps:write'), bodyLimit: MESSAGE_BODY_LIMIT }, async (req, reply) => {
@@ -368,8 +379,9 @@ export function registerHubRoutes(app: FastifyInstance, ctx: V1Context): void {
     const parsed = PairingBody.safeParse(req.body ?? {});
     if (!parsed.success) return sendProblem(reply, 400, 'invalid', issuesText(parsed.error));
     const body = parsed.data;
-    const scopes: ApiScope[] = API_SCOPES.filter((s) => body.scopes.includes(s));
-    if (scopes.length === 0) return sendProblem(reply, 400, 'invalid', `scopes: any of ${API_SCOPES.join(', ')}`);
+    // Admin-only scopes (system:admin) cannot be asked for by pairing: ignored like unknown ones.
+    const scopes: ApiScope[] = PAIRING_SCOPES.filter((s) => body.scopes.includes(s));
+    if (scopes.length === 0) return sendProblem(reply, 400, 'invalid', `scopes: any of ${PAIRING_SCOPES.join(', ')}`);
     const profileId = body.profileId ?? null;
     if (profileId !== null && !services.repos.profiles.get(profileId)) {
       return sendProblem(reply, 404, 'unknown_profile', 'profileId: no profile with this id (ask for every profile with null; the admin picks one).');

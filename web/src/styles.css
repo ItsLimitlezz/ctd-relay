@@ -2036,6 +2036,210 @@ img {
   width: 22px;
   height: 22px;
 }
+
+/* ---------------------------------------------------------------- feed previews (docs/PREVIEW.md) */
+
+/* The card is the size reference: a vertical thumbnail gets the height of a landscape one in a card
+   of the same width, so the two feed cards line up. */
+.feed-card > .card-body {
+  container-type: inline-size;
+}
+.feed-thumb {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-top: 12px;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-sunken);
+}
+.feed-thumb.is-landscape {
+  width: 100%;
+  aspect-ratio: 16 / 9;
+}
+.feed-thumb.is-vertical {
+  aspect-ratio: 9 / 16;
+  height: min(calc(100cqi * 9 / 16), 360px);
+  max-width: 100%;
+  margin-inline: auto;
+}
+.feed-thumb.is-compact {
+  margin: 0;
+}
+.feed-thumb.is-compact.is-landscape {
+  width: 160px;
+}
+.feed-thumb.is-compact.is-vertical {
+  height: 90px;
+  margin: 0;
+}
+.feed-thumb img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  user-select: none;
+}
+.feed-thumb-msg {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 8px;
+  color: var(--text-muted);
+  font-size: 0.84rem;
+  text-align: center;
+}
+.feed-thumb-msg svg {
+  width: 22px;
+  height: 22px;
+  opacity: 0.6;
+}
+.feed-thumb-msg.is-danger {
+  align-self: stretch;
+  justify-content: center;
+  width: 100%;
+  background: var(--danger-soft);
+  color: var(--danger);
+}
+.feed-thumb.is-compact .feed-thumb-msg {
+  gap: 2px;
+  padding: 4px;
+  font-size: 0.72rem;
+}
+.feed-thumb-watch {
+  position: absolute;
+  right: 8px;
+  bottom: 8px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 10px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: rgb(4 7 12 / 0.75);
+  color: #f2fbff;
+  font: inherit;
+  font-size: 0.8rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+.feed-thumb-watch:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.feed-thumb-watch:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+.feed-thumb.is-compact .feed-thumb-watch {
+  right: 4px;
+  bottom: 4px;
+  padding: 2px 6px;
+  font-size: 0.72rem;
+}
+.feed-thumb.is-compact.is-vertical .feed-thumb-watch span {
+  display: none;
+}
+.profile-feeds {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.live-frame {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  border-radius: var(--radius);
+  background: #000;
+}
+.live-frame.is-landscape {
+  width: 100%;
+  aspect-ratio: 16 / 9;
+}
+.live-frame.is-vertical {
+  aspect-ratio: 9 / 16;
+  height: min(68dvh, 640px);
+  max-width: 100%;
+  margin-inline: auto;
+}
+.live-frame video {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  background: #000;
+}
+.live-overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 16px;
+  background: rgb(4 7 12 / 0.82);
+  color: #f2fbff;
+  text-align: center;
+}
+.live-overlay p {
+  max-width: 46ch;
+  margin: 0;
+}
+.live-overlay.is-quiet {
+  background: rgb(4 7 12 / 0.35);
+  pointer-events: none;
+}
+.live-overlay.is-danger p {
+  color: var(--danger);
+}
+.live-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  margin-top: 10px;
+}
+.icon-btn.is-on {
+  color: var(--accent-text);
+}
+.icon-btn:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+.live-volume {
+  width: 120px;
+  accent-color: var(--accent);
+}
+.live-meter {
+  position: relative;
+  width: 120px;
+  height: 8px;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 2px;
+  background: var(--bg-elev-2);
+}
+.live-meter.is-off {
+  opacity: 0.4;
+}
+.live-meter-bar {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(90deg, var(--success) 0 70%, var(--warn) 70% 88%, var(--danger) 88%);
+  clip-path: inset(0 100% 0 0);
+}
+.live-note {
+  margin: 8px 0 0;
+}
 .kv {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr);

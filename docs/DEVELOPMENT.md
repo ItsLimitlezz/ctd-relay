@@ -80,11 +80,15 @@ npx vitest run --project web            # one project
 npx vitest list --filesOnly             # which files each project collects
 npm run build                           # dist/server + dist/web
 npm run smoke                           # end-to-end media relay test with the real binaries in ./tools
+npm run e2e:preview                     # feed previews in the real web UI (Chromium), real Relay + binaries
+npx tsx scripts/preview-stress.ts       # live preview resource safety (~15 min): restream with 4 players, cap, killed tab, frozen network, 100 cycles
 ```
 
 - Tests never touch the network or real platform accounts. Platform drivers are tested with stubbed `fetch` and local HTML fixtures.
 - Browser tests drive a real headless Chromium. Set `CI_NO_BROWSER=1` to skip them on machines without it.
 - The smoke test starts MediaMTX and FFmpeg on non-default ports, publishes a test pattern, checks that a wrong key is rejected, relays to a local fake platform and prints PASS or FAIL.
+- `npm run e2e:preview` builds the web UI, starts Relay (TLS off, temp data dir, free ports) with its MediaMTX, publishes two FFmpeg test patterns, and drives the dashboard in Playwright's Chromium: thumbnails (aspect, refresh), **Watch** (LL-HLS through Relay, muted, delay), sound and meter, the muxer stopping after the player closes, the HEVC warning and the Profiles page. It also prints the CPU and RAM Relay and MediaMTX use with nobody watching, thumbnails, and 1 and 3 players (`--quick` skips that). `PREVIEW_E2E_SHOTS=<dir>` saves screenshots; `CHROMIUM_PATH=<binary>` uses another Chromium (it needs H.264, which Playwright's builds have).
+- `scripts/preview-stress.ts` (Linux) is the live preview's resource-safety check from the 0.2.60 Senior check: the outgoing restream's fps, bitrate and longest stall at a fake platform with no player and with 4 players; the viewer cap with 12 logins opening at once; 20 opens abandoned during a cold start; the browser killed and the network frozen (no FIN/RST) while playing; 100 open/play/close cycles with file descriptors and sockets compared before and after; no thumbnail requests from a hidden page. `STRESS_CPUS=0` pins Relay and its children to CPU 0 (a weak server), `STRESS_PHASES=restream,cap,…` picks phases, `STRESS_CYCLES` sets the cycle count.
 - `server/src/media/transcode.integration.test.ts` transcodes small test feeds with a real FFmpeg (software encoders) and checks what the fake platform received with ffprobe. It is part of `npm test` and skips itself when there is no `./tools/ffmpeg` (after `npm run setup-tools` it runs); `FFMPEG_BIN=/path/to/ffmpeg npm test` uses another build (ffprobe must sit next to it).
 - CI (`.github/workflows/ci.yml`) runs the same typecheck, tests and build on every push and pull request.
 

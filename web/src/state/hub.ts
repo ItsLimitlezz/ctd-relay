@@ -2,7 +2,7 @@
 // connected apps and their resources, and profile pickers for tokens (Settings → API).
 
 import type { ApiScope, AppResource, ConnectedApp, PairingRequest, Profile } from '@shared/types';
-import { API_SCOPES, DEFAULT_PROFILE_ID } from '@shared/types';
+import { ADMIN_ONLY_SCOPES, API_SCOPES, DEFAULT_PROFILE_ID } from '@shared/types';
 import { formatAgo, plural } from '../components/format';
 import { findProfile, profileLabel, sortProfiles } from './profiles';
 
@@ -14,6 +14,8 @@ export const APP_TOKEN_NAME_MAX = 60;
 export const BASIC_SCOPES: readonly ApiScope[] = ['chat:read', 'status:read'];
 /** Scopes that hand out secrets (stream keys, show-profile secrets): highlighted when approving. */
 export const SECRET_SCOPES: readonly ApiScope[] = ['ingest:read', 'show:secrets'];
+/** Scopes shown with a warning colour: the secret ones, the admin-only ones, and viewer data (reports). */
+export const SENSITIVE_SCOPES: readonly ApiScope[] = [...SECRET_SCOPES, ...ADMIN_ONLY_SCOPES, 'reports:read'];
 
 // ---------------------------------------------------------------------------
 // Profile pickers
@@ -89,6 +91,9 @@ export function knownScopes(scopes: readonly string[] | null | undefined): ApiSc
   return API_SCOPES.filter((s) => list.includes(s));
 }
 
+/** Scopes an app can be given by pairing: every scope except the admin-only ones (system:admin). */
+export const PAIRING_SCOPES: readonly ApiScope[] = API_SCOPES.filter((s) => !ADMIN_ONLY_SCOPES.includes(s));
+
 export interface PairingApproval {
   name: string;
   scopes: ApiScope[];
@@ -100,7 +105,7 @@ export interface PairingApproval {
  * exists falls back to the default profile (never silently widened to every profile).
  */
 export function pairingDefaults(p: PairingRequest, profiles: readonly Pick<Profile, 'id'>[] | null | undefined): PairingApproval {
-  const scopes = knownScopes(p.requestedScopes);
+  const scopes = knownScopes(p.requestedScopes).filter((s) => PAIRING_SCOPES.includes(s));
   let profileId: string | null = p.requestedProfileId ?? null;
   if (profileId !== null && profiles && !findProfile(profiles, profileId)) profileId = DEFAULT_PROFILE_ID;
   return {

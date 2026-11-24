@@ -12,7 +12,7 @@ import {
   pickMessage,
   type PushSupervisorDeps,
 } from './ffmpeg-supervisor.js';
-import { captureLogger, fakeSpawn, flush, type FakeChild } from './test-helpers.js';
+import { captureLogger, fakeSpawn, feedWith, FFMPEG_NO_VIDEO_COPY, FFMPEG_NO_VIDEO_FILTER, flush, type FakeChild, type TrackSet } from './test-helpers.js';
 
 const SECRET = 'sk_live_SECRET123456';
 const READER_PASS = 'readerpass123456';
@@ -34,14 +34,22 @@ const destinations: Record<string, Partial<Destination>> = {
 };
 const repos = { destinations: { get: (id: string) => (destinations[id] as Destination | undefined) ?? null } };
 
-function setup(deps: PushSupervisorDeps = {}) {
+/** The supervisor's media server with the feeds' tracks known (codec guard). */
+function mediaWith(tracks: { landscape?: TrackSet | null; vertical?: TrackSet | null }): MediaServer {
+  return {
+    ...media,
+    feeds: () => [feedWith('landscape', tracks.landscape ?? null), feedWith('vertical', tracks.vertical ?? null)],
+  } as unknown as MediaServer;
+}
+
+function setup(deps: PushSupervisorDeps = {}, mediaServer: MediaServer = media) {
   const bus = new EventBus();
   const events: PushEvent[] = [];
   bus.on('push', (e) => events.push(e));
   const sp = fakeSpawn();
   const cap = captureLogger();
   const sup = createPushSupervisor(
-    { config, bus, log: cap.log, media, repos },
+    { config, bus, log: cap.log, media: mediaServer, repos },
     { spawn: sp.spawn, now: () => Date.now(), probeCapabilities: async () => ({ multitrack: true }), ...deps },
   );
   const child = (): FakeChild => {
@@ -192,6 +200,80 @@ describe('PushSupervisor', () => {
     await flush();
     await crash(child(), '[flv @ 0x1] Codec not supported\n');
     expect(last()?.message).toBe('Codec not supported');
+    await sup.stop('d1');
+  });
+
+  it('an HEVC feed: FFmpeg\'s "Error opening output files: Invalid argument" becomes the clear message', async () => {
+    const { sup, child, last, logs } = setup({}, mediaWith({ landscape: 'hevcAac' }));
+    sup.start('d1', plan);
+    await flush();
+    await crash(child(), `${FFMPEG_NO_VIDEO_COPY.join('\n')}\n`, 234);
+    expect(last()).toMatchObject({ status: 'retrying', attempt: 1 });
+    expect(last()?.message).toBe(
+      'Landscape feed is HEVC. Twitch, YouTube, Kick and the other platforms get the stream unchanged and need H.264. ' +
+        'In CTD OBS: Relay dock → Send stream (switches to H.264), or Settings → Output → Video encoder: H.264.',
+    );
+    // FFmpeg's own line stays in the log for whoever debugs it.
+    expect(logs()).toContain('Error opening output files: Invalid argument');
+    await sup.stop('d1');
+  });
+
+  it('an AV1 feed, and tracks that are not known: still a sentence the operator can act on', async () => {
+    const av1 = setup({}, mediaWith({ landscape: 'av1Aac' }));
+    av1.sup.start('d1', plan);
+    await flush();
+    await crash(av1.child(), `${FFMPEG_NO_VIDEO_COPY.join('\n')}\n`, 234);
+    expect(av1.last()?.message).toMatch(/^Landscape feed is AV1\. /);
+    await av1.sup.stop('d1');
+
+    // No feed state at all (this suite's plain media fake has no feeds()).
+    const unknown = setup();
+    unknown.sup.start('d1', plan);
+    await flush();
+    await crash(unknown.child(), `${FFMPEG_NO_VIDEO_COPY.join('\n')}\n`, 234);
+    expect(unknown.last()?.message).toBe('Error opening output files: Invalid argument');
+    await unknown.sup.stop('d1');
+
+    const noTracks = setup({}, mediaWith({ landscape: null }));
+    noTracks.sup.start('d1', plan);
+    await flush();
+    await crash(noTracks.child(), `${FFMPEG_NO_VIDEO_COPY.join('\n')}\n`, 234);
+    expect(noTracks.last()?.message).toMatch(/^Relay found no video it can send in the landscape feed\. Feeds must be H\.264 video with AAC audio\./);
+    await noTracks.sup.stop('d1');
+  });
+
+  it('Twitch Dual Format on an HEVC feed: "Error binding filtergraph inputs/outputs" becomes the clear message', async () => {
+    const track = (feed: 'landscape' | 'vertical') => ({
+      feed,
+      width: 1920,
+      height: 1080,
+      fps: { numerator: 60, denominator: 1 },
+      bitrateKbps: 6000,
+      keyintSec: 2,
+      profile: 'high' as const,
+      bframes: 2,
+    });
+    const ivs: PushPlan = {
+      url: `rtmps://ingest.example.com/app/${SECRET}`,
+      mode: 'ivs',
+      feeds: ['landscape', 'vertical'],
+      ivs: { tracks: [track('landscape'), track('vertical')], audioBitrateKbps: 160, audioChannels: 2, preset: 'veryfast' },
+    };
+    const { sup, child, last } = setup({}, mediaWith({ landscape: 'hevcAac', vertical: 'hevcAac' }));
+    sup.start('d1', ivs);
+    await flush();
+    await crash(child(), `${FFMPEG_NO_VIDEO_FILTER.join('\n')}\n`, 234);
+    expect(last()).toMatchObject({ status: 'retrying' });
+    expect(last()?.message).toMatch(/^Landscape feed is HEVC\. Twitch Dual Format needs H\.264 feeds\. In CTD OBS: Relay dock → Send stream/);
+    await sup.stop('d1');
+  });
+
+  it('an H.264 feed: "Invalid argument" stays FFmpeg\'s own line', async () => {
+    const { sup, child, last } = setup({}, mediaWith({ landscape: 'h264Aac' }));
+    sup.start('d1', plan);
+    await flush();
+    await crash(child(), `${FFMPEG_NO_VIDEO_COPY.join('\n')}\n`, 234);
+    expect(last()?.message).toBe('Error opening output files: Invalid argument');
     await sup.stop('d1');
   });
 

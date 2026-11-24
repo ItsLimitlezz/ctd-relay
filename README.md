@@ -34,6 +34,7 @@ An open-source alternative to Restream that you run yourself. OBS sends a **land
 - **Profiles.** Independent set-ups (your own channel, a club night…), each with its own accounts, destinations, title and OBS keys, and several can be live at once.
 - **Stream Guard** for Instagram: notices when a live is taken down, starts a fresh one automatically and rotates the link you attach to each live.
 - **A hub for your other apps.** An API with live events, chat, viewers, OBS state and feed previews, plus a shared timecode clock, so [CTD Overlay](https://github.com/ItsLimitlezz/ctd-overlay), the CTD OBS plugin and CTD Live mobile work together through Relay. Phones connect by scanning a QR code, on Wi-Fi or mobile data.
+- **Stream reports**: viewers over time per platform, chat per minute, uptime and errors for every stream, plus who in your audience chats, joins and watches the most. Export to Excel (.xlsx), CSV or JSON. Audience tracking and how long reports are kept are your choice.
 - **OBS dock**: status, bitrates, destinations and chat in a panel inside OBS.
 - **Secure by default** for a web UI on the internet: automatic HTTPS (Let's Encrypt certificate for your IP, no domain needed), first-run setup code, Argon2id passwords, lockout, CSRF protection, encrypted secrets, roles, audit log, optional 2FA.
 - **Easy to host**: one multi-arch image (amd64 and arm64), TrueNAS "Install via YAML", or Docker Compose anywhere.
@@ -120,7 +121,9 @@ TrueNAS: see [Account recovery](docs/INSTALL-TRUENAS.md#account-recovery).
 | [INSTALL-TRUENAS.md](docs/INSTALL-TRUENAS.md) | Installing, port forwarding, HTTPS options, backups, updates |
 | [OBS-SETUP.md](docs/OBS-SETUP.md) | OBS and Aitum Vertical settings, going live, Twitch Dual Format |
 | [PLATFORMS.md](docs/PLATFORMS.md) | What each platform supports and how to connect it, including developer apps |
+| [PREVIEW.md](docs/PREVIEW.md) | Feed thumbnails and Watch (the feed live in the web UI), what they cost |
 | [SPOTIFY.md](docs/SPOTIFY.md) | Now playing on stream and `!sr` song requests from chat |
+| [REPORTS.md](docs/REPORTS.md) | Stream reports: what is recorded, how the numbers are worked out, Excel export, privacy |
 | [SECURITY.md](docs/SECURITY.md) | What is exposed, how it's protected, reporting vulnerabilities |
 | [DEVELOPMENT.md](docs/DEVELOPMENT.md) | Running from source, tests, releasing, adding a platform |
 | [ARCHITECTURE.md](docs/ARCHITECTURE.md) | Design and roadmap |

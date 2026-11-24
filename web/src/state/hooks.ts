@@ -77,3 +77,16 @@ export function useNow(intervalMs: number | null = 1000): number {
   }, [intervalMs]);
   return now;
 }
+
+/** Is the page on screen (document.visibilityState === 'visible')? True outside a browser. */
+export function usePageVisible(): boolean {
+  const read = () => typeof document === 'undefined' || document.visibilityState !== 'hidden';
+  const [visible, setVisible] = useState(read);
+  useEffect(() => {
+    const update = () => setVisible(read());
+    document.addEventListener('visibilitychange', update);
+    update();
+    return () => document.removeEventListener('visibilitychange', update);
+  }, []);
+  return visible;
+}

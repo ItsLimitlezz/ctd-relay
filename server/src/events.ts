@@ -6,6 +6,7 @@ import type {
   ChatModeration,
   DestinationState,
   DestinationTranscodeStatus,
+  Feed,
   FeedState,
   PushStats,
   SessionState,
@@ -45,8 +46,11 @@ export interface AppEvents {
   account: [Account];
   /** Destination list or config changed (emitted by destination routes). Profile when known. */
   'destinations-changed': [] | [{ profileId: string }];
-  /** User-facing notice (any component). `profileId` when it concerns one profile. */
-  notice: [{ level: 'info' | 'warn' | 'error'; message: string; profileId?: string }];
+  /**
+   * User-facing notice (any component). `profileId` when it concerns one profile. `kind`, `subject`
+   * and `codec` (optional) say what it is about for connected apps (system.notice, docs/API.md).
+   */
+  notice: [{ level: 'info' | 'warn' | 'error'; message: string; profileId?: string } & NoticeAbout];
   /** Profiles created/renamed/deleted (emitted by profile routes). */
   'profiles-changed': [];
   /** Connected apps registered/updated/removed/went online or offline (emitted by AppRegistry). */
@@ -65,6 +69,18 @@ export interface AppEvents {
   'show-changed': [{ profileId: string; revision: number; parentRevision: number | null; byAppId: string | null }];
   /** The asset library changed (emitted by the Assets routes). `profileId` null = an every-profile entry. */
   'library-changed': [{ profileId: string | null }];
+}
+
+/**
+ * What a notice is about, for apps that act on it instead of only showing it. Named like the
+ * suite's issue contract (`kind` + `subject`), so the same problem can be raised as an issue later.
+ */
+export interface NoticeAbout {
+  /** 'feed.codec': a feed's video or audio codec can't be sent (shared/feed-codec.ts). */
+  kind?: 'feed.codec';
+  subject?: { type: 'feed'; feed: Feed };
+  /** The codec in question ('hevc', 'av1', 'opus'). */
+  codec?: string;
 }
 
 /** OBS event relayed by the hub (docs/API.md §10). `data` is already size-checked. */

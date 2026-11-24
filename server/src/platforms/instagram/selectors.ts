@@ -35,6 +35,7 @@
 // (plus a title/label field when there is one) in the dialog it opens.
 
 import type { Locator, Page } from 'playwright';
+import type { IgChatPack } from './chat-pack.js';
 
 export const IG_ORIGIN = 'https://www.instagram.com';
 export const LOGIN_PATH = '/accounts/login/';
@@ -82,7 +83,6 @@ export const RE = {
   ended: /(?:live video|live) (?:has )?ended|your live video has ended|thanks for going live/i,
   afterEnd: names('done', 'close', 'not now', 'ok'),
   platformError: /something went wrong|couldn'?t start (?:your )?live|could not start (?:your )?live|try again later/i,
-  comments: names('comments', 'comment'),
 
   // ---- takedown / health ----
   /** A notice that the live is (going to be) cut but still running: a warning, never an end. */
@@ -222,14 +222,20 @@ export const sel = {
   ended: (p: Page) => p.getByText(RE.ended),
   afterEndButton: (p: Page) => p.getByRole('button', { name: RE.afterEnd }),
   platformError: (p: Page) => p.getByText(RE.platformError),
-  commentsTab: (p: Page) => anyRole(p, ['tab', 'button'], RE.comments),
+  // ---- comments (the selectors, roles and names come from the chat selector pack, chat-pack.ts) ----
+  /** The "Comments" tab: the pack's CSS selectors, else one of its roles with a matching name. */
+  commentsTab: (p: Page, tab: IgChatPack['tab']) => {
+    const name = new RegExp(tab.name, 'i');
+    const parts = [...tab.css.map((css) => p.locator(`css=${css}`)), ...tab.roles.map((role) => p.getByRole(role, { name }))];
+    return parts.slice(1).reduce((loc, part) => loc.or(part), parts[0]!);
+  },
   /** The producer's own comment box ("Add a comment…"); never the live's title field. */
-  commentBox: (p: Page) =>
+  commentBox: (p: Page, hintCss: string[]) =>
     p
       .locator('textarea, input[type="text"], input:not([type]), [contenteditable="true"]')
-      .and(p.locator('[placeholder*="comment" i], [aria-label*="comment" i]'))
+      .and(hintCss.map((css) => p.locator(`css=${css}`)).reduce((loc, part) => loc.or(part), p.locator('css=:not(*)')))
       .and(p.locator(`:not([${LIVE_TITLE_ATTR}])`)),
-  commentPost: (p: Page) => p.getByRole('button', { name: names('post', 'send') }),
+  commentPost: (p: Page, name: string) => p.getByRole('button', { name: new RegExp(name, 'i') }),
 
   // ---- after a takedown ----
   /**
@@ -325,173 +331,12 @@ export const STREAM_DETAILS_SOURCE = `(args) => {
   return { url: find(urlRe, isUrl), key: find(keyRe, isKey) };
 }`;
 
-/** Attributes the chat marker sets on the comments container and on each comment row. */
+/**
+ * Attributes the chat reader (chat-scan.ts) sets on the comments container and on each comment
+ * row. The health probe and the leftover-dialog check use them to keep away from the comments.
+ */
 export const CHAT_CONTAINER_ATTR = 'data-ctd-ig-comments';
 export const CHAT_ROW_ATTR = 'data-ctd-ig-comment';
-
-/**
- * `(args) => number`: locates the live comments panel and tags each comment row with
- * CHAT_ROW_ATTR (idempotent; run repeatedly). Container: a "Comments" tabpanel / labelled region,
- * else the area around the "Add a comment" box, else around a "Comments" heading. Row: the
- * smallest ancestor of one avatar that also holds text besides the username, or a list item.
- * Rows never contain an input (the composer) or more than one avatar.
- */
-export const CHAT_MARK_SOURCE = `(args) => {
-  const CATTR = args.containerAttr;
-  const RATTR = args.rowAttr;
-  const avatarSel = 'img[alt$="profile picture" i]';
-  const altRe = /^(.+?)['\\u2019]s profile picture$/i;
-  const commentsRe = /^(live )?comments?$/i;
-  const visible = (el) => !!(el && el.isConnected && (el.offsetWidth || el.offsetHeight || el.getClientRects().length));
-  const ownText = (el) => Array.from(el.childNodes).filter((n) => n.nodeType === 3).map((n) => n.textContent).join('').trim();
-  const climb = (el, levels, minHeight) => {
-    let node = el;
-    for (let i = 0; i < levels && node.parentElement && node.parentElement !== document.body; i++) {
-      node = node.parentElement;
-      if (node.getBoundingClientRect().height >= minHeight) return node;
-    }
-    return node;
-  };
-  const findContainer = () => {
-    for (const panel of document.querySelectorAll('[role="tabpanel"]')) {
-      if (!visible(panel)) continue;
-      const by = panel.getAttribute('aria-labelledby');
-      const tab = by ? document.getElementById(by) : null;
-      const label = (panel.getAttribute('aria-label') || (tab && tab.textContent) || '').trim();
-      if (commentsRe.test(label)) return panel;
-    }
-    for (const el of document.querySelectorAll('[aria-label]')) {
-      if (visible(el) && commentsRe.test(el.getAttribute('aria-label').trim()) && el.tagName !== 'svg' && !el.matches('button, a, [role="tab"], [role="button"]')) return el;
-    }
-    for (const box of document.querySelectorAll('textarea, input[type="text"], [contenteditable="true"]')) {
-      const hint = (box.getAttribute('placeholder') || box.getAttribute('aria-label') || '').trim();
-      if (visible(box) && /comment/i.test(hint)) return climb(box, 4, 200);
-    }
-    for (const el of document.querySelectorAll('h1, h2, h3, h4, span, div')) {
-      if (visible(el) && commentsRe.test(ownText(el)) && !el.closest('button, a, [role="tab"], [role="button"]')) return climb(el, 4, 200);
-    }
-    return null;
-  };
-  let container = document.querySelector('[' + CATTR + ']');
-  if (container && !visible(container)) {
-    container.removeAttribute(CATTR);
-    container = null;
-  }
-  if (!container) {
-    container = findContainer();
-    if (!container) return 0;
-    container.setAttribute(CATTR, '');
-  }
-  const isRow = (el) => !el.querySelector('input, textarea, [contenteditable="true"]') && el.querySelectorAll(avatarSel).length <= 1;
-  let marked = 0;
-  for (const img of container.querySelectorAll(avatarSel)) {
-    const m = altRe.exec((img.getAttribute('alt') || '').trim());
-    const user = m ? m[1].trim() : '';
-    let node = img.parentElement;
-    while (node && node !== container) {
-      const text = String(node.innerText || node.textContent || '').replace(user, '').trim();
-      if (text) break;
-      node = node.parentElement;
-    }
-    if (!node || node === container || !isRow(node)) continue;
-    if (!node.hasAttribute(RATTR)) node.setAttribute(RATTR, '');
-    marked++;
-  }
-  for (const item of container.querySelectorAll('li, [role="listitem"], [role="row"]')) {
-    if (item.querySelector('[' + RATTR + ']') || item.closest('[' + RATTR + ']') || !isRow(item)) continue;
-    if (!String(item.innerText || '').trim()) continue;
-    item.setAttribute(RATTR, '');
-    marked++;
-  }
-  return marked;
-}`;
-
-/**
- * `(args) => object` — what the comments reader sees, logged when no comment came through: the tagged
- * container (tag/role/label, size, avatars, short leaf texts, tagged rows) and, page-wide, the avatar
- * images and comment-ish labels, so the reader can be fixed from the server log. Short texts only.
- */
-export const CHAT_DIAG_SOURCE = `(args) => {
-  const visible = (el) => !!(el && el.isConnected && (el.offsetWidth || el.offsetHeight || el.getClientRects().length));
-  const squash = (s) => String(s || '').replace(/\\s+/g, ' ').trim().slice(0, 40);
-  const describe = (el) => el ? [el.tagName.toLowerCase(), el.getAttribute('role') ? 'role:' + el.getAttribute('role') : '', el.getAttribute('aria-label') ? 'label:' + squash(el.getAttribute('aria-label')) : ''].filter(Boolean).join(' ') : null;
-  const avatarSel = 'img[alt$="profile picture" i]';
-  const c = document.querySelector('[' + args.containerAttr + ']');
-  const leaves = [];
-  if (c) {
-    for (const el of c.querySelectorAll('*')) {
-      if (leaves.length >= 25) break;
-      if (el.children.length || !visible(el)) continue;
-      const t = squash(el.textContent);
-      if (t) leaves.push(t);
-    }
-  }
-  const imgAlts = Array.from(document.querySelectorAll('img[alt]')).filter(visible).map((i) => squash(i.getAttribute('alt'))).filter(Boolean).slice(0, 15);
-  const labels = Array.from(document.querySelectorAll('[aria-label], [placeholder]')).filter(visible)
-    .map((e) => squash(e.getAttribute('aria-label') || e.getAttribute('placeholder'))).filter((t) => /comment|chat|message/i.test(t)).slice(0, 10);
-  return {
-    container: describe(c),
-    containerSize: c ? Math.round(c.getBoundingClientRect().width) + 'x' + Math.round(c.getBoundingClientRect().height) : null,
-    containerAvatars: c ? c.querySelectorAll(avatarSel).length : 0,
-    taggedRows: document.querySelectorAll('[' + args.rowAttr + ']').length,
-    containerLeaves: leaves,
-    pageAvatars: document.querySelectorAll(avatarSel).length,
-    pageImageAlts: imgAlts,
-    commentLabels: labels,
-  };
-}`;
-
-/**
- * `(el) => ChatExtractResult | null` for one tagged row (see scrapeChat in browser/helpers.ts).
- * Author from the avatar alt (else the first profile link / first text). Text = the row's other
- * visible text nodes minus timestamps and action labels. "joined" rows become events.
- */
-export const CHAT_EXTRACT_SOURCE = `(el) => {
-  const altRe = /^(.+?)['\\u2019]s profile picture$/i;
-  const metaRe = /^(reply|replies|see translation|pin|pin comment|unpin|report|like|liked|\\u00b7|\\u2022|now|just now|\\d+\\s?[smhdw]|\\d+\\s?(sec|min|hr|hour|day|week)s?( ago)?|verified)$/i;
-  const eventRe = /^(joined|joined the live video|joined the live|is watching|started watching|requested to join)\\.?$/i;
-  const joinRe = /^(joined|joined the live video|joined the live|is watching|started watching)\\.?$/i;
-  const visible = (n) => !!(n && (n.offsetWidth || n.offsetHeight || n.getClientRects().length));
-  const img = el.querySelector('img[alt$="profile picture" i]');
-  let author = '';
-  if (img) {
-    const m = altRe.exec((img.getAttribute('alt') || '').trim());
-    if (m) author = m[1].trim();
-  }
-  const texts = [];
-  const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
-  for (let n = walker.nextNode(); n; n = walker.nextNode()) {
-    const t = String(n.textContent || '').replace(/\\s+/g, ' ').trim();
-    const parent = n.parentElement;
-    if (!t || !parent || !visible(parent) || parent.closest('button, time, svg')) continue;
-    texts.push(t);
-  }
-  if (!author) {
-    const link = el.querySelector('a[href^="/"]');
-    const linkText = link ? String(link.textContent || '').trim() : '';
-    author = linkText || (texts.length > 1 ? texts[0] : '');
-  }
-  const rest = [];
-  let dropped = false;
-  for (const t of texts) {
-    if (!dropped && author && t === author) { dropped = true; continue; }
-    if (metaRe.test(t)) continue;
-    rest.push(t);
-  }
-  let text = rest.join(' ').trim();
-  if (!dropped && author && text.toLowerCase().startsWith(author.toLowerCase() + ' ')) text = text.slice(author.length + 1).trim();
-  if (!text) return null;
-  const isEvent = eventRe.test(text);
-  const badges = el.querySelector('svg[aria-label="Verified" i]') ? ['verified'] : undefined;
-  return {
-    author: author || 'Instagram',
-    text: isEvent && author ? author + ' ' + text : text,
-    kind: isEvent ? 'event' : 'message',
-    join: isEvent && joinRe.test(text),
-    avatarUrl: img && /^https?:/i.test(img.src || '') ? img.src : undefined,
-    badges: badges,
-  };
-}`;
 
 /** Arguments of HEALTH_PROBE_SOURCE (regex sources, so nothing needs escaping in the script). */
 export const HEALTH_PROBE_ARGS = {
@@ -513,13 +358,16 @@ export const HEALTH_PROBE_ARGS = {
 };
 
 /**
- * `(args) => { ended, warning, viewers }` — one read of the producer page for the health watcher:
+ * `(args) => { ended, warning, viewers, dialog }` — one read of the producer page for the health watcher:
  * - `ended` / `warning`: text of a short visible notice (dialog, alert or heading) that says the
  *   live ended / was removed (or only warns). Never read from the comments (marked container,
  *   rows, lists, logs, panels labelled "comments") or from panels holding inputs or several avatars.
  * - `viewers`: the viewer count's raw text (parsed by the driver), from a "viewers"/"watching"
  *   label (aria-label/title, with the number inside it or next to the labelled icon) or a short
  *   "12 viewers" text outside the comments; null when not found.
+ * - `dialog`: `{ text, buttons }` of a visible dialog that is none of the notices above (so that a
+ *   prompt nobody has seen yet ends up in the log with its wording). Never one that holds a field,
+ *   an avatar or a link: those can carry what people wrote, or a name.
  */
 export const HEALTH_PROBE_SOURCE = `(args) => {
   const re = (s) => new RegExp(s, 'i');
@@ -556,13 +404,17 @@ export const HEALTH_PROBE_SOURCE = `(args) => {
     }
     return squash(parts.join(' '));
   };
-  const out = { ended: null, warning: null, viewers: null };
+  const out = { ended: null, warning: null, viewers: null, dialog: null };
+  // True when the text is one of the notices (also when another one was already taken).
   const classify = (t) => {
-    if (!t || t.length > args.maxNotice) return;
-    if (warnRe.test(t)) { if (!out.warning) out.warning = t; return; }
-    if (endedRe.test(t) || (policyRe.test(t) && liveRe.test(t))) { if (!out.ended) out.ended = t; return; }
-    if (interruptRe.test(t) && !out.warning) out.warning = t;
+    if (!t || t.length > args.maxNotice) return false;
+    if (warnRe.test(t)) { if (!out.warning) out.warning = t; return true; }
+    if (endedRe.test(t) || (policyRe.test(t) && liveRe.test(t))) { if (!out.ended) out.ended = t; return true; }
+    if (interruptRe.test(t)) { if (!out.warning) out.warning = t; return true; }
+    return false;
   };
+  const buttonsOf = (el) => Array.from(el.querySelectorAll('button, [role="button"]')).filter(visible).slice(0, 8)
+    .map((b) => squash(b.getAttribute('aria-label') || b.innerText || b.textContent).slice(0, 40)).filter(Boolean);
   // Not role="status" / aria-live regions: they may announce viewers' comments, and a comment saying
   // "your live has ended" must never end a healthy live.
   const noticeSel = '[role="dialog"], [role="alertdialog"], [role="alert"]';
@@ -570,7 +422,10 @@ export const HEALTH_PROBE_SOURCE = `(args) => {
     if (!visible(el) || inComments(el)) continue;
     if (el.querySelector('input, textarea, select, [contenteditable="true"], [role="tabpanel"], [role="log"], [' + args.commentsAttr + '], [' + args.commentAttr + ']')) continue;
     if (el.querySelectorAll(avatarSel).length > 1) continue;
-    classify(noticeText(el));
+    const t = noticeText(el);
+    if (classify(t) || out.dialog || !t || el.getAttribute('role') === 'alert') continue;
+    if (el.querySelector(avatarSel + ', a[href]')) continue;
+    out.dialog = { text: t.slice(0, args.maxNotice), buttons: buttonsOf(el) };
   }
   for (const el of document.querySelectorAll('h1, h2, h3, h4, [role="heading"]')) {
     if (visible(el) && !inComments(el)) classify(noticeText(el));
@@ -625,6 +480,86 @@ export const HEALTH_PROBE_SOURCE = `(args) => {
     }
   }
   return out;
+}`;
+
+/** Arguments of END_STATE_SOURCE. */
+export const END_STATE_ARGS = {
+  commentsAttr: CHAT_CONTAINER_ATTR,
+  commentAttr: CHAT_ROW_ATTR,
+  /** Longest text kept per notice (the health probe only classifies notices up to NOTICE_MAX). */
+  maxText: 600,
+  maxNotices: 6,
+};
+
+/**
+ * `(args) => { notices, visibility, focused, online, videos, pathDepth }`: what the producer page
+ * shows when Instagram has ended the live, for the log. Read once, before anything is clicked.
+ * - `notices`: every visible dialog, alert and heading outside the comments, with its role, its
+ *   text without the buttons (cut to `maxText`; `length` is the full length) and its buttons'
+ *   names. Like the health probe, never the comments and never a panel that holds a field, a
+ *   comments list or several avatars.
+ * - `visibility` / `focused` / `online`: document.visibilityState, document.hasFocus(),
+ *   navigator.onLine (a hidden or unfocused page can be throttled by the browser).
+ * - `videos`: the page's video elements (paused, ended, readyState, size): is the preview still playing.
+ * No URLs (only how deep the path is), no cookies, no field values.
+ */
+export const END_STATE_SOURCE = `(args) => {
+  const avatarSel = 'img[alt$="profile picture" i]';
+  const commentsSel = '[' + args.commentsAttr + '], [' + args.commentAttr + '], li, [role="listitem"], [role="row"], [role="log"], [role="feed"], article';
+  const visible = (el) => !!(el && el.isConnected && (el.offsetWidth || el.offsetHeight || el.getClientRects().length));
+  const squash = (s) => String(s || '').replace(/\\s+/g, ' ').trim();
+  const inComments = (el) => {
+    if (el.closest(commentsSel)) return true;
+    for (let node = el.parentElement; node && node !== document.body; node = node.parentElement) {
+      const role = node.getAttribute('role');
+      if (role !== 'tabpanel' && role !== 'region' && role !== 'complementary') continue;
+      const by = node.getAttribute('aria-labelledby');
+      const tab = by ? document.getElementById(by) : null;
+      if (/comment/i.test(node.getAttribute('aria-label') || (tab && tab.textContent) || '')) return true;
+    }
+    return false;
+  };
+  const noticeText = (el) => {
+    const parts = [];
+    const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
+    for (let n = walker.nextNode(); n; n = walker.nextNode()) {
+      const p = n.parentElement;
+      if (!p || p.closest('button, [role="button"], a, svg, time, script, style')) continue;
+      const t = squash(n.textContent);
+      if (t) parts.push(t);
+    }
+    return squash(parts.join(' '));
+  };
+  const notices = [];
+  const seen = new Set();
+  const add = (el, role) => {
+    if (notices.length >= args.maxNotices || !visible(el) || inComments(el)) return;
+    const t = noticeText(el);
+    if (!t || seen.has(t)) return;
+    seen.add(t);
+    const buttons = role === 'heading' ? [] : Array.from(el.querySelectorAll('button, [role="button"]')).filter(visible).slice(0, 8)
+      .map((b) => squash(b.getAttribute('aria-label') || b.innerText || b.textContent).slice(0, 40)).filter(Boolean);
+    notices.push({ role: role, text: t.slice(0, args.maxText), length: t.length, buttons: buttons });
+  };
+  for (const el of document.querySelectorAll('[role="dialog"], [role="alertdialog"], [role="alert"]')) {
+    if (el.querySelector('input, textarea, select, [contenteditable="true"], [role="tabpanel"], [role="log"], [' + args.commentsAttr + '], [' + args.commentAttr + ']')) continue;
+    if (el.querySelectorAll(avatarSel).length > 1) continue;
+    add(el, el.getAttribute('role'));
+  }
+  for (const el of document.querySelectorAll('h1, h2, h3, h4, [role="heading"]')) {
+    if (!el.closest('[role="dialog"], [role="alertdialog"], [role="alert"]')) add(el, 'heading');
+  }
+  const videos = Array.from(document.querySelectorAll('video')).slice(0, 4).map((v) => ({
+    paused: !!v.paused, ended: !!v.ended, readyState: v.readyState, width: v.videoWidth || 0, height: v.videoHeight || 0,
+  }));
+  return {
+    notices: notices,
+    visibility: document.visibilityState,
+    focused: document.hasFocus(),
+    online: navigator.onLine,
+    videos: videos,
+    pathDepth: location.pathname.split('/').filter(Boolean).length,
+  };
 }`;
 
 /** Arguments of LINK_TITLE_SOURCE. */

@@ -21,6 +21,7 @@ export const SETTINGS_TABS = [
   { id: 'transcoding', label: 'Transcoding' },
   { id: 'api', label: 'API' },
   { id: 'audit', label: 'Audit log' },
+  { id: 'advanced', label: 'Advanced' },
   { id: 'about', label: 'About' },
 ] as const;
 
@@ -282,7 +283,7 @@ export const DOCK_SCOPES: readonly ApiScope[] = ['status:read', 'chat:read'];
 
 export const API_SCOPE_INFO: Readonly<Record<ApiScope, { label: string; help: string }>> = {
   'chat:read': { label: 'Read chat', help: 'Chat history and live chat: messages, alerts (subs, gifts, Super Chats…) and removed messages.' },
-  'status:read': { label: 'Read status', help: 'Stream, feed and destination status, bitrates, viewers, notices and the list of profiles.' },
+  'status:read': { label: 'Read status', help: 'Stream, feed and destination status, bitrates, viewers, notices, the list of profiles and a still frame of each feed.' },
   'ingest:read': {
     label: 'Read OBS stream keys',
     help: "The profile's OBS server and stream keys, so an app (the CTD OBS plugin) can set up OBS. Stream keys are secrets: only for apps that configure OBS.",
@@ -315,7 +316,25 @@ export const API_SCOPE_INFO: Readonly<Record<ApiScope, { label: string; help: st
     label: 'Read show-profile secrets',
     help: 'Keys and passwords found in saved OBS sources (e.g. a key in a browser-source URL), held encrypted on this server. Only for machines you trust; without it they must be re-entered.',
   },
+  'system:admin': {
+    label: 'Operator tools',
+    help: 'Changes how this server works: replace or revert the Instagram chat reader’s selector pack and take its debug capture (page structure only, no names or comments). Only for an operator or a support agent you trust.',
+  },
+  'feeds:watch': {
+    label: 'Watch the feeds live',
+    help: 'The landscape and vertical feeds as live video with sound, about 1–3 s behind (CTD Live Studio, CTD Live mobile, the CTD OBS Producer). Each player uses the feed’s full bitrate, from your upload when watched from outside.',
+  },
+  'reports:read': {
+    label: 'Read stream reports',
+    help: 'Past streams: viewers over time, chat counts, events, exports, and who chatted, joined or watched the most (names and counts, never message text). Only for apps you trust with your audience.',
+  },
 };
+
+/** "Reading now" line of the Instagram chat reader card. */
+export function chatPackReaders(readers: number): string {
+  if (readers <= 0) return 'No Instagram live right now';
+  return readers === 1 ? '1 Instagram live' : `${readers} Instagram lives`;
+}
 
 /** Permissions a new token starts with (read-only basics; the others are opt-in). */
 export const DEFAULT_TOKEN_SCOPES: readonly ApiScope[] = ['chat:read', 'status:read'];

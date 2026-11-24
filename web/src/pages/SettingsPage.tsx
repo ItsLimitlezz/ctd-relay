@@ -10,6 +10,7 @@ import { Link, setQuery, useQuery } from '../router';
 import { useApi, type ApiResource } from '../state/hooks';
 import type { SettingsResponse } from '@shared/api';
 import { AboutTab } from './settings/AboutTab';
+import { AdvancedTab } from './settings/AdvancedTab';
 import { ApiTab } from './settings/ApiTab';
 import { AuditTab } from './settings/AuditTab';
 import { DeveloperAppsTab } from './settings/DeveloperAppsTab';
@@ -83,6 +84,8 @@ function TabContent({ tab, settings }: { tab: SettingsTabId; settings: ApiResour
       return <ApiTab />;
     case 'audit':
       return <AuditTab />;
+    case 'advanced':
+      return <AdvancedTab />;
     case 'about':
       return <AboutTab version={settings.data?.version ?? null} />;
   }
