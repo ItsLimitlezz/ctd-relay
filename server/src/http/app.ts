@@ -22,12 +22,14 @@ import authRoutes from './routes/auth.js';
 import browserRoutes from './routes/browser.js';
 import chatRoutes from './routes/chat.js';
 import destinationRoutes from './routes/destinations.js';
+import feedPreviewRoutes from './routes/feed-preview.js';
 import healthRoutes from './routes/health.js';
 import ingestRoutes from './routes/ingest.js';
 import musicRoutes from './routes/music.js';
 import pairingRoutes from './routes/pairings.js';
 import platformRoutes from './routes/platforms.js';
 import profileRoutes from './routes/profiles.js';
+import reportRoutes from './routes/reports.js';
 import sessionRoutes from './routes/session.js';
 import settingsRoutes from './routes/settings.js';
 import setupRoutes from './routes/setup.js';
@@ -77,6 +79,8 @@ export async function buildApp(services: AppServices, tlsMaterial: TlsMaterial |
         styleSrc: ["'self'", "'unsafe-inline'"],
         imgSrc: ["'self'", 'data:', 'blob:', 'https:'],
         connectSrc: ["'self'"],
+        // The live preview plays through Media Source Extensions (hls.js): a blob: URL on the <video>.
+        mediaSrc: ["'self'", 'blob:'],
         fontSrc: ["'self'", 'data:'],
         objectSrc: ["'none'"],
         frameAncestors: ["'none'"],
@@ -109,10 +113,13 @@ export async function buildApp(services: AppServices, tlsMaterial: TlsMaterial |
   await app.register(destinationRoutes, opts);
   await app.register(sessionRoutes, opts);
   await app.register(ingestRoutes, opts);
+  // Feed thumbnails + the live preview (LL-HLS proxied from the loopback MediaMTX, docs/PREVIEW.md).
+  await app.register(feedPreviewRoutes, opts);
   await app.register(chatRoutes, opts);
   // Spotify now playing + chat song requests (Settings → Spotify).
   await app.register(musicRoutes, opts);
   await app.register(settingsRoutes, opts);
+  await app.register(reportRoutes, opts);
   await app.register(systemRoutes, opts);
   await app.register(browserRoutes, opts);
   await app.register(wsRoutes, opts);

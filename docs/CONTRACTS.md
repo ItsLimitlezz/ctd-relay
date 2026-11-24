@@ -42,11 +42,11 @@ server/src/main.ts         builds AppServices, starts everything
 
 Every route file default-exports `FastifyPluginAsync<RouteOptions>` and receives `{ services }`.
 
-## Alert contract (`issue.*`, v1.12)
+## Alert contract (`issue.*`, v1.16)
 
 One event pair carries every alert in the CTD suite: **`issue.raised`** / **`issue.cleared`** on
 `/api/v1/events` (`status:read`). The wire format, kinds, hold times and client rules are in
-[API.md §16](API.md#16-issues-alerts-when-a-feed-a-stream-or-a-scene-has-a-problem-v112); this is
+[API.md §17](API.md#17-issues-alerts-when-a-feed-a-stream-or-a-scene-has-a-problem-v116); this is
 who does what.
 
 | Link | Role | Does |
@@ -70,7 +70,8 @@ Rules that keep the three in step:
 
 ## Storage conventions
 
-- **Settings** (`repos.settings`, JSON): `'app'` → `Partial<AppSettings>`; `'session.title'` → string; `'session.autoGoLive'` → boolean (default `true`); `'session.testMode'` → boolean (default `false`, changeable only while offline); `'tls.acme'` → `{ identifier, failures, nextAttemptAt, lastError }` (Let's Encrypt backoff, survives restarts); `'assets.limits'` → `Partial<BlobLimits>` (v1.9: overrides the blob size limits, quota and revision count; read on every upload; defaults < `ASSETS_QUOTA_BYTES` < this setting); `'instagram.chatPack'` → `{ override, updatedAt, updatedBy }` (the operator's override of the Instagram chat reader's selector pack, `platforms/instagram/chat-pack.ts`; loaded at start-up and validated again, an invalid one is ignored).
+- **Settings** (`repos.settings`, JSON): `'app'` → `Partial<AppSettings>`; `'session.title'` → string; `'session.autoGoLive'` → boolean (default `true`); `'session.testMode'` → boolean (default `false`, changeable only while offline); `'tls.acme'` → `{ identifier, failures, nextAttemptAt, lastError }` (Let's Encrypt backoff, survives restarts); `'assets.limits'` → `Partial<BlobLimits>` (v1.9: overrides the blob size limits, quota and revision count; read on every upload; defaults < `ASSETS_QUOTA_BYTES` < this setting); `'instagram.chatPack'` → `{ override, updatedAt, updatedBy }` (the operator's override of the Instagram chat reader's selector pack, `platforms/instagram/chat-pack.ts`; loaded at start-up and validated again, an invalid one is ignored); `'reports'` → `ReportSettings` (`shared/reports.ts`: `{ recording, audience, retentionDays }`, defaults on / on / 365 days, `retentionDays: 0` = keep all; docs/REPORTS.md).
+- **Report tables** (`report_*`, `audience_*` in app.db) have their own migration track in `server/src/reports/schema.ts`, versioned in `reports_meta`, not in `PRAGMA user_version`, so older versions can still open the database. Append-only like the main migrations.
 - **Secrets** (`repos.secrets.scoped(scope)`, AES-256-GCM encrypted):
 
 | Scope | Key | Value |

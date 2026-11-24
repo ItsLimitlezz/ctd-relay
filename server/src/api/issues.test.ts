@@ -32,6 +32,7 @@ function destination(id: string, over: Partial<ApiDestination> = {}): ApiDestina
     recoveries: 0,
     lastRecovery: null,
     since: '2026-11-18T20:00:00.000Z',
+    blocked: null,
     ...over,
   };
 }

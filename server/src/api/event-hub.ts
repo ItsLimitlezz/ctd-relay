@@ -8,7 +8,7 @@
 // events, events about no profile, app messages addressed to them; apps.changed is rendered with
 // the reader's view of the apps.
 //
-// The hub also feeds the issue tracker (issues.ts, docs/API.md §16): sessions, feeds, destinations,
+// The hub also feeds the issue tracker (issues.ts, docs/API.md §17): sessions, feeds, destinations,
 // OBS events and connected apps go in, issue.raised / issue.cleared envelopes come out.
 //
 // One hub per AppServices (eventHubFor). main.ts creates it at startup so nothing is missed.
@@ -277,7 +277,15 @@ export class EventHub {
       ),
       bus.on('feed', (f) => this.guard(() => this.onFeed(f))),
       bus.on('notice', (n) =>
-        this.guard(() => this.publish<ApiNotice>('system.notice', coreSource(n.profileId ?? null), { level: n.level, message: n.message })),
+        this.guard(() =>
+          this.publish<ApiNotice>('system.notice', coreSource(n.profileId ?? null), {
+            level: n.level,
+            message: n.message,
+            ...(n.kind ? { kind: n.kind } : {}),
+            ...(n.subject ? { subject: n.subject } : {}),
+            ...(n.codec ? { codec: n.codec } : {}),
+          }),
+        ),
       ),
       bus.on('profiles-changed', () => this.guard(() => this.onProfilesChanged())),
       bus.on('apps-changed', () => this.guard(() => this.onAppsChanged())),

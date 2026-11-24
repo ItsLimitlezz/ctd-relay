@@ -61,8 +61,17 @@ describe('chat.message mapping', () => {
       action: false,
       kind: 'message',
       join: false,
+      othersCount: null,
       ts: Date.parse('2026-10-17T03:00:04.123Z'),
     });
+  });
+
+  it('join lines: join and othersCount (v1.12), only on events', () => {
+    const ig = (over: Partial<ChatMessage>) => chatMessageData(msg({ platform: 'instagram', id: 'instagram:x', text: 'DJFan and 3 others joined', ...over }), 'c');
+    expect(ig({ kind: 'event', join: true, othersCount: 3 })).toMatchObject({ kind: 'event', join: true, othersCount: 3, user: { name: 'DJFan' } });
+    expect(ig({ kind: 'event', join: true })).toMatchObject({ join: true, othersCount: null });
+    expect(ig({ kind: 'message', join: true, othersCount: 3 })).toMatchObject({ join: false, othersCount: null });
+    expect(ig({ kind: 'event', othersCount: 3 })).toMatchObject({ join: false, othersCount: null });
   });
 
   it('user ids: <platform>:<id>, or <platform>:name:<name> without one', () => {

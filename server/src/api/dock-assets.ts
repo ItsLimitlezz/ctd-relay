@@ -99,6 +99,8 @@ body { display: flex; flex-direction: column; overflow: hidden; }
 .feeds { display: flex; gap: 8px; flex-wrap: wrap; color: var(--muted); margin: 2px 0 4px; }
 .feed .dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; margin-right: 4px; background: var(--muted); vertical-align: 0; }
 .feed.online .dot { background: var(--green); }
+.feed.problem { color: var(--amber); font-weight: 600; }
+.feed.problem .dot { background: var(--amber); }
 .feed .name { color: var(--text); font-weight: 600; margin-right: 4px; }
 .destinations { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 3px; }
 .dest { background: var(--panel-2); border-radius: 4px; padding: 3px 6px; border-left: 3px solid transparent; }
@@ -167,7 +169,7 @@ export const DOCK_JS = `(function () {
   var session = null;
   var feeds = {};
   var destinations = [];
-  var issues = []; // open issues (GET /status → issues, then issue.raised / issue.cleared; docs/API.md §16)
+  var issues = []; // open issues (GET /status → issues, then issue.raised / issue.cleared; docs/API.md §17)
   var cursor = null;
   var retryMs = 1000;
   var stopped = false;
@@ -313,10 +315,16 @@ export const DOCK_JS = `(function () {
     box.textContent = '';
     ['landscape', 'vertical'].forEach(function (name) {
       var f = feeds[name];
-      var node = el('span', 'feed' + (f && f.online ? ' online' : ''));
+      // A feed Relay can't send as it is (HEVC, AV1; audio that isn't AAC): "Landscape: HEVC ⚠".
+      var problem = f && f.online && f.problem && typeof f.problem.label === 'string' ? f.problem : null;
+      var node = el('span', 'feed' + (f && f.online ? ' online' : '') + (problem ? ' problem' : ''));
       node.appendChild(el('span', 'dot'));
-      node.appendChild(el('span', 'name', name === 'landscape' ? 'Landscape' : 'Vertical'));
+      node.appendChild(el('span', 'name', (name === 'landscape' ? 'Landscape' : 'Vertical') + (problem ? ':' : '')));
       var parts = [];
+      if (problem) {
+        parts.push(problem.label + ' ⚠');
+        if (typeof problem.message === 'string') node.title = problem.message;
+      }
       if (f && f.online) {
         if (f.video && f.video.width && f.video.height) parts.push(f.video.width + '×' + f.video.height);
         if (typeof f.bitrateKbps === 'number') parts.push(Math.round(f.bitrateKbps) + ' kbps');
@@ -390,7 +398,7 @@ export const DOCK_JS = `(function () {
     feeds = {};
     (s.feeds || []).forEach(function (f) { feeds[f.feed] = f; });
     destinations = s.destinations || [];
-    issues = s.issues || []; // absent on a server older than v1.12
+    issues = s.issues || []; // absent on a server older than v1.16
     renderSession();
     renderFeeds();
     renderDestinations();
@@ -531,7 +539,7 @@ export const DOCK_JS = `(function () {
       case 'destination.down': if (d) flash(d.destinationId); break;
       case 'issue.raised':
         if (d && d.id) {
-          // Already here from GET /status (same id, same start): the same problem, not news (API.md §16.4).
+          // Already here from GET /status (same id, same start): the same problem, not news (API.md §17.4).
           var known = issues.some(function (x) { return x.id === d.id && x.firstSeen === d.firstSeen; });
           upsertIssue(d);
           // A new critical problem that isn't a destination (those flash on destination.down).

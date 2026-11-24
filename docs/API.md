@@ -58,9 +58,9 @@ Authorization: Bearer ctd_pat_3fK9wQ1v…
 | Scope | Grants |
 |---|---|
 | `chat:read` | `GET /chat`, `chat.*` and `alert.*` events |
-| `status:read` | `GET /status`, `GET /profiles`, `stream.*`, `feed.*`, `destination.*`, `issue.*` (v1.12), `profile.status`, `profiles.changed`, `system.notice` events |
+| `status:read` | `GET /status`, `GET /profiles`, `stream.*`, `feed.*`, `destination.*`, `issue.*` (v1.16), `profile.status`, `profiles.changed`, `system.notice` events |
 | `ingest:read` | `GET /profiles/{id}/ingest`: OBS server URL and **stream keys** (only for apps that configure OBS) |
-| `apps:read` | `GET /apps`, `GET /profiles/{id}/overlays`, `apps.changed` and `app.message` events |
+| `apps:read` | `GET /apps`, `GET /profiles/{id}/overlays`, `GET /profiles/{id}/overlay-summary` (§9.5), `apps.changed` and `app.message` events |
 | `apps:write` | `PUT`/`DELETE /apps/{id}`, `POST /apps/{id}/heartbeat`, `POST /messages` |
 | `obs:write` | `POST /apps/{id}/events`: OBS events into the hub (the CTD OBS plugin; v1.4, §10) |
 | `obs:control` | `GET /obs/socket`: control OBS through Relay's OBS socket relay (CTD Live mobile; v1.6, §12) |
@@ -71,6 +71,8 @@ Authorization: Bearer ctd_pat_3fK9wQ1v…
 | `show:write` | `POST /profiles/{id}/show/revisions`, `POST /blobs/check`, `PUT /blobs/{sha256}`: save revisions and upload files (v1.9) |
 | `show:secrets` | `GET /profiles/{id}/show/revisions/{rev}/secrets`: third-party secrets (URL keys, passwords) saved with a show profile. Grant it per trusted machine only (v1.9) |
 | `system:admin` | Operator tools (§15): read, replace and revert the Instagram chat reader's selector pack, and take its sanitised debug capture. Only for a token an admin creates for **every profile**; pairing never grants it (v1.11) |
+| `reports:read` | Stream reports (§16): `GET /reports/…` past streams, viewers over time, chat counts, events, leaderboards and exports. Holds viewers' names: give it only to apps you trust with your audience (v1.13) |
+| `feeds:watch` | Live preview (§10): `GET /profiles/{id}/feeds/{feed}/live.m3u8` and `…/live/{file}`, the feeds as live video **with sound**. Each player pulls the feed's full bitrate. The JPEG previews stay under `status:read` (v1.14) |
 
 A token may also be **limited to one profile** (§9.1). `/`, `/events` and `/events/poll` return
 whatever the token's scopes allow. Browser-only fallback: `GET /events` also accepts
@@ -212,7 +214,7 @@ event stream.
 }
 ```
 
-- `issues` (v1.12): the profile's open issues, oldest first (§16.1). Empty `[]` when all is well.
+- `issues` (v1.16): the profile's open issues, oldest first (§17.1). Empty `[]` when all is well.
 - `session.viewers` (v1.3): **total viewers across every platform** of the profile — the sum of the
   destinations whose count is known (`null` when none is). It rides on `stream.status`, which is
   sent whenever the total changes, so an overlay's "watching now" counter needs only that event.
@@ -224,6 +226,23 @@ event stream.
   `["landscape"]` or both); it is `[]` in every other phase. `message` reads "Waiting for vertical
   feed", "Waiting for landscape feed" or "Waiting for both feeds". Twitch Dual Format (relay) needs
   both feeds; a vertical-only platform needs only the vertical one.
+- `blocked` (additive, v1.12): set when the feed is **online but can't be sent**, because Relay passes
+  feeds on as classic RTMP (H.264 video, AAC audio):
+  `{ "reason": "feed-video-codec", "feed": "landscape", "codec": "hevc" }`. `reason` is
+  `feed-video-codec` (HEVC, AV1…), or for Twitch Dual Format through Relay `feed-audio-codec` /
+  `feed-audio-missing` (`codec` is `null` when there is no audio). While it is set Relay prepares no
+  live, starts no relay and retries nothing; `phase` is `waiting-for-feed` (no new phase value),
+  `waitingFor` names that feed, `down` is `true`, and `message` says what to change, for example
+  "Landscape feed is HEVC. YouTube gets the stream unchanged and needs H.264. In CTD OBS: Relay dock
+  → Send stream (switches to H.264), or Settings → Output → Video encoder: H.264. It starts by itself
+  once the feed is H.264." It goes back to `null` and the destination starts by itself when OBS sends
+  H.264. `null` in every other case.
+- `feeds[].video.codec` / `feeds[].audio.codec`: what OBS sends, from the ingest server's track list
+  (`h264`, `hevc`, `av1`, `aac`, `opus`…). `feeds[].problem` (additive, v1.12) is Relay's verdict on
+  it, or `null`: `{ "reason": "feed-video-codec", "codec": "hevc", "label": "HEVC", "blocking": true,
+  "message": "Landscape feed is HEVC. …" }`. `blocking: true` = no destination can send this feed;
+  `false` = it is sent without sound (audio that isn't AAC, `reason: "feed-audio-codec"`). Show it as
+  "Landscape: HEVC ⚠". It is `null` while the feed is offline or its tracks aren't known yet.
 - `down` = the session is running, the destination is enabled (and not skipped by test mode), and
   it isn't reaching the platform right now (`error`, `retrying`, `recovering`, or `waiting-for-feed`,
   and also `preparing` / `connecting` / `confirming` while a retry works its way back — it stays down
@@ -391,6 +410,7 @@ Without `after`: returns nothing but the current cursor (`next`), so you can sta
   "action": false,
   "kind": "message",
   "join": false,
+  "othersCount": null,
   "ts": 1791830000123
 }
 ```
@@ -417,6 +437,11 @@ Without `after`: returns nothing but the current cursor (`next`), so you can sta
   `kind: "event"`; `user.name` is who joined, `text` the line as shown ("dj_fan joined"). A chat box
   that should show only comments drops `join` lines (or shows them as a light "👋 joined" toast);
   they can be frequent at a busy live.
+- `othersCount` (v1.12) is set on a `join` line that names one user and a number of others:
+  Instagram shows "dj_fan and 3 others joined" (also "and 1 other", "and 12 more", "… joined the
+  live video"). `user.name` is the named user (`dj_fan`), `othersCount` the number (`3`), `text`
+  the line as shown. So that line stands for `othersCount + 1` people. `null` on every other line,
+  including a plain "dj_fan joined". An integer from 1.
 - `color` is `#RRGGBB` or `null`; `avatar` is an `https` URL or `null`. `channel` is the
   destination name.
 - `platformMessageId` and `user.login` are `null` when the chat source doesn't provide them
@@ -556,10 +581,21 @@ Messages the web UI shows as toasts (takedown detected, live again, session stop
 
 `src.profile` is the profile concerned, or `null` for server-wide notices.
 
-### `issue.raised` / `issue.cleared` — `status:read` (v1.12)
+A notice may say what it is about (additive, v1.12): `kind` and `subject`, named like the fields of
+an issue so the same problem can become one. Today there is one kind:
+```json
+{ "level": "warn", "kind": "feed.codec", "subject": { "type": "feed", "feed": "landscape" }, "codec": "hevc",
+  "message": "Landscape feed is HEVC. Twitch, YouTube, Kick and the other platforms get the stream unchanged and need H.264. In CTD OBS: Relay dock → Send stream (switches to H.264), or Settings → Output → Video encoder: H.264. It starts by itself once the feed is H.264." }
+```
+`feed.codec` with `level: "warn"` is sent once per feed and OBS connection when a destination can't
+send the feed (HEVC, AV1) or will send it without sound (`codec: "opus"`). `level: "info"` with the
+same `subject` (`codec: "h264"`) follows when the feed can be sent again. Notices are events, not
+state: read `feeds[].problem` and `destinations[].blocked` from `/status` for what is true now.
+
+### `issue.raised` / `issue.cleared` — `status:read` (v1.16)
 Something is wrong with a feed, a destination, the whole stream, an OBS output or a source inside
 OBS / it is fixed. One stable `id` per problem, a `severity`, a `subject` and, on clear, a
-`resolution`. **The alert contract of the suite: §16.** Open issues are in `GET /status` → `issues`.
+`resolution`. **The alert contract of the suite: §17.** Open issues are in `GET /status` → `issues`.
 
 ### `profile.status`, `profiles.changed` — `status:read`
 A profile's summary changed / profiles were created, renamed or deleted (§9.1).
@@ -641,9 +677,9 @@ run();
 **Settings → API → OBS dock** creates a token (`status:read` + `chat:read`) and gives a URL like
 `http://192.168.1.20:30080/dock#token=ctd_pat_…`. In OBS: **Docks → Custom Browser Docks**, paste
 it. The dock shows live status (with a TEST badge in test mode), feed bitrates, every destination
-(red when down, with the reason), viewers, and the merged chat. Since v1.12 it also lists the open
+(red when down, with the reason), viewers, and the merged chat. Since v1.16 it also lists the open
 issues that aren't a down destination — a lost feed, the whole stream down, a source or output in
-OBS (§16) — and flashes and beeps for a new critical one when **Alert** is ticked. The token stays in the URL
+OBS (§17) — and flashes and beeps for a new critical one when **Alert** is ticked. The token stays in the URL
 fragment, so it is never sent to the server in the URL — the page sends it as a header.
 
 **Profiles (v1.2):** the dock shows one profile, with its name and colour in the header: the
@@ -903,6 +939,59 @@ approval (otherwise it is revoked). `410 expired` also answers an unknown `pairi
 gets `410` and simply starts over. Store the token: it never expires (until revoked in
 Settings → API).
 
+### 9.5 Overlay summaries: versions and template updates (v1.15)
+
+CTD Overlay tells the CTD OBS plugin's **CTD Overlays** dock its version, its templates' versions
+against their followed GitHub releases, which overlays wait for a major upgrade, and short
+release notes. This is kept apart from the registration (§9.2) so an overlay's `meta` stays within
+its 4 KB: the summary is sent on its own, when it changes and every few minutes.
+
+#### `PUT /api/v1/apps/{appId}/summary` — `apps:write`
+
+Only for a registered app, by the token that registered it (`404 not_found` before the app is
+registered, `409 app_owned` for another token). Body (at most 64 KB; `204` when stored):
+
+```json
+{
+  "schema": "ctd-overlay-summary/1",
+  "server": { "name": "CTD Overlay", "version": "0.4.0" },
+  "ui": "http://overlay.local:4848",
+  "templates": [
+    { "id": "com.example.lower", "name": "Lower third", "installed": "1.3.0", "oldestInUse": "1.2.0",
+      "latest": "1.3.0", "source": { "kind": "github", "repo": "owner/lower-third", "tagPrefix": "v" },
+      "auto": true, "update": "minor", "checkedAt": "2026-11-21T18:00:00Z",
+      "notes": [{ "version": "1.3.0", "text": "New: a darker style\nFix: long names wrap" }] }
+  ],
+  "overlays": [
+    { "id": "ovl_…", "slug": "lower", "name": "Lower third", "show": "Miami Or Bust",
+      "template": { "id": "com.example.lower", "name": "Lower third", "version": "1.2.0" },
+      "waiting": { "to": "2.0.0", "major": true, "why": "a major version" } }
+  ]
+}
+```
+
+- `update`: from `oldestInUse` (else `installed`) to `latest`. `patch` and `minor` move overlays by
+  themselves (when `auto`); `major` waits for the operator (before 1.0.0 a minor bump counts as
+  major). `problem`: the last check failed, as a short code only (`rate-limited`, `no-release`…).
+- `source.tagPrefix`: the release tag prefix it follows (`tn-v` for `tn-v1.2.0`). One repository can hold
+  several templates, one per prefix: show a source as `owner/name · tn-v`, never by `repo` alone.
+- `notes`: at most 5 releases; `text` is at most 8 plain lines of 200 characters joined with `\n` (a
+  string, not an array: the OBS plugin's JSON reader drops arrays of strings).
+- `ui`: the admin UI's address (no credentials, query or fragment). The dock opens
+  `<ui>/#/overlays/<slug>` (control panel) and `<ui>/#/overlays/<slug>?tab=version` (upgrade).
+- Overlay ids are the part of each registered overlay resource's id before the first `:`.
+- Fields not listed here are **dropped** (an overlay's URL or key, a token, an error's text never
+  reach other apps). Kept in memory: a restart of CTD Relay forgets it until the app sends again;
+  it is forgotten when the app unregisters or another token takes its id.
+
+#### `GET /api/v1/profiles/{id}/overlay-summary` — `apps:read`
+
+`{ items: [ { appId, appName, appOnline, receivedAt, schema, server, ui, templates, overlays } ] }`:
+one item per app visible from the profile that sent a summary. `overlays` holds only those the app
+registered for this profile; `templates` those they use, plus templates no overlay uses. A token
+limited to a profile reads only its own (`403 profile_forbidden`). An older CTD Relay answers
+`404`: show no version information.
+
 ### 9.4 Typical set-ups
 
 - **CTD OBS plugin:** pair → the user picks a profile in the plugin → `GET /profiles/{id}/ingest`
@@ -952,14 +1041,14 @@ the server's time.
 | `obs.output` | `{ output: "main" \| "vertical" \| "record" \| <name>, canvas?, state: starting \| live \| reconnecting \| stopped, error? }` | the output's state |
 | `obs.scene` | `{ canvas: "landscape" \| "vertical", scene, sceneUuid?, previous?, atMs?, scenes?: [{ name, uuid }] }` — `previous` only on a real change; `atMs` = the OBS host's clock, for ordering; `scenes` = the canvas's full scene list in OBS order | the canvas's program scene, and its scene list (kept when an event leaves it out) |
 | `obs.sync.status` | `{ group, sourceName, state, previous?, lost?, offsetMs?, delayMs? }` | the sync group member's status |
-| `obs.issue.raised` | `{ id: "<rule>\|<subject>", rule, severity: info \| warning \| critical, source, path?, title, cause?, firstSeen, onProgram?, scene? }` — `onProgram` / `scene` since v1.12 (§16.6) | an open issue, until cleared; also an `obs.issue` issue (§16) |
+| `obs.issue.raised` | `{ id: "<rule>\|<subject>", rule, severity: info \| warning \| critical, source, path?, title, cause?, firstSeen, onProgram?, scene? }` — `onProgram` / `scene` since v1.16 (§17.6) | an open issue, until cleared; also an `obs.issue` issue (§17) |
 | `obs.issue.cleared` | `{ id, rule? }` | removes the open issue |
-| `obs.failover` | `{ canvas, from, to, reason, issueId?, source?, mode: target \| list \| return, title? }` (v1.12, §16.6) | nothing: re-emitted as it is |
+| `obs.failover` | `{ canvas, from, to, reason, issueId?, source?, mode: target \| list \| return, title? }` (v1.16, §17.6) | nothing: re-emitted as it is |
 
 Issue rules from the plugin so far: `camera-offline`, `upstream-loss`, `upstream-slow`,
 `bitrate-collapsed`, `frequent-snaps`, `av-drift`, `audio-rate`, `audio-missing` — raised after a
-hold time, cleared 10 s after the condition ends (low volume); show `title` to people. Since v1.12
-Relay also raises each one as an `issue.raised` of kind `obs.issue` (§16): apps that only want
+hold time, cleared 10 s after the condition ends (low volume); show `title` to people. Since v1.16
+Relay also raises each one as an `issue.raised` of kind `obs.issue` (§17): apps that only want
 alerts can follow `issue.*` alone.
 
 **Overlays that follow the OBS scene** (CTD Overlay): subscribe to `/events?types=obs.scene`
@@ -995,16 +1084,66 @@ stale. Kept in memory: after a server restart it is empty until the plugin sends
 ### `GET /api/v1/profiles/{id}/previews/{feed}` — `status:read`
 
 A JPEG of what OBS sends on the profile's `landscape` or `vertical` feed — OBS's program output (the
-vertical one from Aitum Vertical). 640 px wide, one keyframe, made on request and cached 5 s, so
-poll every 3–5 s while showing it. `?access_token=<token>` works too, for image loaders that can't
+vertical one from Aitum Vertical). 640 px wide, one keyframe, made on request and cached 2.5 s
+(5 s before v1.14), so poll every 3–5 s while showing it. `?access_token=<token>` works too, for image loaders that can't
 set headers. Headers: `Content-Type: image/jpeg`, `Cache-Control: no-store`, `X-Preview-At` (when
 the frame was taken). `404 feed_offline` while OBS isn't sending that feed; `503 unavailable` (with
 `Retry-After`) when a frame couldn't be taken — retry.
 
+### `GET /api/v1/profiles/{id}/feeds/{feed}/live.m3u8` — `feeds:watch` (v1.14)
+
+The feed **live**, as Low-Latency HLS: about 1–3 s behind, H.264 video and AAC audio passed through
+unchanged (no transcoding) in fMP4 parts of 200 ms. Play it with any LL-HLS player (hls.js with
+`lowLatencyMode`, AVPlayer, ExoPlayer/Media3); a plain HLS player works too, further behind. How it
+works and what it costs: [PREVIEW.md](PREVIEW.md).
+
+- **Scope:** `feeds:watch`, its own scope: live video and sound is more than the status and still
+  frames every paired app gets with `status:read`. Pair (or create a token) with it on purpose.
+- **Auth:** `Authorization: Bearer` on this request **and on every request the player makes** for the
+  playlists and parts (hls.js `xhrSetup`/`fetchSetup`, `AVURLAsset` HTTP header fields, Media3
+  `DefaultHttpDataSource.Factory().setDefaultRequestProperties`). `?access_token=` is refused here: a
+  token in a URL ends up in logs and caches.
+- **Each `live.m3u8` request opens a player** (a "viewer"). Its URIs are relative, `live/<file>?v=<viewer>`:
+  request them as given (the player adds `_HLS_msn` / `_HLS_part` / `_HLS_skip`). A viewer id only
+  works with the token that opened it, on that profile and feed. A player that asked for nothing for
+  15 s has left; then (or after MediaMTX closed the stream) its requests answer `410 live_ended`:
+  request `live.m3u8` again. Don't keep a player open while nothing shows it.
+- **At most 4 players per feed** at once by default (the server's `LIVE_PREVIEW_MAX_VIEWERS`).
+  Over it: `429 viewer_cap` with `Retry-After`. A token that opens another player while the feed is
+  full replaces its own oldest one. A player counts from the moment it asks for `live.m3u8`, so
+  players that open at the same moment never pass the cap together.
+- **Rate limit:** `live.m3u8` counts like any request; the `live/{file}` requests have their own budget
+  of 1000 per 10 s per token (a playing LL-HLS player makes about 20 a second), so a player never
+  eats into the 600 a minute of the rest of the API.
+- **Muxing starts with the first player** (the first answer takes about 2–3 s) and stops about 30 s
+  after the last request.
+- **Errors** (problem+json): `404 feed_offline` (OBS isn't sending it), `409 feed_codec` (the feed is
+  HEVC/AV1; `detail` is the codec guard's message, show it instead of a player), `429 viewer_cap`,
+  `503 live_off` (Watch turned off on this server) or `503 unavailable` (retry after `Retry-After`),
+  plus the usual `401`/`403`/`404 unknown_profile`.
+- Headers: `Content-Type: application/vnd.apple.mpegurl` (playlists) or `video/mp4` (parts),
+  `Cache-Control: no-store`. CORS is open like the rest of `/api/v1`.
+
+```js
+import Hls from 'hls.js';
+const hls = new Hls({
+  lowLatencyMode: true,
+  liveSyncDuration: 2, // ~2 s behind; at MediaMTX's own ~1 s target hls.js rebuffers at the first hiccup
+  xhrSetup: (xhr) => xhr.setRequestHeader('Authorization', `Bearer ${token}`),
+});
+hls.loadSource(`${base}/api/v1/profiles/${profileId}/feeds/landscape/live.m3u8`);
+hls.attachMedia(video); // start muted: browsers block autoplay with sound
+```
+
+### `GET /api/v1/profiles/{id}/feeds/{feed}/live/{file}?v=<viewer>` — `feeds:watch` (v1.14)
+
+The live preview's media playlists and fMP4 init/part/segment files, as the playlists name them.
+`410 live_ended`: open `live.m3u8` again. `404 not_found`: a part the player fell behind on.
+
 ### Typical set-up: CTD Live mobile
 
 Connect with the QR code (§11) → `GET /profiles` → per profile: `/events?profile=<id>` for
-`stream.status` (live, total viewers), `destination.down/up`, `issue.*` (alerts, §16), `obs.*` and chat → `GET
+`stream.status` (live, total viewers), `destination.down/up`, `issue.*` (alerts, §17), `obs.*` and chat → `GET
 /profiles/{id}/obs` once on start → poll `/profiles/{id}/previews/landscape|vertical` every few
 seconds while the screen shows them.
 
@@ -1431,7 +1570,7 @@ The web UI has the same four operations for signed-in admins under
 {
   "source": "override",
   "version": "2026-11-20 a",
-  "builtinVersion": "builtin-2",
+  "builtinVersion": "builtin-3",
   "note": "comment rows moved to data-comment-id",
   "updatedAt": "2026-11-20T10:00:00.000Z",
   "updatedBy": "token Support agent",
@@ -1464,8 +1603,9 @@ lists every problem with its path, e.g. `row.css.0: CSS selector: …`):
 | Settings | Only the known ones. An unknown key is refused |
 | CSS selectors | Plain CSS, at most 200 characters, at most 12 per list. No selector engine prefixes (`xpath=`, `text=`), no `>>` chains, no `{ } ; @ <` or comments |
 | Attribute names | `[A-Za-z_][A-Za-z0-9_.:-]*`, at most 64 characters |
-| Patterns | Regular-expression source, at most 300 characters, at most 24 per list, compiled with the `i` flag. No backreferences. A pattern that is slow on long input (catastrophic backtracking) is refused |
-| Numbers | `timing.pollMs` 500–10000, `timing.tabRetryMs` 3000–120000, `timing.backoffMaxMs` 1000–60000, `limits.maxRows` 20–500, `limits.history` 50–2000, `row.maxAvatars` 1–4, `container.climbLevels` 0–12, `container.climbMinHeight` 0–2000 |
+| Patterns | Regular-expression source, at most 300 characters, at most 24 per list, compiled with the `i` flag. No backreferences. A pattern that is slow on long input (catastrophic backtracking) is refused. Capture group 1 has a meaning in `row.avatarAlt` (the user name) and `classify.join` (the number of others, v1.12) |
+| Numbers | `timing.pollMs` 500–10000, `timing.tabRetryMs` 3000–120000, `timing.backoffMaxMs` 1000–60000, `timing.liveStartGraceMs` 0–600000 (v1.12), `limits.maxRows` 20–500, `limits.history` 50–2000, `row.maxAvatars` 1–4, `container.climbLevels` 0–12, `container.climbMinHeight` 0–2000 |
+| Switches (v1.12) | `timing.backlogAsHistory`, `container.climbPreferRows`: `true` or `false` |
 
 Nothing in a pack is run as code: selectors go to `querySelectorAll`, attribute names to
 `getAttribute`, and patterns are tested against at most 400 characters of text. A selector the
@@ -1493,10 +1633,10 @@ A **sanitised** picture of what each running reader sees. Optional JSON body:
 ```json
 {
   "capturedAt": "2026-11-20T10:05:00.000Z",
-  "pack": { "source": "builtin", "version": "builtin-2", "builtinVersion": "builtin-2" },
+  "pack": { "source": "builtin", "version": "builtin-3", "builtinVersion": "builtin-3" },
   "readers": [
     {
-      "reader": { "packVersion": "builtin-2", "container": "tabpanel", "rows": 12, "truncated": 0, "failures": 0, "tab": "selected", "tabClicks": 1, "kept": 41, "dropped": 9, "newestFirst": false, "bad": [], "lastReadAt": "2026-11-20T10:04:59.400Z" },
+      "reader": { "packVersion": "builtin-3", "container": "tabpanel", "rows": 12, "truncated": 0, "failures": 0, "tab": "selected", "tabClicks": 1, "kept": 41, "dropped": 9, "backlog": 0, "newestFirst": false, "bad": [], "lastReadAt": "2026-11-20T10:04:59.400Z" },
       "tab": { "matches": 1, "visible": true, "ariaSelected": "true" },
       "composer": { "matches": 1 },
       "snapshot": {
@@ -1546,13 +1686,63 @@ or anything typed into a field. What it keeps, so a pack can be written from it:
 - **`selectors`:** per pack selector, how many elements match in the page, in the container, and
   how many of them are visible; `"invalid"` when the browser rejects it.
 - **`decisions`:** newest last. `verdict` `kept` (`reason` `new`, or `late`: a row that was not at
-  the newest end of the list) or `dropped` (`baseline`: on screen when the reader started;
-  `rerender`: a re-created row of a comment already delivered; `duplicate-id`; `pinned`; `system`;
-  `pack-changed`: the first read under a new pack). Lengths only.
+  the newest end of the list) or `dropped` (`baseline`: already on screen when the reader first
+  read the comments of this live; `rerender`: a re-created row of a comment already delivered;
+  `duplicate-id`; `pinned`; `system`; `pack-changed`: on screen at the first read with rows under
+  a new pack). Lengths only. `reader.backlog` (v1.12) counts the `baseline` and `pack-changed`
+  rows: comments taken as history instead of delivered.
 
 The capture reads the page; it does not click or change anything.
 
-## 16. Issues: alerts when a feed, a stream or a scene has a problem (v1.12)
+## 16. Stream reports (v1.13)
+
+Every stream (a profile's session, start to end) is recorded: titles, destinations, live periods,
+events, viewers every 30 s per destination (unknown = `null`, never 0), chat per platform per
+minute, feed stats per minute and, with audience tracking on, per-person counts (never message
+text). What is recorded and how the numbers are worked out: [REPORTS.md](REPORTS.md).
+
+All routes need **`reports:read`** and are read-only. A token limited to one profile sees that
+profile's streams only (another profile's stream answers `404 not_found`); an every-profile token
+sees every profile unless it passes `?profile=<id>`. `?profile=*` asks for every profile the token
+can see.
+
+Common query parameters (list, summary, leaderboard and range export):
+
+| Parameter | Meaning |
+|---|---|
+| `from`, `to` | A day `YYYY-MM-DD` (in `tz`; `to` includes that day) or an ISO time. Streams that **started** in the range |
+| `tz` | IANA time zone for days and for times in .xlsx/CSV (default `UTC`) |
+| `platform` | One platform id |
+| `test` | `include` or `exclude` test-mode streams (default `include` for `/reports/sessions`, `exclude` for the others) |
+
+| Route | Returns |
+|---|---|
+| `GET /reports/sessions?limit=100` | `{ sessions: ReportSessionSummary[] }`, newest first (1–1000) |
+| `GET /reports/sessions/{id}` | the stream: `titles`, `destinations` (canvas, Dual Format, live periods), `stats` (per platform, `total` last), `viewers` (`[{ ts, total, byPlatform }]`), `chatMinutes`, `feedMinutes`, `events`, `presence`, `audienceTracked`, `leaderboards` |
+| `GET /reports/sessions/{id}/export?format=xlsx\|csv\|json&tz=` | a file (`Content-Disposition: attachment`); `xlsx` is the default |
+| `GET /reports/summary?limit=25` | over the range: `streams`, `stats`, `sessions`, the four `leaderboards` |
+| `GET /reports/export?from&to&format&tz` | the range as one file |
+| `GET /reports/audience?board=chatters\|loyal\|watch\|newest&session=<id>&limit=25` | one leaderboard over the range or one stream (1–500 rows) |
+| `GET /reports/audience/users/{userId}` | one person: `user`, `totals`, `streams`. `userId` is the `chat.message` `user.id` form, URL-encoded |
+
+`ReportStats` (per platform and `total`): `durationSec`, `liveSec`, `uptime` (0–1), `peakViewers`,
+`peakViewersAt`, `avgViewers` (time-weighted over the known time), `viewerMinutes` (viewers ×
+minutes, **not** unique viewers), `viewersKnownMinutes`, `chatMessages`, `chatEvents`, `joins`,
+`anonymousJoins` (Instagram "and N others joined"), `uniqueChatters`, `chatPer1kViewerMinutes`,
+`recoveries`, `errors`. Numbers Relay could not know are `null`.
+
+Leaderboard rows: `id`, `platform`, `displayName`, `login`, `firstSeenAt`, `lastSeenAt`,
+`messages`, `streams` (attended: chatted, joined or present), `joins`, `watchSec` (`null` unless
+the person's platform reports presence: today Twitch's chatters list).
+
+Errors: `400 invalid` (bad `from`/`to`/`platform`/`board`/`limit`/`format`), `404 not_found`,
+`503 unavailable` (the report tables were made by a newer Relay).
+
+The web UI uses the same routes under `/api/reports` (session cookie), plus, for admins,
+`GET`/`PUT /api/reports/settings` (`{ recording, audience, retentionDays: 0|90|365 }`) and
+`DELETE /api/reports/audience/users/{userId}` ("forget this user"). Those two are not in v1.
+
+## 17. Issues: alerts when a feed, a stream or a scene has a problem (v1.16)
 
 One event pair tells every CTD app that something is wrong and when it is fixed: **`issue.raised`**
 and **`issue.cleared`** (`status:read`). Relay raises them from what it sees itself (its ingest
@@ -1561,7 +1751,7 @@ CTD Live Studio and Live Mobile show them as alerts; the CTD OBS plugin reports 
 the failovers it makes (`obs.failover`, §10). This is the one alert contract of the suite: new
 detectors add a `kind`, not a new event.
 
-### 16.1 The issue object
+### 17.1 The issue object
 
 ```json
 {
@@ -1603,7 +1793,7 @@ detectors add a `kind`, not a new event.
 | `obs.output` | `appId`, `output`, `canvas` (or `null`) | An OBS output (`obs.output`, §10) |
 | `obs.source` | `appId`, `source`, `path` (or `null`) | A source inside OBS: a camera, a CTD Live Source feed, a media source (`obs.feed.state`, §10) |
 
-### 16.2 Kinds (v1.12)
+### 17.2 Kinds (v1.16)
 
 | `kind` | `id` | Severity | Raised when | Cleared when |
 |---|---|---|---|---|
@@ -1614,7 +1804,7 @@ detectors add a `kind`, not a new event.
 | `obs.issue` | `obs.issue\|<appId>\|<plugin issue id>` | the plugin's | The plugin sends `obs.issue.raised` (it applies its own hold time) | The plugin sends `obs.issue.cleared` (`recovered`); its app unregisters (`removed`) or goes offline (`stale`) |
 
 Hold times keep a blip (OBS reconnecting in a second, a platform retry) from becoming an alert.
-They are fixed in v1.12.
+They are fixed in v1.16.
 
 **Stopping on purpose is not an alert.** When the CTD OBS plugin reports that OBS stopped a stream
 cleanly — that output's `obs.output` going from `live` to `stopped` without `error`, within 15 s of
@@ -1631,7 +1821,7 @@ At most 100 `obs.issue` issues are open per app; reports beyond that are dropped
 sends them (CTD OBS F2 and later): that is how a dead source **on program** — a scene problem —
 becomes visible to the Live apps.
 
-### 16.3 Events
+### 17.3 Events
 
 **`issue.raised`** — `status:read`. `data` = the issue object plus `"update"`:
 
@@ -1661,7 +1851,7 @@ Relay sends at most one `issue.raised` per change; the plugin's 60 s state resen
 `destination`, and `{ connection: <appId>, platform: "obs" }` for OBS subjects. `src.profile` is
 the profile.
 
-### 16.4 What is open right now
+### 17.4 What is open right now
 
 `GET /status` (§4) carries `issues`: the profile's open issues, oldest first, in the issue-object
 shape (without `update`). The stream's opening snapshot doesn't repeat open issues.
@@ -1672,7 +1862,7 @@ already hold with the same `firstSeen` is the same issue: replace it, don't noti
 `system.reset`, read `/status` again. Open issues live in memory: a Relay restart starts with none,
 and the plugin's next state resend raises its issues again.
 
-### 16.5 Rules for clients (Live Studio, Live Mobile, anything else)
+### 17.5 Rules for clients (Live Studio, Live Mobile, anything else)
 
 1. Key everything by `id`. `issue.raised` with `update: false` adds (or replaces), `update: true`
    replaces, `issue.cleared` removes. An `issue.cleared` for an id you don't have is fine: ignore it.
@@ -1685,13 +1875,13 @@ and the plugin's next state resend raises its issues again.
 4. Order by `severity`, then `firstSeen`. Show `title` (and `message` when there is room).
 5. Filter by `kind` / `subject` only for what your app can act on; show the rest.
 
-### 16.6 For the CTD OBS plugin (producer)
+### 17.6 For the CTD OBS plugin (producer)
 
-- Keep sending `obs.issue.raised` / `obs.issue.cleared` as in §10. Since v1.12 the plugin may add
+- Keep sending `obs.issue.raised` / `obs.issue.cleared` as in §10. Since v1.16 the plugin may add
   `onProgram` (boolean) and `scene` (the program scene's name) to `obs.issue.raised`, and should
   resend the issue (same plugin `id`) when either changes, e.g. after a failover takes the source off
   program.
-- **`obs.failover`** (new OBS event type, v1.12): the plugin switched program away from a dead
+- **`obs.failover`** (new OBS event type, v1.16): the plugin switched program away from a dead
   feed. Relay keeps no state for it and re-emits it on `/events` (`status:read`) like the other
   `obs.*` events.
 
@@ -1719,14 +1909,65 @@ and the plugin's next state resend raises its issues again.
 keep working (ignore event types and fields you don't know). `GET /api/v1/openapi.json` reports
 the revision in `info.version`.
 
-### v1.12
+### v1.16
 
-- **Issues (§16):** one alert contract for the suite. `issue.raised` / `issue.cleared`
+- **Issues (§17):** one alert contract for the suite. `issue.raised` / `issue.cleared`
   (`status:read`): Relay raises `feed.offline`, `destination.down` and `stream.down` from its own
   feeds and destinations, `obs.output.down` from OBS outputs, and `obs.issue` from the plugin's
   `obs.issue.*`, with a stable `id`, `severity`, `subject`, hold times, and a `resolution` on clear.
   `GET /status` carries `issues` (open issues). `obs.issue.raised` may carry `onProgram` and
-  `scene`; new OBS event type `obs.failover` (§10, §16.6).
+  `scene`; new OBS event type `obs.failover` (§10, §17.6).
+
+### v1.15
+
+- **Overlay summaries (§9.5):** `PUT /apps/{appId}/summary` (`apps:write`, the registering token)
+  and `GET /profiles/{id}/overlay-summary` (`apps:read`): an overlay server's version, its
+  templates' installed and latest versions, update kind (patch / minor / major), overlays waiting
+  for a major upgrade and trimmed release notes, for the CTD OBS plugin's CTD Overlays dock. In
+  memory; unknown fields are dropped. No new scope: paired apps that hold `apps:read` (the CTD
+  OBS plugin) and `apps:write` (CTD Overlay) use it as they are.
+
+### v1.14
+
+- **Live preview (§10):** `GET /profiles/{id}/feeds/{feed}/live.m3u8` and `…/live/{file}`: the feed as
+  Low-Latency HLS (~1–3 s, passthrough, no transcoding), with the new scope **`feeds:watch`** in the
+  `Authorization` header only (`status:read` is not enough). New problem codes `feed_codec` (409, HEVC/AV1 feed), `viewer_cap` (429), `live_off` (503) and
+  `live_ended` (410).
+- The JPEG preview (`/profiles/{id}/previews/{feed}`) is now cached 2.5 s instead of 5 s.
+
+### v1.13
+
+- **Stream reports (§16):** a new scope, `reports:read`, and `GET /reports/sessions`,
+  `/reports/sessions/{id}`, `/reports/sessions/{id}/export`, `/reports/summary`,
+  `/reports/export` and `/reports/audience`, `/reports/audience/users/{userId}`. Exports are
+  `.xlsx` (default), CSV in a .zip, or JSON. Pairing can ask for `reports:read`; the approve form
+  shows it as sensitive.
+- **Twitch:** connecting (or reconnecting) a Twitch account also asks for
+  `moderator:read:chatters`, for reports' watch time. Accounts connected earlier keep working
+  without it; their reports have no watch time until they reconnect.
+
+### v1.12
+
+- **Feed codec guard:** `destinations[].blocked`, `feeds[].problem` and `kind` / `subject` / `codec`
+  on `system.notice` (§4, §5). A feed that is online but HEVC or AV1 no longer leaves its
+  destinations in `retrying` with FFmpeg's "Invalid argument": they are `waiting-for-feed` with
+  `blocked` set and a `message` that says what to change in OBS, and they start by themselves when
+  the feed is H.264. No new `phase` value and no new event type.
+- **Instagram selector pack (§15):** three more optional settings in a pack override:
+  `timing.backlogAsHistory` and `timing.liveStartGraceMs` (comments already on screen when the
+  reader first gets to read them are history, not delivered, unless the live is younger than the
+  grace), and `container.climbPreferRows`. The built-in pack is `builtin-3` (`builtinVersion`).
+  The debug capture's `reader` has `backlog`. An override stored on v1.11 is still accepted.
+  `classify.join` patterns may capture the number of others in group 1 (the built-in ones do).
+- **Joins with others** (`chat.message`): a new field, `othersCount`. On a `join` line that names
+  one user and a number of others (Instagram's "dj_fan and 3 others joined"), `user.name` is the
+  named user and `othersCount` the number (`3`); `null` otherwise. A chat box that counts people
+  joining adds `othersCount + 1` for such a line.
+- **Instagram comments** (`chat.message` from `instagram`): when the reader starts during a live,
+  or a changed pack makes the comments readable, the comments on screen are no longer delivered
+  all at once. A presence line that is one piece of text with no avatar or link ("dj_fan joined
+  the live") is a `join` event by `dj_fan`, no longer a comment. Apps that read the chat need no
+  change; `othersCount` is there for those that want it.
 
 ### v1.11
 

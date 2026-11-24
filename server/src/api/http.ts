@@ -24,7 +24,11 @@ export type ProblemCode =
   | 'revision_conflict'
   | 'missing_blobs'
   | 'hash_mismatch'
-  | 'quota_exceeded';
+  | 'quota_exceeded'
+  | 'feed_codec'
+  | 'viewer_cap'
+  | 'live_off'
+  | 'live_ended';
 
 const TITLES: Record<ProblemCode, string> = {
   unauthenticated: 'Unauthenticated',
@@ -45,6 +49,10 @@ const TITLES: Record<ProblemCode, string> = {
   missing_blobs: 'Missing blobs',
   hash_mismatch: 'Hash mismatch',
   quota_exceeded: 'Storage quota exceeded',
+  feed_codec: 'Feed codec not playable',
+  viewer_cap: 'Too many viewers',
+  live_off: 'Live preview off',
+  live_ended: 'Live preview ended',
 };
 
 export const PROBLEM_CODES = Object.keys(TITLES) as ProblemCode[];

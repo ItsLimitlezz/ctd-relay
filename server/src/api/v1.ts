@@ -17,18 +17,27 @@ import { resolveTypes } from './filters.js';
 import { ConcurrencyLimiter, SlidingWindowLimiter, isProblemCode, presentedToken, query, sendProblem, type ProblemCode } from './http.js';
 import { API_REVISION, openApiDocument } from './openapi.js';
 import type { PreviewService } from './previews.js';
+import type { LivePreviewService } from '../media/live-preview.js';
 import type { ApiEventType, Envelope } from './types.js';
 import { parseUlid } from './ulid.js';
 import { registerHubRoutes } from './v1-hub.js';
 import { musicFor } from '../music/music-service.js';
 import { transcodeCapabilitiesFor } from '../media/transcode-capabilities.js';
 import { registerObsSocketRoute } from './v1-obs-socket.js';
+import { registerOverlaySummaryRoutes } from './overlay-summary.js';
 import { registerPlatformRoutes } from './v1-platforms.js';
+import { registerReportApiRoutes } from './v1-reports.js';
 import { registerShowRoutes } from './v1-show.js';
 
 export const API_PREFIX = '/api/v1';
 export const RATE_LIMIT_PER_MINUTE = 600;
 export const MAX_STREAMS_PER_TOKEN = 5;
+/**
+ * Live preview files (v1.14) have their own budget per token: one LL-HLS player asks about 20 times
+ * a second (video and audio playlist reloads and parts, every 200 ms), far over the 600 a minute the
+ * rest of the API allows. Enough for 5 players at once; opening one (`live.m3u8`) counts as a normal request.
+ */
+export const LIVE_FILE_REQUESTS_PER_10S = 1000;
 export const HEARTBEAT_MS = 15_000;
 export const SSE_RETRY_MS = 3000;
 export const CHAT_DEFAULT_LIMIT = 200;
@@ -52,6 +61,8 @@ export interface V1Options extends RouteOptions {
   heartbeatMs?: number;
   /** Test seam: the feed preview service (default: FFmpeg grabs from MediaMTX). */
   previews?: PreviewService;
+  /** Test seam: the live preview service (default: LL-HLS from MediaMTX). */
+  live?: LivePreviewService;
 }
 
 export interface Auth {
@@ -67,7 +78,7 @@ export interface V1Context {
   hub(): EventHub;
   now(): number;
   /** preHandler: valid token, under the rate limit, with `scope` (when given). */
-  requireToken(scope: ApiScope | null, allowQuery?: boolean): (req: FastifyRequest, reply: FastifyReply) => Promise<unknown>;
+  requireToken(scope: ApiScope | null, allowQuery?: boolean, budget?: 'api' | 'live'): (req: FastifyRequest, reply: FastifyReply) => Promise<unknown>;
   authOf(req: FastifyRequest): Auth;
   /**
    * The profile a request is about: `raw` (a `?profile=` value or `{id}` path parameter) checked
@@ -81,6 +92,7 @@ export interface V1Context {
    */
   resolveProfileView(token: ApiTokenInfo, raw: unknown, fallback: string | null): ProfileResolution;
   previews?: PreviewService;
+  live?: LivePreviewService;
 }
 
 const CORS_HEADERS: Record<string, string> = {
@@ -113,6 +125,7 @@ const v1Plugin: FastifyPluginAsync<V1Options> = async (app, opts) => {
   let hubInstance = opts.hub ?? null;
   const hub = (): EventHub => (hubInstance ??= eventHubFor(services));
   const limiter = new SlidingWindowLimiter(RATE_LIMIT_PER_MINUTE, 60_000, now);
+  const liveLimiter = new SlidingWindowLimiter(LIVE_FILE_REQUESTS_PER_10S, 10_000, now);
   const streamSlots = new ConcurrencyLimiter(MAX_STREAMS_PER_TOKEN);
   const auths = new WeakMap<FastifyRequest, Auth>();
   const openStreams = new Set<() => void>();
@@ -180,7 +193,7 @@ const v1Plugin: FastifyPluginAsync<V1Options> = async (app, opts) => {
 
   // ---- auth ----
 
-  function requireToken(scope: ApiScope | null, allowQuery = false) {
+  function requireToken(scope: ApiScope | null, allowQuery = false, budget: 'api' | 'live' = 'api') {
     return async (req: FastifyRequest, reply: FastifyReply) => {
       const secret = presentedToken(req, allowQuery);
       if (!secret) {
@@ -196,10 +209,11 @@ const v1Plugin: FastifyPluginAsync<V1Options> = async (app, opts) => {
       const found = services.repos.apiTokens.verify(secret);
       if (!found) return sendProblem(reply, 401, 'unauthenticated', 'Unknown or revoked token. Create a new one in Settings → API.');
       const token: ApiTokenInfo = { ...found, profileId: found.profileId ?? null };
-      const rate = limiter.hit(token.id);
+      const rate = (budget === 'live' ? liveLimiter : limiter).hit(token.id);
       if (!rate.ok) {
         reply.header('retry-after', String(rate.retryAfterSec));
-        return sendProblem(reply, 429, 'rate_limited', `Over ${RATE_LIMIT_PER_MINUTE} requests per minute for this token. Retry in ${rate.retryAfterSec} s.`);
+        const over = budget === 'live' ? `${LIVE_FILE_REQUESTS_PER_10S} live preview requests per 10 s` : `${RATE_LIMIT_PER_MINUTE} requests per minute`;
+        return sendProblem(reply, 429, 'rate_limited', `Over ${over} for this token. Retry in ${rate.retryAfterSec} s.`);
       }
       if (scope && !token.scopes.includes(scope)) {
         return sendProblem(reply, 403, 'missing_scope', `This token needs the ${scope} scope. Create a token with it in Settings → API.`);
@@ -232,7 +246,7 @@ const v1Plugin: FastifyPluginAsync<V1Options> = async (app, opts) => {
     return resolveProfile(token, raw, fallback);
   }
 
-  const ctx: V1Context = { services, hub, now, requireToken, authOf, resolveProfile, resolveProfileView, ...(opts.previews ? { previews: opts.previews } : {}) };
+  const ctx: V1Context = { services, hub, now, requireToken, authOf, resolveProfile, resolveProfileView, ...(opts.previews ? { previews: opts.previews } : {}), ...(opts.live ? { live: opts.live } : {}) };
 
   /** The reader of /events and /events/poll for this token and profile view. */
   const readerOf = (token: ApiTokenInfo, profile: string | null): EventReader => ({
@@ -492,9 +506,11 @@ const v1Plugin: FastifyPluginAsync<V1Options> = async (app, opts) => {
   });
 
   registerHubRoutes(app, ctx);
+  registerOverlaySummaryRoutes(app, ctx);
   registerObsSocketRoute(app, ctx);
   registerShowRoutes(app, ctx);
   registerPlatformRoutes(app, ctx);
+  registerReportApiRoutes(app, ctx);
 };
 
 export default v1Plugin;

@@ -94,7 +94,7 @@ function keyOf(type: ObsEventType, data: Record<string, unknown>): string | null
       return group && source ? `${group}|${source}` : null;
     }
     case 'obs.failover':
-      // The plugin switched program away from a dead feed (docs/API.md §16.6): needs both scenes.
+      // The plugin switched program away from a dead feed (docs/API.md §17.6): needs both scenes.
       return str(data.from) && str(data.to) ? (str(data.canvas) ?? 'landscape') : null;
   }
 }

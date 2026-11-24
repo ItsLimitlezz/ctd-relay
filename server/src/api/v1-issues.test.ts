@@ -1,4 +1,4 @@
-// /api/v1 since v1.12: issues (docs/API.md §16) through the real routes.
+// /api/v1 since v1.16: issues (docs/API.md §17) through the real routes.
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { DEFAULT_PROFILE_ID } from '../../../shared/types.js';
@@ -36,7 +36,7 @@ const register = () => call('PUT', `/api/v1/apps/${APP}`, obs, { name: 'CTD OBS 
 const post = (events: unknown[]) => call('POST', `/api/v1/apps/${APP}/events`, obs, { events });
 const poll = async (token: string, after: string, types: string) => (await call('GET', `/api/v1/events/poll?after=${after}&types=${types}`, token)).json().items as Envelope[];
 
-describe('issues (v1.12)', () => {
+describe('issues (v1.16)', () => {
   it("the plugin's issue reaches /events as issue.raised and GET /status → issues; clearing it removes it", async () => {
     await register();
     const start = t.hub.cursor();
@@ -96,8 +96,8 @@ describe('issues (v1.12)', () => {
     expect(await poll(reader, start, 'issue.*')).toHaveLength(1);
   });
 
-  it('the OpenAPI document describes them at revision 1.12', () => {
-    expect(API_REVISION).toBe('1.12');
+  it('the OpenAPI document describes them at revision 1.16', () => {
+    expect(API_REVISION).toBe('1.16');
     const doc = openApiDocument('9.9.9') as { components: { schemas: Record<string, { required?: string[]; properties?: Record<string, unknown> }> } };
     const { Issue, IssueRaised, IssueCleared, Status, Envelope: Env } = doc.components.schemas;
     expect(Issue!.required).toEqual(['id', 'kind', 'rule', 'severity', 'title', 'message', 'subject', 'onProgram', 'scene', 'firstSeen', 'updatedAt']);

@@ -7,6 +7,7 @@ import {
   CHAT_PACK_SETTING,
   ChatPackStore,
   mergeChatPack,
+  overrideIsRedundant,
   parseChatPackOverride,
   regexProblem,
   selectorProblem,
@@ -38,6 +39,13 @@ describe('built-in pack', () => {
     expect(problems(BUILTIN_CHAT_PACK)).toEqual([]);
   });
 
+  it('builtin-3: climbs far enough for the live layout, and does not deliver a backlog', () => {
+    const p = BUILTIN_CHAT_PACK;
+    expect(p.version).toBe('builtin-3');
+    expect(p.container).toMatchObject({ climbLevels: 10, climbMinHeight: 320, climbPreferRows: true });
+    expect(p.timing).toMatchObject({ backlogAsHistory: true, liveStartGraceMs: 60_000 });
+  });
+
   it('keeps the values the reader had before packs existed', () => {
     const p = BUILTIN_CHAT_PACK;
     expect(p.tab).toMatchObject({ roles: ['tab', 'button'], css: [] });
@@ -46,7 +54,7 @@ describe('built-in pack', () => {
     expect(new RegExp(p.tab.name, 'i').test('Comments are off')).toBe(false);
     expect(p.container.panelLabel).toBe('^(live )?comments?$');
     expect(p.container.composerCss).toEqual(['textarea', 'input[type="text"]', '[contenteditable="true"]']);
-    expect(p.container).toMatchObject({ climbLevels: 4, climbMinHeight: 200, composerHint: 'comment' });
+    expect(p.container).toMatchObject({ composerHint: 'comment' });
     expect(p.row.avatarCss).toEqual(['img[alt$="profile picture" i]']);
     expect(new RegExp(p.row.avatarAlt, 'i').exec("fixture_user_a's profile picture")?.[1]).toBe('fixture_user_a');
     expect(new RegExp(p.row.avatarAlt, 'i').exec('fixture_user_a’s profile picture')?.[1]).toBe('fixture_user_a');
@@ -63,6 +71,30 @@ describe('built-in pack', () => {
     expect(join('requested to join')).toBe(false);
     expect(event('requested to join')).toBe(true);
     expect(event('joined us from Miami')).toBe(false);
+  });
+
+  it('join patterns: capture group 1 of the one that matches is how many others joined (singular, plural, "more")', () => {
+    const p = BUILTIN_CHAT_PACK;
+    const others = (s: string): string | null | undefined => {
+      for (const m of p.classify.join) {
+        const hit = new RegExp(m, 'i').exec(s);
+        if (hit) return hit[1] ?? null;
+      }
+      return undefined; // not a join line
+    };
+    const event = (s: string) => p.classify.event.some((m) => new RegExp(m, 'i').test(s));
+    expect(others('and 3 others joined')).toBe('3');
+    expect(others('and 1 other joined')).toBe('1');
+    expect(others('and 12 more joined the live video.')).toBe('12');
+    expect(others('And 4 Others Joined The Live')).toBe('4');
+    expect(others('and 1,234 others joined')).toBe('1,234');
+    expect(others('joined')).toBeNull();
+    expect(others('joined the live video')).toBeNull();
+    expect(others('and 3 others joined me for lunch')).toBeUndefined();
+    expect(others('and others joined')).toBeUndefined();
+    for (const s of ['and 3 others joined', 'and 1 other joined', 'and 12 more joined the live video.', 'and 1,234 others joined']) expect(event(s), s).toBe(true);
+    // Every built-in pattern passes the pack's own checks.
+    for (const s of [...p.classify.event, ...p.classify.join]) expect(regexProblem(s), s).toBeNull();
   });
 });
 
@@ -152,6 +184,14 @@ describe('parseChatPackOverride', () => {
   it('accepts the example pack shipped with the fixtures', () => {
     const file = new URL('./fixtures/pack-obfuscated.json', import.meta.url);
     expect(problems(JSON.parse(fs.readFileSync(file, 'utf8')))).toEqual([]);
+  });
+
+  it('accepts the 0.2.40 settings and checks their types and ranges', () => {
+    const sent = { schema: 1, version: 'v', container: { climbPreferRows: false }, timing: { backlogAsHistory: false, liveStartGraceMs: 0 } };
+    expect(ok(sent)).toEqual(sent);
+    expect(problems({ schema: 1, version: 'v', timing: { backlogAsHistory: 'no' } })[0]).toMatch(/^timing\.backlogAsHistory:/);
+    expect(problems({ schema: 1, version: 'v', timing: { liveStartGraceMs: 600_001 } })[0]).toMatch(/^timing\.liveStartGraceMs:/);
+    expect(problems({ schema: 1, version: 'v', container: { climbPreferRows: 1 } })[0]).toMatch(/^container\.climbPreferRows:/);
   });
 
   it('refuses unknown keys, wrong types and out-of-range numbers, naming the path', () => {
@@ -247,6 +287,27 @@ describe('ChatPackStore', () => {
     expect(restarted.state().source).toBe('builtin');
     expect(settings.data.has(CHAT_PACK_SETTING)).toBe(false);
     expect(restarted.revert()).toBe(false);
+  });
+
+  it('an override stored before the upgrade that now only repeats built-in values still loads and works', () => {
+    // What was stored on a 0.2.30 server during the live run that led to builtin-3.
+    const stored = { schema: 1, version: 'live-1-climb', container: { climbLevels: 10, climbMinHeight: 320 } };
+    const settings = memorySettings({ [CHAT_PACK_SETTING]: { override: stored, updatedAt: '2026-11-19T17:20:00.000Z', updatedBy: 'token Support agent' } });
+    const store = new ChatPackStore();
+    expect(store.attach(settings)).toEqual([]);
+    expect(store.state()).toMatchObject({ source: 'override', builtinVersion: 'builtin-3', override: stored });
+    // The same settings as the built-in pack, under the operator's label; the new settings come from the built-in pack.
+    expect(store.active()).toEqual({ ...BUILTIN_CHAT_PACK, version: 'live-1-climb' });
+    expect(overrideIsRedundant(store.state().override!)).toBe(true);
+    // Deleting it changes nothing but the label.
+    expect(store.revert()).toBe(true);
+    expect(store.active()).toEqual(BUILTIN_CHAT_PACK);
+    expect(settings.data.has(CHAT_PACK_SETTING)).toBe(false);
+
+    expect(overrideIsRedundant(ok({ schema: 1, version: 'v' }))).toBe(true);
+    expect(overrideIsRedundant(ok({ schema: 1, version: 'v', row: { avatarCss: [...BUILTIN_CHAT_PACK.row.avatarCss] } }))).toBe(true);
+    expect(overrideIsRedundant(ok({ schema: 1, version: 'v', container: { climbLevels: 10, climbMinHeight: 321 } }))).toBe(false);
+    expect(overrideIsRedundant(ok({ schema: 1, version: 'v', row: { css: ['.c'] } }))).toBe(false);
   });
 
   it('ignores a stored pack that no longer validates, and says why', () => {

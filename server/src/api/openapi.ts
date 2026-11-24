@@ -10,13 +10,15 @@ import { ALERT_COUNT_UNITS, ALERT_KINDS, API_ROLES, EVENT_TYPES, ISSUE_SEVERITIE
 import { CLAIMS_PER_MINUTE_PER_IP, MESSAGE_DATA_MAX_BYTES, MESSAGE_TYPE_RE, MESSAGES_PER_MINUTE, PAIRINGS_PER_MINUTE_PER_IP } from './v1-hub.js';
 import { OBS_BODY_LIMIT, OBS_DATA_MAX_BYTES, OBS_EVENT_TYPES, OBS_MAX_EVENTS, OBS_POSTS_PER_MINUTE } from './obs.js';
 import { PREVIEW_MAX_AGE_MS } from './previews.js';
+import { DEFAULT_LIVE_MAX_VIEWERS, VIEWER_IDLE_MS } from '../media/live-preview.js';
 import { CONNECT_OFFER_TTL_MS, DEVICE_NAME_MAX, MOBILE_SCOPES } from './connect.js';
 import { MAX_SOCKETS_PER_TOKEN, OBS_SUBPROTOCOL } from './obs-relay.js';
 import { platformPaths, platformSchemas } from './openapi-platforms.js';
+import { reportPaths, reportSchemas } from './openapi-reports.js';
 import { showPaths, showSchemas } from './openapi-show.js';
 
 /** Minor revision of the v1 contract (additive changes only; see the changelog in docs/API.md). */
-export const API_REVISION = '1.12';
+export const API_REVISION = '1.16';
 
 const ref = (name: string) => ({ $ref: `#/components/schemas/${name}` });
 const nullable = (schema: object) => ({ oneOf: [schema, { type: 'null' }] });
@@ -263,6 +265,16 @@ export function openApiDocument(version: string): Record<string, unknown> {
           responses: { '200': { description: 'Overlays', content: json(ref('OverlaysResponse')) }, ...errors, ...profileErrors },
         },
       },
+      '/profiles/{id}/overlay-summary': {
+        get: {
+          summary: 'Overlay servers\' versions and template updates, seen from a profile (§9.5)',
+          operationId: 'getProfileOverlaySummary',
+          tags: ['profiles', 'apps'],
+          description: 'Needs `apps:read`. One item per connected app that sent a summary: its overlays registered for this profile, and the templates those use (or no overlay uses).',
+          parameters: [idPath],
+          responses: { '200': { description: 'Summaries', content: json(ref('OverlaySummariesResponse')) }, ...errors, ...profileErrors },
+        },
+      },
       '/profiles/{id}/obs': {
         get: {
           summary: 'Latest OBS state of a profile, per connected app (v1.4)',
@@ -284,6 +296,49 @@ export function openApiDocument(version: string): Record<string, unknown> {
             '200': { description: 'The preview', content: { 'image/jpeg': { schema: { type: 'string', format: 'binary' } } } },
             '404': problemResponse('Feed offline (`feed_offline`), no such feed (`not_found`) or profile (`unknown_profile`)'),
             '503': problemResponse('The preview could not be taken right now (`unavailable`, with Retry-After)'),
+            '401': errors['401'],
+            '429': errors['429'],
+          },
+        },
+      },
+      '/profiles/{id}/feeds/{feed}/live.m3u8': {
+        get: {
+          summary: 'Live preview of a feed: Low-Latency HLS multivariant playlist (v1.14)',
+          operationId: 'getFeedLive',
+          tags: ['profiles'],
+          description: `Needs \`feeds:watch\` in the \`Authorization\` header on this and every request it leads to (no \`?access_token=\`). H.264 + AAC passed through unchanged (no transcoding) as LL-HLS (fMP4, 200 ms parts, ~1–3 s behind). Each request opens a new player ("viewer"); its URIs (\`live/<file>?v=<viewer>\`) only work with the token that opened it. At most ${DEFAULT_LIVE_MAX_VIEWERS} players per feed at once by default (LIVE_PREVIEW_MAX_VIEWERS); a player that asked for nothing for ${VIEWER_IDLE_MS / 1000} s has left. Muxing starts with the first player and stops ~30 s after the last request. See docs/API.md §10 and docs/PREVIEW.md.`,
+          parameters: [idPath, { name: 'feed', in: 'path', required: true, schema: { enum: ['landscape', 'vertical'] } }],
+          responses: {
+            '200': { description: 'The multivariant playlist', content: { 'application/vnd.apple.mpegurl': { schema: str } } },
+            '404': problemResponse('Feed offline (`feed_offline`), no such feed (`not_found`) or profile (`unknown_profile`)'),
+            '409': problemResponse('The feed is HEVC/AV1 (`feed_codec`, `detail` says what to change in OBS)'),
+            '429': {
+              ...problemResponse('Too many players on this feed (`viewer_cap`), or over 600 requests/minute (`rate_limited`)'),
+              headers: { 'Retry-After': { schema: int, description: 'Seconds to wait' } },
+            },
+            '503': problemResponse('Live preview turned off (`live_off`) or not available right now (`unavailable`, with Retry-After)'),
+            '401': errors['401'],
+            '403': problemResponse('Token without `feeds:watch` (`missing_scope`) or limited to another profile (`profile_forbidden`)'),
+          },
+        },
+      },
+      '/profiles/{id}/feeds/{feed}/live/{file}': {
+        get: {
+          summary: "A live preview's media playlist or fMP4 part/segment (v1.14)",
+          operationId: 'getFeedLiveFile',
+          tags: ['profiles'],
+          description: 'The URIs of the live preview playlists, as given (`?v=<viewer>`; LL-HLS players add `_HLS_msn`, `_HLS_part`, `_HLS_skip`). `410 live_ended`: the player ended (idle, or the muxer closed); open `live.m3u8` again.',
+          parameters: [
+            idPath,
+            { name: 'feed', in: 'path', required: true, schema: { enum: ['landscape', 'vertical'] } },
+            { name: 'file', in: 'path', required: true, schema: { type: 'string', pattern: '^[A-Za-z0-9_-]{1,128}\\.(m3u8|mp4)$' } },
+            { name: 'v', in: 'query', required: true, schema: str, description: 'The viewer id from the playlist' },
+          ],
+          responses: {
+            '200': { description: 'A media playlist or an fMP4 file', content: { 'application/vnd.apple.mpegurl': { schema: str }, 'video/mp4': { schema: { type: 'string', format: 'binary' } } } },
+            '404': problemResponse('No such file (`not_found`, e.g. a part the player fell behind on) or the feed went offline (`feed_offline`)'),
+            '409': problemResponse('The feed turned HEVC/AV1 (`feed_codec`)'),
+            '410': problemResponse('This player ended (`live_ended`): open live.m3u8 again'),
             '401': errors['401'],
             '429': errors['429'],
           },
@@ -342,6 +397,23 @@ export function openApiDocument(version: string): Record<string, unknown> {
             ...errors,
             '403': problemResponse('Token lacks apps:write (`missing_scope`)'),
             '404': problemResponse('Not registered (`not_found`)'),
+            '409': problemResponse('Registered by another token (`app_owned`)'),
+          },
+        },
+      },
+      '/apps/{appId}/summary': {
+        put: {
+          summary: 'An overlay server\'s versions and update state, for the CTD OBS plugin (§9.5)',
+          operationId: 'putAppSummary',
+          tags: ['apps'],
+          description: 'Needs `apps:write`; the registering token only. Body: `ctd-overlay-summary/1` (at most 64 KB). Fields the schema does not name are dropped. In memory: send it again after it changes, and every few minutes.',
+          parameters: [appIdPath],
+          requestBody: { required: true, content: json(ref('OverlaySummary')) },
+          responses: {
+            '204': { description: 'Stored' },
+            ...errors,
+            '403': problemResponse('Token lacks apps:write (`missing_scope`)'),
+            '404': problemResponse('Not registered (`not_found`): register with PUT /apps/{appId} first'),
             '409': problemResponse('Registered by another token (`app_owned`)'),
           },
         },
@@ -495,12 +567,14 @@ export function openApiDocument(version: string): Record<string, unknown> {
       },
       ...showPaths({ errors, profileErrors, idPath }),
       ...platformPaths({ errors }),
+      ...reportPaths({ errors }),
     },
     components: {
       securitySchemes: { bearer: { type: 'http', scheme: 'bearer', description: 'ctd_pat_ token from Settings → API (or pairing)' } },
       schemas: {
         ...showSchemas(),
         ...platformSchemas(),
+        ...reportSchemas(),
         TranscodeCapabilities: transcodeCapabilitiesSchema(),
         Ulid: { type: 'string', pattern: '^[0-7][0-9A-HJKMNP-TV-Z]{25}$', description: 'ULID: unique, sortable by time' },
         Problem: {
@@ -568,6 +642,21 @@ export function openApiDocument(version: string): Record<string, unknown> {
             video: nullable({ type: 'object', properties: { codec: str, width: int, height: int, fps: num } }),
             audio: nullable({ type: 'object', properties: { codec: str, sampleRate: int, channels: int } }),
             bitrateKbps: nullable(num),
+            problem: {
+              ...nullable({
+                type: 'object',
+                required: ['reason', 'codec', 'label', 'blocking', 'message'],
+                properties: {
+                  reason: { enum: ['feed-video-codec', 'feed-audio-codec', 'feed-audio-missing'] },
+                  codec: { type: 'string', description: "The codec that can't be sent, as in video.codec / audio.codec (hevc, av1, opus…)" },
+                  label: { type: 'string', description: 'The codec for display: HEVC, AV1, Opus' },
+                  blocking: { type: 'boolean', description: 'true: no destination can send this feed. false: it is sent without sound' },
+                  message: { type: 'string', description: 'What is wrong and what to change in OBS' },
+                },
+              }),
+              description:
+                "The feed's codec can't be sent: Relay passes feeds on as classic RTMP (H.264 video, AAC audio). null when the feed is fine, offline, or its tracks aren't known yet",
+            },
           },
         },
         Destination: {
@@ -583,6 +672,19 @@ export function openApiDocument(version: string): Record<string, unknown> {
             live: bool,
             down: { type: 'boolean', description: 'Session running, destination enabled (not skipped by test mode) and not reaching the platform (error, retrying, recovering, waiting-for-feed; also preparing/connecting/confirming during a retry, until live)' },
             waitingFor: { type: 'array', items: { enum: ['landscape', 'vertical'] }, description: 'Feeds the destination is waiting for; non-empty only while phase is waiting-for-feed' },
+            blocked: {
+              ...nullable({
+                type: 'object',
+                required: ['reason', 'feed', 'codec'],
+                properties: {
+                  reason: { enum: ['feed-video-codec', 'feed-audio-codec', 'feed-audio-missing'] },
+                  feed: { enum: ['landscape', 'vertical'] },
+                  codec: nullable(str),
+                },
+              }),
+              description:
+                "The feed is online but can't be sent (HEVC or AV1 video; no AAC audio for Twitch Dual Format): nothing is pushed or retried until OBS sends H.264, then the destination starts by itself. phase is waiting-for-feed, down is true, message says what to change. null otherwise",
+            },
             message: nullable(str),
             stats: nullable({ type: 'object', properties: { bitrateKbps: num, fps: num, speed: num, uptimeSec: num } }),
             viewers: { oneOf: [{ type: 'integer', minimum: 0 }, { type: 'null' }], description: 'null when unknown' },
@@ -613,7 +715,7 @@ export function openApiDocument(version: string): Record<string, unknown> {
             feeds: { type: 'array', items: ref('Feed') },
             destinations: { type: 'array', items: ref('Destination') },
             platforms: { type: 'array', items: ref('PlatformRollup') },
-            issues: { type: 'array', items: ref('Issue'), description: 'Open issues of the profile, oldest first (v1.12, docs/API.md §16)' },
+            issues: { type: 'array', items: ref('Issue'), description: 'Open issues of the profile, oldest first (v1.16, docs/API.md §17)' },
           },
         },
         Envelope: {
@@ -672,7 +774,7 @@ export function openApiDocument(version: string): Record<string, unknown> {
         },
         ChatMessage: {
           type: 'object',
-          required: ['id', 'platform', 'channel', 'destinationId', 'platformMessageId', 'user', 'text', 'fragments', 'reply', 'highlighted', 'action', 'kind', 'join', 'ts'],
+          required: ['id', 'platform', 'channel', 'destinationId', 'platformMessageId', 'user', 'text', 'fragments', 'reply', 'highlighted', 'action', 'kind', 'join', 'othersCount', 'ts'],
           properties: {
             id: { type: 'string', description: 'Stable, platform-prefixed: use it to apply deletions' },
             platform: ref('Platform'),
@@ -699,6 +801,7 @@ export function openApiDocument(version: string): Record<string, unknown> {
             action: bool,
             kind: { enum: ['message', 'event'] },
             join: { type: 'boolean', description: 'v1.3: a "<name> joined" presence line (Instagram, TikTok), not a comment; always with kind "event"' },
+            othersCount: nullable({ type: 'integer', minimum: 1, description: 'v1.12: on a join line that names one user and N others ("dj_fan and 3 others joined"): N; user is the named one. Else null' }),
             ts: epochMs,
           },
         },
@@ -808,7 +911,17 @@ export function openApiDocument(version: string): Record<string, unknown> {
           type: 'object',
           properties: { destinationId: str, name: str, platform: ref('Platform'), downForSec: int, recoveries: int },
         },
-        Notice: { type: 'object', properties: { level: { enum: ['info', 'warn', 'error'] }, message: str } },
+        Notice: {
+          type: 'object',
+          required: ['level', 'message'],
+          properties: {
+            level: { enum: ['info', 'warn', 'error'] },
+            message: str,
+            kind: { enum: ['feed.codec'], description: "Optional: what the notice is about. feed.codec = a feed's codec can't be sent (warn) or can be sent again (info)" },
+            subject: { type: 'object', properties: { type: { enum: ['feed'] }, feed: { enum: ['landscape', 'vertical'] } } },
+            codec: { type: 'string', description: 'feed.codec: the codec in question (hevc, av1, opus; h264 once the feed is fine again)' },
+          },
+        },
         ...issueSchemas,
         ChatResponse: {
           type: 'object',
@@ -1016,6 +1129,70 @@ export function openApiDocument(version: string): Record<string, unknown> {
             meta: { type: 'object', description: 'The resource’s meta (canvas, fps, transparent, slot…)' },
           },
         },
+        OverlaySummaryTemplate: {
+          type: 'object',
+          required: ['id', 'name', 'installed'],
+          properties: {
+            id: str,
+            name: str,
+            installed: { ...str, description: 'The newest installed version' },
+            oldestInUse: { ...str, description: 'The oldest version an overlay is on (absent: none uses it)' },
+            latest: { ...nullable(str), description: 'The newest release of its followed source' },
+            source: {
+              type: 'object',
+              required: ['kind'],
+              properties: {
+                kind: { type: 'string', enum: ['github', 'url', 'none'] },
+                repo: { ...str, description: 'owner/name' },
+                tagPrefix: { ...str, description: 'Release tag prefix (one repository can hold several templates)' },
+                pinned: { type: 'boolean' },
+              },
+            },
+            auto: { type: 'boolean', description: 'New releases move overlays by themselves' },
+            update: { type: 'string', enum: ['none', 'patch', 'minor', 'major'], description: 'oldestInUse → latest: patch/minor go by themselves, major waits' },
+            checkedAt: nullable(str),
+            problem: { ...str, description: 'The last check failed: a short code, never a message' },
+            notes: {
+              type: 'array',
+              maxItems: 5,
+              items: { type: 'object', required: ['version', 'text'], properties: { version: str, text: { ...str, description: 'At most 8 lines of 200 characters, joined with \\n' } } },
+            },
+          },
+        },
+        OverlaySummaryOverlay: {
+          type: 'object',
+          required: ['id', 'slug', 'template'],
+          properties: {
+            id: { ...str, description: 'The part of each registered overlay resource id before the first ":"' },
+            slug: str,
+            name: str,
+            show: nullable(str),
+            template: { type: 'object', required: ['id', 'version'], properties: { id: str, name: str, version: str } },
+            waiting: {
+              type: 'object',
+              required: ['to', 'major'],
+              description: 'A newer version waits for the operator',
+              properties: { to: str, major: { type: 'boolean' }, why: str },
+            },
+          },
+        },
+        OverlaySummary: {
+          type: 'object',
+          required: ['schema', 'server', 'templates', 'overlays'],
+          description: 'docs/API.md §9.5. Fields not listed are dropped.',
+          properties: {
+            schema: { type: 'string', enum: ['ctd-overlay-summary/1'] },
+            server: { type: 'object', properties: { name: str, version: nullable(str) } },
+            ui: { ...nullable(str), description: 'The admin UI address (no query, fragment or credentials)' },
+            templates: { type: 'array', maxItems: 200, items: ref('OverlaySummaryTemplate') },
+            overlays: { type: 'array', maxItems: 500, items: ref('OverlaySummaryOverlay') },
+          },
+        },
+        OverlaySummariesResponse: {
+          type: 'object',
+          required: ['items'],
+          properties: { items: { type: 'array', items: { allOf: [ref('OverlaySummary'), { type: 'object', properties: { appId: str, appName: str, appOnline: { type: 'boolean' }, receivedAt: str } }] } } },
+        },
         OverlaysResponse: { type: 'object', required: ['items'], properties: { items: { type: 'array', items: ref('Overlay') } } },
         MessageRequest: {
           type: 'object',
@@ -1081,7 +1258,7 @@ export function openApiDocument(version: string): Record<string, unknown> {
   };
 }
 
-/** v1.12: issue.raised / issue.cleared and GET /status → issues (docs/API.md §16). */
+/** v1.16: issue.raised / issue.cleared and GET /status → issues (docs/API.md §17). */
 const issueSubject = {
   description: 'What the problem is about, by `type`',
   oneOf: [

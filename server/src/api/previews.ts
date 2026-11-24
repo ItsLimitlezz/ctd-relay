@@ -6,8 +6,12 @@
 import { spawn } from 'node:child_process';
 import type { Feed } from '../../../shared/types.js';
 
-/** A preview younger than this is served from the cache. */
-export const PREVIEW_MAX_AGE_MS = 5_000;
+/**
+ * A preview younger than this is served from the cache: the web UI refreshes its thumbnails every
+ * 3 s, so every refresh gets a new frame; however many clients poll, a feed gets at most one grab
+ * per 2.5 s.
+ */
+export const PREVIEW_MAX_AGE_MS = 2_500;
 const GRAB_TIMEOUT_MS = 10_000;
 const MAX_JPEG_BYTES = 2 * 1024 * 1024;
 export const PREVIEW_WIDTH = 640;

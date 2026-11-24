@@ -1,4 +1,4 @@
-// Issues (docs/API.md §16, v1.12): the CTD suite's one alert contract. The event hub feeds this
+// Issues (docs/API.md §17, v1.16): the CTD suite's one alert contract. The event hub feeds this
 // tracker what it already sees — sessions, ingest feeds, destinations, OBS events from the CTD OBS
 // plugin, connected apps — and the tracker decides which problems are open:
 //

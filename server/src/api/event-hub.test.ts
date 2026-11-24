@@ -74,6 +74,22 @@ describe('envelopes', () => {
     expect(msg.data).toMatchObject({ id: 'twitch:1', channel: 'Twitch', user: { id: 'twitch:u-ann' } });
   });
 
+  it('system.notice carries what a notice is about when Relay says (feed.codec), and nothing extra otherwise', () => {
+    bus.emit('notice', {
+      level: 'warn',
+      message: 'Landscape feed is HEVC. …',
+      profileId: 'default',
+      kind: 'feed.codec',
+      subject: { type: 'feed', feed: 'landscape' },
+      codec: 'hevc',
+    });
+    bus.emit('notice', { level: 'info', message: 'Session stopped', profileId: 'default' });
+    expect(events.map((e) => [e.type, e.src.profile, e.data])).toEqual([
+      ['system.notice', 'default', { level: 'warn', message: 'Landscape feed is HEVC. …', kind: 'feed.codec', subject: { type: 'feed', feed: 'landscape' }, codec: 'hevc' }],
+      ['system.notice', 'default', { level: 'info', message: 'Session stopped' }],
+    ]);
+  });
+
   it('uses the platform name as channel when the destination is gone', () => {
     bus.emit('chat', chat('1', { destinationId: 'deleted' }));
     expect((events[0]!.data as ApiChatMessage).channel).toBe('Twitch');

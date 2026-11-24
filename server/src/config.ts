@@ -23,6 +23,10 @@ const EnvSchema = z.object({
   RTMP_PORT: z.coerce.number().int().default(1935),
   /** MediaMTX control API port (bound to 127.0.0.1). */
   MEDIAMTX_API_PORT: z.coerce.number().int().default(9997),
+  /** MediaMTX Low-Latency HLS port for the live preview (bound to 127.0.0.1; Relay proxies it). */
+  MEDIAMTX_HLS_PORT: z.coerce.number().int().default(9996),
+  /** Live preview ("Watch"): viewers per feed at once. 0 turns the live preview off (thumbnails stay). */
+  LIVE_PREVIEW_MAX_VIEWERS: z.coerce.number().int().min(0).max(50).default(4),
   /** Externally visible HTTPS port (what the router forwards), used to build public URLs. */
   PUBLIC_PORT: z.coerce.number().int().default(443),
   TLS_MODE: z.enum(['auto', 'letsencrypt', 'self-signed', 'manual', 'off']).default('auto'),
@@ -73,6 +77,10 @@ export interface AppConfig {
   httpPort: number;
   rtmpPort: number;
   mediamtxApiPort: number;
+  /** MediaMTX LL-HLS port (127.0.0.1), for the live preview. Missing in hand-built test configs (= off). */
+  mediamtxHlsPort?: number;
+  /** Live preview viewers per feed at once; 0 = live preview off. Missing in test configs (= default). */
+  livePreviewMaxViewers?: number;
   publicPort: number;
   tlsMode: TlsMode;
   publicIp: string | null;
@@ -118,6 +126,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env, version = '0.0.
     httpPort: e.HTTP_PORT,
     rtmpPort: e.RTMP_PORT,
     mediamtxApiPort: e.MEDIAMTX_API_PORT,
+    mediamtxHlsPort: e.MEDIAMTX_HLS_PORT,
+    livePreviewMaxViewers: e.LIVE_PREVIEW_MAX_VIEWERS,
     publicPort: e.PUBLIC_PORT,
     tlsMode: e.TLS_MODE,
     publicIp: e.PUBLIC_IP ?? null,

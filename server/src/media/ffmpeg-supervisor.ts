@@ -6,6 +6,7 @@
 import { execFile, type ChildProcess } from 'node:child_process';
 import type { Readable } from 'node:stream';
 import type { Logger } from 'pino';
+import { explainNoStreamError } from '../../../shared/feed-codec.js';
 import { DEFAULT_PROFILE_ID, type Feed, type PushStats } from '../../../shared/types.js';
 import type { AppConfig } from '../config.js';
 import type { EventBus, PushStatus } from '../events.js';
@@ -275,6 +276,20 @@ export function createPushSupervisor({ config, bus, log, media, repos }: PushSup
     p.log.debug(`ffmpeg: ${line}`);
   }
 
+  /**
+   * FFmpeg's "Error opening output files: Invalid argument" / "Error binding filtergraph
+   * inputs/outputs: Invalid argument" mean the feed has no stream it could map: OBS sends HEVC or
+   * AV1 (or no AAC audio for Twitch Dual Format). Say that, and what to change, instead.
+   */
+  function explainFeedCodec(p: Push): string | null {
+    if (p.profileId === null) return null;
+    try {
+      return explainNoStreamError(p.lines, media.feeds(p.profileId), p.plan);
+    } catch {
+      return null; // feed state unavailable: FFmpeg's own line is shown
+    }
+  }
+
   function onExit(p: Push, code: number | null, signal: NodeJS.Signals | null, spawnError?: NodeJS.ErrnoException): void {
     if (p.stallTimer) clearTimeout(p.stallTimer);
     p.stallTimer = null;
@@ -289,7 +304,7 @@ export function createPushSupervisor({ config, bus, log, media, repos }: PushSup
     const message =
       p.stallMessage ??
       p.forwardMessage ??
-      (raw !== null ? (explainFfmpegError(raw) ?? raw) : null) ??
+      (raw !== null ? (explainFeedCodec(p) ?? explainFfmpegError(raw) ?? raw) : null) ??
       (spawnError ? `FFmpeg could not start: ${spawnError.message}` : signal ? `FFmpeg was killed (${signal})` : `FFmpeg exited with code ${code}`);
     if (p.runningSince !== null && now() - p.runningSince >= HEALTHY_RESET_MS) p.attempt = 0;
     p.attempt++;

@@ -14,6 +14,8 @@ import { CHAT_CONTAINER_ATTR, CHAT_ROW_ATTR } from './selectors.js';
 const fixture = (name: string): string => fs.readFileSync(new URL(`./fixtures/${name}`, import.meta.url), 'utf8');
 const PANEL = fixture('comments-panel.html');
 const OBFUSCATED = fixture('comments-obfuscated.html');
+const FOOTER = fixture('comments-footer-composer.html');
+const PRESENCE = fixture('comments-presence.html');
 const OBFUSCATED_PACK = ((): ChatPackOverride => {
   const parsed = parseChatPackOverride(JSON.parse(fixture('pack-obfuscated.json')));
   if (!parsed.ok) throw new Error(parsed.problems.join('; '));
@@ -24,7 +26,7 @@ const log = pino({ level: 'silent' });
 const TIMINGS = { pollMs: 200, tabRetryMs: 600 };
 
 /** Everything a person "wrote" in the fixtures: none of it may show up in a debug capture. */
-const PRIVATE = ['fixture_user', 'fixture_host', 'love the stream', 'word0', 'word7', 'no avatar on this one', 'telling your followers', 'first comment', 'new layout', '🔥', '🎉'];
+const PRIVATE = ['fixture_user', 'fixture_host', 'fixture_guest', 'made-up comment', 'waiting room', 'on air', 'love the stream', 'word0', 'word7', 'no avatar on this one', 'telling your followers', 'first comment', 'new layout', '🔥', '🎉'];
 
 const scanOnce = (page: Page, pack: IgChatPack = BUILTIN_CHAT_PACK, stateKey = '__scanTest'): Promise<ScanResult> =>
   page.evaluate(scanExpression({ pack, packRevision: 1, stateKey, keep: 'tail' })) as Promise<ScanResult>;
@@ -54,7 +56,7 @@ describe.skipIf(!!process.env.CI_NO_BROWSER)('instagram chat reader (Chromium + 
     context = await browser.newContext();
     await context.route(`${ORIGIN}/**`, (route) => {
       const path = new URL(route.request().url()).pathname;
-      return route.fulfill({ contentType: 'text/html; charset=utf-8', body: path === '/obfuscated' ? OBFUSCATED : PANEL });
+      return route.fulfill({ contentType: 'text/html; charset=utf-8', body: path === '/obfuscated' ? OBFUSCATED : path === '/footer' ? FOOTER : path === '/presence' ? PRESENCE : PANEL });
     });
     page = await context.newPage();
   });
@@ -100,7 +102,7 @@ describe.skipIf(!!process.env.CI_NO_BROWSER)('instagram chat reader (Chromium + 
     it('tells comments, joins, pinned copies and system notices apart, with mentions, emoji and long text intact', async () => {
       await page.goto(`${ORIGIN}/panel`);
       const result = await scanOnce(page);
-      expect(result.container).toEqual({ strategy: 'tabpanel', tag: 'div', role: 'tabpanel' });
+      expect(result.container).toEqual({ strategy: 'tabpanel', tag: 'div', role: 'tabpanel', n: expect.any(Number) });
       expect(result.bad).toEqual([]);
       const long = Array.from({ length: 100 }, (_, i) => `word${i % 10}`).join(' ');
       expect(result.rows.map(view)).toEqual([
@@ -120,10 +122,46 @@ describe.skipIf(!!process.env.CI_NO_BROWSER)('instagram chat reader (Chromium + 
       expect(by('fixture_user_c').badges).toEqual(['verified']); // also: the curly apostrophe in the alt
       expect(by('fixture_user_d').restored).toBe(true); // "now" reads like a timestamp label
       expect(by('fixture_user_h').hasAvatar).toBe(false);
+      expect(by('fixture_user_f').othersCount).toBe(3); // "and 3 others joined"
+      expect(by('fixture_user_a').othersCount).toBeNull(); // "joined"
+      expect(by('fixture_user_g').othersCount).toBeNull(); // "requested to join": an event, not a join
       // The comment box is never a row; the reader's tags are on the container and on each row.
       expect(await page.locator(`[${CHAT_ROW_ATTR}]`).count()).toBe(11);
       expect(await page.locator(`.composer[${CHAT_ROW_ATTR}], .composer [${CHAT_ROW_ATTR}]`).count()).toBe(0);
       expect(await page.locator(`#panel[${CHAT_CONTAINER_ATTR}="tabpanel"]`).count()).toBe(1);
+    });
+
+    it('reads presence lines as joins: the named user is the author, "and N other(s)/more" is othersCount', async () => {
+      await page.goto(`${ORIGIN}/presence`);
+      const result = await scanOnce(page);
+      expect(result.container).toMatchObject({ strategy: 'tabpanel' });
+      expect(result.bad).toEqual([]);
+      expect(result.rows.map((r) => ({ ...view(r), othersCount: r.othersCount }))).toEqual([
+        { author: 'fixture_user_a', text: 'fixture_user_a joined', kind: 'event', join: true, drop: null, othersCount: null },
+        { author: 'fixture_user_b', text: 'fixture_user_b and 3 others joined', kind: 'event', join: true, drop: null, othersCount: 3 },
+        { author: 'fixture_user_c', text: 'fixture_user_c and 1 other joined', kind: 'event', join: true, drop: null, othersCount: 1 },
+        { author: 'fixture_user_d', text: 'fixture_user_d and 12 more joined the live video.', kind: 'event', join: true, drop: null, othersCount: 12 },
+        { author: 'fixture_user_e', text: 'fixture_user_e joined the live video', kind: 'event', join: true, drop: null, othersCount: null },
+        { author: 'fixture_user_f', text: 'fixture_user_f and 2 others joined', kind: 'event', join: true, drop: null, othersCount: 2 },
+        // No avatar and no link: the first word of the line is who joined.
+        { author: 'fixture_user_g', text: 'fixture_user_g and 1,234 others joined the live', kind: 'event', join: true, drop: null, othersCount: 1234 },
+        // Comments that only start like a presence line stay comments.
+        { author: 'fixture_user_h', text: 'and 3 others joined me for the afterparty', kind: 'message', join: false, drop: null, othersCount: null },
+        { author: 'Instagram', text: 'fixture_note joined us from far away', kind: 'message', join: false, drop: null, othersCount: null },
+      ]);
+    });
+
+    it('an override whose join pattern has no number group still reads joins, without a count', async () => {
+      await page.goto(`${ORIGIN}/presence`);
+      const pack = mergeChatPack({
+        schema: 1,
+        version: 'old-join',
+        classify: { join: ['^(joined|joined the live video|joined the live)\\.?$', '^and \\d+ (other|others|more) (joined|joined the live video|joined the live)\\.?$'] },
+      });
+      const result = await scanOnce(page, pack, '__scanOldJoin');
+      const b = result.rows.find((r) => r.author === 'fixture_user_b')!;
+      expect(b).toMatchObject({ kind: 'event', join: true, othersCount: null });
+      expect(result.rows.find((r) => r.author === 'fixture_user_a')).toMatchObject({ join: true, othersCount: null });
     });
 
     it('gives each element a stable number and reads a changed row again', async () => {
@@ -219,6 +257,182 @@ describe.skipIf(!!process.env.CI_NO_BROWSER)('instagram chat reader (Chromium + 
       const result = await scanOnce(page);
       expect(result.container?.strategy).toBe('composer');
       expect(result.rows.length).toBe(11);
+    });
+  });
+
+  describe('the layout of the November 2026 live run: tabs, a section of rows, a footer comment box', () => {
+    /** The built-in pack as it was in 0.2.30, as an override on top of the current one. */
+    const LIKE_BUILTIN_2: ChatPackOverride = { schema: 1, version: 'like-builtin-2', container: { climbLevels: 4, climbMinHeight: 200, climbPreferRows: false } };
+    /** The override stored during that run. */
+    const LIVE_1_CLIMB: ChatPackOverride = { schema: 1, version: 'live-1-climb', container: { climbLevels: 10, climbMinHeight: 320 } };
+    const boxOf = (selector: string) => page.evaluate(`(() => { const r = document.querySelector(${JSON.stringify(selector)}).getBoundingClientRect(); return [Math.round(r.width), Math.round(r.height)]; })()`);
+
+    it('builtin-2 stopped at the footer and read nothing; builtin-3 reads all 26 rows', async () => {
+      await page.goto(`${ORIGIN}/footer`);
+      // The fixture has the sizes of the run.
+      expect(await boxOf('#panel')).toEqual([400, 600]);
+      expect(await boxOf('#tabs')).toEqual([400, 42]);
+      expect(await boxOf('#list')).toEqual([400, 482]);
+      expect(await boxOf('#footer')).toEqual([400, 76]);
+      expect(await boxOf('#list .r')).toEqual([352, 30]);
+
+      const old = await scanOnce(page, mergeChatPack(LIKE_BUILTIN_2), '__scanOld');
+      expect(old.container).toMatchObject({ strategy: 'composer', tag: 'footer' });
+      expect(old.rows).toEqual([]);
+      await page.evaluate(`document.querySelector('[${CHAT_CONTAINER_ATTR}]').removeAttribute('${CHAT_CONTAINER_ATTR}')`);
+
+      const result = await scanOnce(page);
+      expect(BUILTIN_CHAT_PACK.version).toBe('builtin-3');
+      expect(result.container).toMatchObject({ strategy: 'composer', tag: 'div' });
+      expect(await page.locator(`#panel[${CHAT_CONTAINER_ATTR}="composer"]`).count()).toBe(1);
+      expect(result.bad).toEqual([]);
+      expect(result.rows).toHaveLength(26);
+      expect(result.rows.filter((r) => r.drop)).toEqual([]);
+      expect(new Set(result.rows.map((r) => r.n)).size).toBe(26);
+      expect(result.rows.filter((r) => r.join).map(view)).toEqual([
+        { author: 'fixture_user_d', text: 'fixture_user_d joined', kind: 'event', join: true, drop: null },
+        { author: 'fixture_user_a', text: 'fixture_user_a joined', kind: 'event', join: true, drop: null },
+        { author: 'fixture_user_c', text: 'fixture_user_c joined', kind: 'event', join: true, drop: null },
+        { author: 'fixture_user_e', text: 'fixture_user_e joined', kind: 'event', join: true, drop: null },
+      ]);
+      expect(view(result.rows[0]!)).toEqual({ author: 'fixture_user_a', text: 'made-up comment number 1', kind: 'message', join: false, drop: null });
+      // Neither the page's other people nor the comment box are rows.
+      expect(result.rows.some((r) => /fixture_(host|guest)/.test(r.author))).toBe(false);
+      expect(await page.locator(`footer [${CHAT_ROW_ATTR}], .host[${CHAT_ROW_ATTR}], .stage [${CHAT_ROW_ATTR}]`).count()).toBe(0);
+
+      // The override stored during the run gives the same read on the new version.
+      await page.evaluate(`document.querySelector('[${CHAT_CONTAINER_ATTR}]').removeAttribute('${CHAT_CONTAINER_ATTR}')`);
+      const stored = await scanOnce(page, mergeChatPack(LIVE_1_CLIMB), '__scanStored');
+      expect(stored.rows.map(view)).toEqual(result.rows.map(view));
+      // The capture stays free of what people wrote.
+      const json = JSON.stringify(await snapshot(page));
+      for (const secret of PRIVATE) expect(json, secret).not.toContain(secret);
+    });
+
+    it('a tall box around the comment box only: the parent that holds the rows is the container', async () => {
+      await page.goto(`${ORIGIN}/footer`);
+      // The climb stops inside the footer (60 px is "tall enough"): no rows there, 26 one level up.
+      const low = mergeChatPack({ schema: 1, version: 'low', container: { climbMinHeight: 60 } });
+      const preferred = await scanOnce(page, low, '__scanLow');
+      expect(preferred.container).toMatchObject({ strategy: 'composer', tag: 'div' });
+      expect(await page.locator(`#panel[${CHAT_CONTAINER_ATTR}]`).count()).toBe(1);
+      expect(preferred.rows).toHaveLength(26);
+
+      // Switched off, the reader stays where the climb stopped.
+      await page.evaluate(`document.querySelector('[${CHAT_CONTAINER_ATTR}]').removeAttribute('${CHAT_CONTAINER_ATTR}')`);
+      const off = mergeChatPack({ schema: 1, version: 'low-off', container: { climbMinHeight: 60, climbPreferRows: false } });
+      const stuck = await scanOnce(page, off, '__scanOff');
+      expect(await page.locator(`#panel[${CHAT_CONTAINER_ATTR}]`).count()).toBe(0);
+      expect(stuck.rows).toEqual([]);
+    });
+
+    it('an empty panel stays the container: one avatar in the column header or people elsewhere on the page are not comments', async () => {
+      await page.goto(`${ORIGIN}/footer`);
+      await page.evaluate(`document.getElementById('list').replaceChildren()`);
+      const empty = await scanOnce(page);
+      expect(empty.rows).toEqual([]);
+      expect(await page.locator(`#panel[${CHAT_CONTAINER_ATTR}="composer"]`).count()).toBe(1);
+      // Also with the climb stopping low: the column has one avatar (not enough), the page is too wide.
+      const low = mergeChatPack({ schema: 1, version: 'low', container: { climbMinHeight: 60 } });
+      const still = await scanOnce(page, low, '__scanLow');
+      expect(still.rows).toEqual([]);
+      expect(await page.locator(`#column[${CHAT_CONTAINER_ATTR}], .page[${CHAT_CONTAINER_ATTR}]`).count()).toBe(0);
+      // The first comment is read where it belongs.
+      await page.evaluate(`window.__add('fixture_user_a', 'made-up first comment')`);
+      const one = await scanOnce(page);
+      expect(one.rows.map(view)).toEqual([{ author: 'fixture_user_a', text: 'made-up first comment', kind: 'message', join: false, drop: null }]);
+      expect(await page.locator(`#panel[${CHAT_CONTAINER_ATTR}="composer"]`).count()).toBe(1);
+    });
+
+    it('mid-live, a pack that makes the panel readable does not deliver the 26 rows on screen as one burst', async () => {
+      await page.goto(`${ORIGIN}/footer`);
+      chatPackStore.setOverride(LIKE_BUILTIN_2, 'test');
+      const memory = newChatMemory(Date.now() - 30 * 60_000); // live for half an hour
+      const chat = startReader(memory);
+      try {
+        await baselined(memory);
+        await chat.none(1_500); // blind: the footer holds no rows
+        const [blind] = await captureChatDebug({ decisions: 0 });
+        // The tabs do not say which one is selected: never clicked while a panel is showing.
+        expect(blind!.reader).toMatchObject({ packVersion: 'like-builtin-2', container: 'composer', rows: 0, tab: 'state-unknown', tabClicks: 0, kept: 0 });
+
+        chatPackStore.setOverride(LIVE_1_CLIMB, 'test');
+        await chat.none(1_500);
+        expect(memory.backlog).toBe(26);
+        expect(memory.kept).toBe(0);
+        expect(memory.decisions.filter((d) => d.reason === 'pack-changed')).toHaveLength(26);
+
+        // From here on comments arrive once, as they are written.
+        await page.evaluate(`window.__add('fixture_user_b', 'made-up comment after the fix')`);
+        expect(await chat.next()).toMatchObject({ author: { name: 'fixture_user_b' }, text: 'made-up comment after the fix', kind: 'message' });
+        await page.evaluate(`window.__add('fixture_user_c', '', true)`);
+        expect(await chat.next()).toMatchObject({ text: 'fixture_user_c joined', kind: 'event', join: true });
+        await chat.none(800);
+        const [after] = await captureChatDebug({ decisions: 0 });
+        expect(after!.reader).toMatchObject({ packVersion: 'live-1-climb', container: 'composer', rows: 28, kept: 2, backlog: 26, tabClicks: 0 });
+        expect(await page.evaluate('window.__clicks')).toBe(0);
+
+        // After the upgrade the operator deletes the override: same settings, so the rows on screen stay delivered.
+        chatPackStore.revert();
+        await chat.none(1_200);
+        await page.evaluate(`window.__add('fixture_user_d', 'made-up comment on the built-in pack')`);
+        expect(await chat.next()).toMatchObject({ text: 'made-up comment on the built-in pack' });
+        expect(memory.kept).toBe(3);
+      } finally {
+        await chat.stop();
+      }
+    });
+
+    it('in the first minute of a live the same fix delivers what is on screen: those are new comments', async () => {
+      await page.goto(`${ORIGIN}/footer`);
+      await page.evaluate(`(() => { const list = document.getElementById('list'); while (list.children.length > 3) list.lastChild.remove(); })()`);
+      chatPackStore.setOverride(LIKE_BUILTIN_2, 'test');
+      const memory = newChatMemory(Date.now()); // just went live
+      const chat = startReader(memory);
+      try {
+        await baselined(memory);
+        await chat.none(800);
+        chatPackStore.setOverride(LIVE_1_CLIMB, 'test');
+        expect(await chat.next()).toMatchObject({ author: { name: 'fixture_user_a' }, text: 'made-up comment number 1' });
+        expect(await chat.next()).toMatchObject({ text: 'made-up comment number 2' });
+        expect(await chat.next()).toMatchObject({ text: 'made-up comment number 3' });
+        await chat.none(800);
+        expect(memory.backlog).toBe(0);
+      } finally {
+        await chat.stop();
+      }
+    });
+
+    it('a reader that starts mid-live takes what is on screen as history; with the option off a late panel is a burst', async () => {
+      await page.goto(`${ORIGIN}/footer`);
+      const memory = newChatMemory(Date.now() - 30 * 60_000);
+      const chat = startReader(memory);
+      try {
+        await baselined(memory);
+        await chat.none(800);
+        expect(memory.backlog).toBe(26);
+        await page.evaluate(`window.__add('fixture_user_e', 'made-up new comment')`);
+        expect(await chat.next()).toMatchObject({ text: 'made-up new comment' });
+      } finally {
+        await chat.stop();
+      }
+
+      // timing.backlogAsHistory: false is how 0.2.30 worked.
+      await page.reload();
+      await page.evaluate(`(() => { const list = document.getElementById('list'); while (list.children.length > 2) list.lastChild.remove(); })()`);
+      chatPackStore.setOverride({ ...LIKE_BUILTIN_2, timing: { backlogAsHistory: false } }, 'test');
+      const legacyMemory = newChatMemory(Date.now() - 30 * 60_000);
+      const legacy = startReader(legacyMemory);
+      try {
+        await baselined(legacyMemory);
+        await legacy.none(600);
+        chatPackStore.setOverride({ ...LIVE_1_CLIMB, timing: { backlogAsHistory: false } }, 'test');
+        expect(await legacy.next()).toMatchObject({ text: 'made-up comment number 1' });
+        expect(await legacy.next()).toMatchObject({ text: 'made-up comment number 2' });
+        expect(legacyMemory.backlog).toBe(0);
+      } finally {
+        await legacy.stop();
+      }
     });
   });
 
@@ -399,13 +613,33 @@ describe.skipIf(!!process.env.CI_NO_BROWSER)('instagram chat reader (Chromium + 
       await page.evaluate(`window.__tab('setup'); window.__keepLast(0); document.getElementById('pinned').remove()`);
       // Clicking the tab is slow to register (the first tries change nothing).
       await page.evaluate(`(() => { let n = 0; const tab = document.getElementById('tab-comments'); const open = tab.onclick; tab.onclick = () => { if (++n >= 2) open(); }; })()`);
-      const memory = newChatMemory();
+      const memory = newChatMemory(Date.now()); // the live has just started
       const chat = startReader(memory);
       try {
         await baselined(memory); // an empty baseline: no panel yet
         await page.evaluate(`window.__add('fixture_user_a', 'written before the tab opened'); window.__add('fixture_user_b', 'this one too')`);
         expect(await chat.next()).toMatchObject({ author: { name: 'fixture_user_a' }, text: 'written before the tab opened' });
         expect(await chat.next()).toMatchObject({ author: { name: 'fixture_user_b' }, text: 'this one too' });
+        await chat.none(800);
+      } finally {
+        await chat.stop();
+      }
+    });
+
+    it('delivers "<name> and N others joined" as a join event by the named user, with othersCount', async () => {
+      await page.goto(`${ORIGIN}/presence`);
+      const memory = newChatMemory();
+      const chat = startReader(memory);
+      try {
+        await baselined(memory); // the lines already on screen are history
+        await page.evaluate(`window.__addJoin('fixture_user_k', 3)`);
+        expect(await chat.next()).toEqual({ author: { name: 'fixture_user_k' }, text: 'fixture_user_k and 3 others joined', ts: expect.any(String), kind: 'event', join: true, othersCount: 3 });
+        await page.evaluate(`window.__addJoin('fixture_user_l', 1)`);
+        expect(await chat.next()).toMatchObject({ author: { name: 'fixture_user_l' }, kind: 'event', join: true, othersCount: 1 });
+        await page.evaluate(`window.__addJoin('fixture_user_m', 0)`);
+        const plain = await chat.next();
+        expect(plain).toMatchObject({ author: { name: 'fixture_user_m' }, text: 'fixture_user_m joined', kind: 'event', join: true });
+        expect(plain).not.toHaveProperty('othersCount');
         await chat.none(800);
       } finally {
         await chat.stop();
@@ -434,7 +668,7 @@ describe.skipIf(!!process.env.CI_NO_BROWSER)('instagram chat reader (Chromium + 
 
     it('picks up a new selector pack on the next poll, without restarting, and reverts the same way', async () => {
       await page.goto(`${ORIGIN}/obfuscated`);
-      const memory = newChatMemory();
+      const memory = newChatMemory(Date.now()); // the live has just started
       const chat = startReader(memory);
       try {
         await baselined(memory);
@@ -442,7 +676,7 @@ describe.skipIf(!!process.env.CI_NO_BROWSER)('instagram chat reader (Chromium + 
         await chat.none(800); // the built-in pack cannot read this page
 
         chatPackStore.setOverride(OBFUSCATED_PACK, 'test');
-        // The fix: what is on screen was never delivered, so it is delivered now, with its ids.
+        // The fix, in the first minute of the live: what is on screen was never delivered, so it is delivered now, with its ids.
         expect(await chat.next()).toMatchObject({ id: 'c1001', author: { name: 'fixture_user_a' }, text: 'first comment in the new layout' });
         expect(await chat.next()).toMatchObject({ id: 'c1002', text: 'like' });
         expect(await chat.next()).toMatchObject({ id: 'c1003', author: { name: 'fixture_user_c' }, text: 'nobody reads this yet' });
@@ -454,6 +688,25 @@ describe.skipIf(!!process.env.CI_NO_BROWSER)('instagram chat reader (Chromium + 
 
         chatPackStore.revert();
         await page.evaluate(`window.__add('fixture_user_b', 'unreadable again')`);
+        await chat.none(800);
+      } finally {
+        await chat.stop();
+      }
+    });
+
+    it('a live that has been running: a new pack does not deliver the comments it finds on screen', async () => {
+      await page.goto(`${ORIGIN}/obfuscated`);
+      const memory = newChatMemory(Date.now() - 10 * 60_000);
+      const chat = startReader(memory);
+      try {
+        await baselined(memory);
+        chatPackStore.setOverride(OBFUSCATED_PACK, 'test');
+        await chat.none(1_200);
+        expect(memory.backlog).toBe(2);
+        await page.evaluate(`window.__add('fixture_user_a', 'live tuning works')`);
+        expect(await chat.next()).toMatchObject({ id: 'c1003', text: 'live tuning works' });
+        // A comment id from the backlog is known too: a duplicate render of it is not delivered.
+        await page.evaluate(`window.__add('fixture_user_a', 'first comment in the new layout', 'c1001')`);
         await chat.none(800);
       } finally {
         await chat.stop();

@@ -1,4 +1,4 @@
-// The event hub feeding the issue tracker (docs/API.md §16): bus events in, issue.* envelopes out.
+// The event hub feeding the issue tracker (docs/API.md §17): bus events in, issue.* envelopes out.
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ConnectedApp, Destination, FeedState, SessionState } from '../../../shared/types.js';
