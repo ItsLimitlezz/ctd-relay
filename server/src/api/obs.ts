@@ -14,6 +14,7 @@ export const OBS_EVENT_TYPES = [
   'obs.issue.raised',
   'obs.issue.cleared',
   'obs.sync.status',
+  'obs.failover',
 ] as const;
 export type ObsEventType = (typeof OBS_EVENT_TYPES)[number];
 
@@ -92,6 +93,9 @@ function keyOf(type: ObsEventType, data: Record<string, unknown>): string | null
       const source = str(data.sourceName);
       return group && source ? `${group}|${source}` : null;
     }
+    case 'obs.failover':
+      // The plugin switched program away from a dead feed (docs/API.md §17.6): needs both scenes.
+      return str(data.from) && str(data.to) ? (str(data.canvas) ?? 'landscape') : null;
   }
 }
 
@@ -259,6 +263,9 @@ export class ObsStateStore {
         // Clearing an issue that isn't open (e.g. raised before a server restart) is still passed on.
         track.issues.delete(key);
         return true;
+      case 'obs.failover':
+        // An action, not a state: nothing is kept; every one (by its id) is passed on.
+        return true;
     }
   }
 
@@ -277,6 +284,18 @@ export class ObsStateStore {
         updatedAt: t.updatedAt,
       }))
       .sort((a, b) => b.updatedAt - a.updatedAt);
+  }
+
+  /**
+   * An app went offline: forget the issues and outputs it reported for a profile. What it knew is unknown now
+   * (issues.ts clears them as stale); when it returns, its next report is a change again, so a problem that is
+   * still there is raised afresh and one that ended while it was away never comes back.
+   */
+  forgetReported(profileId: string, appId: string): void {
+    const t = this.profiles.get(profileId)?.get(appId);
+    if (!t) return;
+    t.issues.clear();
+    t.outputs.clear();
   }
 
   /** Forget an app (it unregistered) or a profile (deleted). */

@@ -152,6 +152,7 @@ function harness(
     'alert-toggle',
     'session-title',
     'feeds',
+    'issues',
     'destinations',
     'toast',
     'chat-panel',
@@ -506,6 +507,45 @@ describe('dock script', () => {
     await flush();
     expect(gone.byId.setup!.hidden).toBe(false);
     expect(gone.byId['setup-reason']!.textContent).toMatch(/profile/);
+  });
+
+  it('shows open issues (GET /status, then issue.*), critical first; a down destination stays a red row only', async () => {
+    const issue = (id: string, over: object = {}) => ({ id, kind: 'feed.offline', rule: null, severity: 'critical', title: 'Vertical feed lost', message: 'OBS stopped sending the vertical feed; the landscape feed is still live.', subject: { type: 'feed', feed: 'vertical' }, onProgram: null, scene: null, firstSeen: 2, updatedAt: 2, ...over });
+    const h = harness(`#token=${TOKEN}`, {
+      '/api/v1/': () => ({ status: 200, body: { token: { scopes: ['status:read'], profileId: null } } }),
+      '/api/v1/events/poll': () => ({ status: 200, body: { items: [], next: '01JA7Q8M9X2V4C6B8N0P2R4T00', reset: false } }),
+      '/api/v1/profiles/default': () => ({ status: 200, body: { id: 'default', name: 'Show', color: null } }),
+      '/api/v1/status': () => ({
+        status: 200,
+        body: {
+          session: { status: 'live', startedAt: new Date().toISOString(), title: 'Show', testMode: false, autoGoLive: true },
+          feeds: [],
+          destinations: [],
+          platforms: [],
+          issues: [
+            issue('obs.issue|app|av-drift|Cam', { kind: 'obs.issue', severity: 'warning', title: '<b>A/V drift</b>', message: null, firstSeen: 1 }),
+            issue('destination.down|d1', { kind: 'destination.down', severity: 'warning', title: 'Twitch is down' }),
+          ],
+        },
+      }),
+      '/api/v1/events': () => ({
+        status: 200,
+        stream: sse([
+          { id: '01JA7Q8M9X2V4C6B8N0P2R4T11', type: 'issue.raised', data: { ...issue('feed.offline|vertical'), update: false } },
+          { id: '01JA7Q8M9X2V4C6B8N0P2R4T12', type: 'issue.raised', data: { ...issue('stream.down', { kind: 'stream.down', title: 'Stream down on every platform', message: null, firstSeen: 3 }), update: false } },
+          { id: '01JA7Q8M9X2V4C6B8N0P2R4T13', type: 'issue.cleared', data: { id: 'stream.down', resolution: 'recovered' } },
+        ]),
+      }),
+    });
+    h.byId['alert-toggle']!.checked = true;
+    await flush();
+    const list = h.byId.issues!;
+    expect(list.hidden).toBe(false);
+    expect(list.children.map((c) => c.className)).toEqual(['issue critical', 'issue warning']);
+    expect(list.children[0]!.textContent).toBe('Vertical feed lostOBS stopped sending the vertical feed; the landscape feed is still live.');
+    expect(list.children[1]!.textContent).toBe('<b>A/V drift</b>'); // text, never HTML
+    expect(list.textContent).not.toContain('Twitch is down');
+    expect(list.textContent).not.toContain('Stream down');
   });
 
   it('a chat-only token hides the status panel', async () => {
