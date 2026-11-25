@@ -121,8 +121,16 @@ export function authorizeMediaRequest(req: MediaMtxAuthRequest, auth: IngestAuth
       const routeKey = auth.routeKey?.(route) ?? null;
       return routeKey !== null && routeKey.length > 0 && isLoopbackIp(req.ip ?? '') && safeEqual(key, routeKey);
     }
-    case 'read':
-      return auth.publishKey(route) !== null && isInternalReader(req, auth); // a known profile
+    case 'read': {
+      const expected = auth.publishKey(route);
+      if (expected === null) return false; // a known profile
+      if (isInternalReader(req, auth)) return true;
+      // TEST BUILD ONLY (Juan, 2026-11-25): pull a feed into another OBS as a Media Source with the
+      // feed's own stream key (`rtmp://<host>:<port>/live/<feed>?key=<stream key>`). To be replaced
+      // by the Pull link's separate read key (mid/guest-feed-pull) before any release.
+      const key = queryParam(req.query ?? '', 'key');
+      return key !== null && key.length > 0 && expected.length > 0 && safeEqual(key, expected);
+    }
     default:
       return false;
   }
@@ -157,8 +165,14 @@ function authorizeGuest(req: MediaMtxAuthRequest, auth: IngestAuthState, slot: s
       const key = queryParam(req.query ?? '', 'key');
       return key !== null && key.length > 0 && safeEqual(key, expected);
     }
-    case 'read':
-      return (auth.guestExists?.(slot) ?? false) && isInternalReader(req, auth);
+    case 'read': {
+      if (!(auth.guestExists?.(slot) ?? false)) return false;
+      if (isInternalReader(req, auth)) return true;
+      // TEST BUILD ONLY (see the feed read above): the guest's own key also reads the guest feed.
+      const expected = auth.guestKey?.(slot) ?? null;
+      const key = queryParam(req.query ?? '', 'key');
+      return expected !== null && expected.length > 0 && key !== null && key.length > 0 && safeEqual(key, expected);
+    }
     default:
       return false;
   }
