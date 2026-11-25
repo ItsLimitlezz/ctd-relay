@@ -58,7 +58,7 @@ Authorization: Bearer ctd_pat_3fK9wQ1v…
 | Scope | Grants |
 |---|---|
 | `chat:read` | `GET /chat`, `chat.*` and `alert.*` events |
-| `status:read` | `GET /status`, `GET /profiles`, `stream.*`, `feed.*`, `destination.*`, `issue.*` (v1.16), `profile.status`, `profiles.changed`, `system.notice` events; guest feed lists, previews and `guest.*` events (§18, v1.17) |
+| `status:read` | `GET /status`, `GET /profiles`, `stream.*`, `feed.*`, `destination.*`, `issue.*` (v1.16), `profile.status`, `profiles.changed`, `system.notice` events; guest feed lists, previews and `guest.*` events (§18, v1.17); guest feed routes and their state, without keys (§18.8) |
 | `ingest:read` | `GET /profiles/{id}/ingest`: OBS server URL and **stream keys** (only for apps that configure OBS) |
 | `apps:read` | `GET /apps`, `GET /profiles/{id}/overlays`, `GET /profiles/{id}/overlay-summary` (§9.5), `apps.changed` and `app.message` events |
 | `apps:write` | `PUT`/`DELETE /apps/{id}`, `POST /apps/{id}/heartbeat`, `POST /messages` |
@@ -70,7 +70,7 @@ Authorization: Bearer ctd_pat_3fK9wQ1v…
 | `show:read` | Show profiles (§14): `GET /profiles/{id}/show…` (manifests, bundles), `GET /blobs/{sha256}`, `GET /library`, `show.changed` and `library.changed` events (v1.9) |
 | `show:write` | `POST /profiles/{id}/show/revisions`, `POST /blobs/check`, `PUT /blobs/{sha256}`: save revisions and upload files (v1.9) |
 | `show:secrets` | `GET /profiles/{id}/show/revisions/{rev}/secrets`: third-party secrets (URL keys, passwords) saved with a show profile. Grant it per trusted machine only (v1.9) |
-| `system:admin` | Operator tools (§15): read, replace and revert the Instagram chat reader's selector pack, and take its sanitised debug capture. Only for a token an admin creates for **every profile**; pairing never grants it (v1.11) |
+| `system:admin` | Operator tools (§15): read, replace and revert the Instagram chat reader's selector pack, and take its sanitised debug capture; manage guest feed routes (§18.8, v1.17). Only for a token an admin creates for **every profile**; pairing never grants it (v1.11) |
 | `reports:read` | Stream reports (§16): `GET /reports/…` past streams, viewers over time, chat counts, events, leaderboards and exports. Holds viewers' names: give it only to apps you trust with your audience (v1.13) |
 | `feeds:watch` | Live preview (§10): `GET /profiles/{id}/feeds/{feed}/live.m3u8` and `…/live/{file}`, the feeds as live video **with sound**. Each player pulls the feed's full bitrate. The JPEG previews stay under `status:read` (v1.14). Also guest feeds live (§18, v1.17): `…/guest-feeds/{slot}/live.m3u8` and `…/live/{file}` |
 
@@ -113,6 +113,12 @@ counts as none).
 | 404 | `not_found` | Unknown `/api/v1` path, or no app registered under that id |
 | 404 | `unknown_profile` | No profile with that id |
 | 404 | `unknown_guest_feed` | No guest feed slot with that id on that profile (v1.17, §18) |
+| 404 | `unknown_route` | No route with that id on that guest feed (v1.17, §18.8) |
+| 400 | `invalid_target` | A route's custom server URL is refused (scheme, loopback/link-local, this Relay, LAN off) (v1.17, §18.8) |
+| 409 | `input_busy` | OBS's own feed, or another route, is on the profile input a route wants (v1.17, §18.8) |
+| 409 | `session_live` | A profile route can't be started, stopped or removed while that profile is live (v1.17, §18.8) |
+| 409 | `route_active` | Stop the route before changing its server or key (v1.17, §18.8) |
+| 409 | `exists` | This guest feed already feeds that profile input (v1.17, §18.8) |
 | 409 | `app_owned` | The app id was registered by another token (`PUT /apps/{id}` takes the id over when that token is revoked, or when yours is newer, the app is of the same kind and it is offline (v1.6) or has the same `name` and your token covers that token's profile (the same app paired again; see §9.3)) |
 | 409 | `limit` | Too many apps registered (100 in all, 20 per token) |
 | 403 / 410 | `denied` / `expired` | Pairing poll: denied by the admin / expired, collected or unknown (§9.3) |
@@ -1918,8 +1924,10 @@ What Relay does with a guest feed, and doesn't:
   (MediaMTX, the same port, the same key check), under its own path (`guest/<slot>`).
 - It passes it on **unchanged** (no transcoding) as Low-Latency HLS to players that hold
   `feeds:watch`, exactly like the live preview of §10.
-- It **never restreams** a guest feed to a destination (Twitch, YouTube…). A guest feed reaches the
-  platforms only through OBS's program output, like any other source.
+- It **never restreams** a guest feed to a destination (Twitch, YouTube…) by itself. A guest feed
+  reaches the platforms only through OBS's program output, like any other source, or through a
+  **route** an admin sets up (§18.8): passthrough to a custom RTMP(S) server, or into a profile as
+  its Landscape or Vertical feed.
 - H.264 video and AAC audio only, like the main feeds (the codec guard, `problem` below).
 
 Slots are made, renamed and removed, and keys rotated and revoked, by an admin in the web UI
@@ -2104,6 +2112,74 @@ over SRT, but that needs a **UDP port** forwarded to Relay and its own per-reade
 is out of scope now. When it comes it will be additive: a new field on the guest feed object and a
 route that hands out a short-lived SRT `streamid`; the LL-HLS routes above stay.
 
+### 18.8 Routes: sending a guest feed on (v1.17, additive)
+
+A **route** sends a guest feed on, **passthrough only** (FFmpeg `-c copy`; never transcoded):
+
+- **`rtmp`**: to a custom RTMP or RTMPS server ("somewhere else"), at most **3** per guest feed.
+- **`profile`**: into a profile (its own or another) as that profile's **Landscape** or **Vertical**
+  feed, at most **3** per guest feed. Relay republishes the guest into the profile's feed path, so to
+  that profile it is exactly a feed from OBS: `feed` events and `feeds[]` in `/status`, the codec
+  guard, test mode, destinations, reports and `feed.offline` issues.
+
+A route runs only while its guest sends: started by hand (`POST …/start`), or by itself whenever the
+guest sends when `auto` is true ("when the feed is online"). It stops when the guest stops (or the key
+is revoked or rotated). Routes are kept with the guest feed; the JSON of §18.1–18.2 is unchanged.
+
+**The route object:**
+
+```json
+{ "id": "k3n8p2w7qa", "slot": "q7m2x9k4tb", "profileId": "default", "name": "Club · Landscape",
+  "target": { "kind": "profile", "profileId": "club", "profileName": "Club", "feed": "landscape" },
+  "auto": true, "active": true, "state": "running", "message": null,
+  "since": "2026-11-25T20:00:03.000Z", "bitrateKbps": 3480 }
+```
+
+A custom server's `target` is `{ "kind": "rtmp", "host": "rtmps://live.example.com", "hasKey": true }`:
+the scheme and host only, never the path or the stream key (both are write-only).
+
+| Field | |
+|---|---|
+| `id` | `[a-z0-9]{10}`, fixed |
+| `slot`, `profileId` | The guest feed it sends, and the profile that owns that guest feed |
+| `auto` | Starts by itself whenever the guest sends |
+| `active` | Started (by hand or by `auto`) and not stopped since |
+| `state` | `idle` (not running), `starting`, `running`, `retrying` (the push failed and is retried with backoff, like a destination), `blocked` (it should run but may not: `message` says why), `failed` (it can't run at all) |
+| `message` | Why it is blocked, failed or retrying, or a warning; never holds a key |
+| `since`, `bitrateKbps` | While `running` |
+
+**Routes (reading: `status:read`; managing: `system:admin` on a token for every profile):**
+
+| | |
+|---|---|
+| `GET /profiles/{id}/guest-routes` | `{ profileId, outbound: [route…], inbound: [route… + "guestName"] }`: routes of this profile's guest feeds, and routes into this profile's inputs (a feed card's "Source: guest feed …") |
+| `GET /profiles/{id}/guest-feeds/{slot}/routes` | `{ profileId, slot, routes: [route…] }` |
+| `POST /profiles/{id}/guest-feeds/{slot}/routes` | `{ "kind": "rtmp", "url": "rtmps://live.example.com/app", "streamKey": "…", "auto": false, "name"?: "…" }` or `{ "kind": "profile", "profileId": "club", "feed": "landscape", "auto": true }` → `201` route |
+| `PATCH …/routes/{route}` | `{ name?, auto?, url?, streamKey? }` (`streamKey`: omitted = keep, `""`/`null` = clear); the server and key only while stopped (`409 route_active`) |
+| `DELETE …/routes/{route}` | `204` |
+| `POST …/routes/{route}/start`, `…/stop` | → route |
+
+**Custom servers.** `rtmp://` or `rtmps://` only (no `file:`, `pipe:`, `srt:`…), no user or password
+in the URL. Refused (`400 invalid_target`): loopback, `localhost`, link-local (`169.254.0.0/16`,
+`fe80::/10`), unspecified and multicast addresses, and this Relay's own RTMP port (a route can't feed
+Relay back into itself). Private LAN hosts (RFC 1918, CGNAT, IPv6 ULA) are allowed unless the owner
+turns them off (web UI setting, `PUT /api/guest-routes/settings {"allowLan": false}`). Host names are
+resolved when the route is saved and again when it starts.
+
+**Profile inputs: the guards.**
+
+- `409 input_busy` on start while OBS's own feed is on that input, or another route holds it. Relay
+  never replaces OBS's feed. If OBS starts sending that input while a route holds it, OBS gets it and
+  the route stops (`state` `blocked`, with the reason).
+- `409 session_live`: a profile route can't be started, stopped or removed by hand while the target
+  profile's session is `starting`, `live` or `stopping` (that would cut every destination). The guest
+  stopping still stops it: the profile's feed then goes offline exactly as if OBS stopped
+  (`feed.offline` while live). No automatic switching.
+- A route **never starts a profile's Go live**: auto go-live ignores routed inputs.
+- `409 feed_offline` on start while the guest isn't sending. Other errors: `404 unknown_route`,
+  `unknown_guest_feed`, `unknown_profile`; `409 limit`, `409 exists` (this guest already feeds that
+  input).
+
 ## Changelog
 
 `apiVersion` stays `1`: every change below is additive, so clients written for an earlier v1
@@ -2118,7 +2194,13 @@ the revision in `info.version`.
   `…/guest-feeds/{slot}/live.m3u8` and `…/live/{file}` (`feeds:watch`, LL-HLS passthrough like the
   live preview). Events `guest.feed.status` and `guest.feeds.changed` (`status:read`); issue kinds
   `guest.feed.offline` and `guest.feed.codec` with subject type `guest.feed` (§17). New problem code
-  `unknown_guest_feed` (404). Guest feeds are never restreamed to destinations.
+  `unknown_guest_feed` (404). Guest feeds are never restreamed to destinations by themselves.
+- **Guest feed routes (§18.8, additive):** send a guest feed on, passthrough only, to a custom
+  RTMP(S) server or into a profile as its Landscape or Vertical feed (then treated exactly like OBS's
+  feed). `GET /profiles/{id}/guest-routes` and `…/guest-feeds/{slot}/routes` (`status:read`, no keys);
+  `POST …/routes`, `PATCH`/`DELETE …/routes/{route}`, `POST …/{route}/start|stop` (`system:admin`).
+  Problem codes `unknown_route`, `invalid_target`, `input_busy`, `session_live`, `route_active`,
+  `exists`. The guest feed objects and lists are unchanged.
 
 ### v1.16
 

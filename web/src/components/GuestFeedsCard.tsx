@@ -297,9 +297,9 @@ export function GuestHelp() {
         </li>
       </ul>
       <p className="small muted">
-        The guest needs to reach Relay's RTMP port from the internet: through a VPN to your network (safest), or a port you forward on purpose (see
-        the guest feeds guide). Rotate or revoke a key any time; the guest is disconnected at once. CTD OBS adds a guest feed with the <em>CTD Relay
-        Feed</em> source.
+        A guest outside your network connects through a VPN into it (WireGuard, Tailscale or your router's VPN). Never forward Relay's RTMP port to
+        the internet: it is shared with OBS's own feeds. Rotate or revoke a key any time; the guest is disconnected at once. CTD OBS adds a guest
+        feed with the <em>CTD Relay Feed</em> source.
       </p>
     </div>
   );

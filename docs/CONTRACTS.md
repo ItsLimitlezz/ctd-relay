@@ -87,6 +87,7 @@ Rules that keep the three in step:
 | `chat` | `overlayToken` | overlay token |
 | `show:<showProfileId>` | `rev:<n>` | JSON `[{source,key,value}]`: the third-party secrets of revision `n` of a show profile (v1.9) |
 | `guest:<profileId>` | `<slot id>` | A guest feed slot's ingest key (v1.17, docs/GUEST-FEEDS.md); absent while the key is revoked |
+| `guest-route:<routeId>` | `streamKey` | A guest feed route's custom server stream key (v1.17, docs/GUEST-FEEDS.md → Routing); write-only |
 
 Deleting an account must delete scopes `account:<id>` and `browser:<id>`; deleting a destination deletes `destination:<id>`.
 
@@ -120,7 +121,7 @@ the value they stored** — it's the CSRF defense for this endpoint.
 - OBS publishes to `rtmp://<host>:1935/live/landscape?key=<k>` and `.../live/vertical?key=<k>` (server `rtmp://<host>:1935/live`, stream key `landscape?key=<k>`).
 - MediaMTX (`authMethod: http`) calls a loopback-only HTTP endpoint run by the media module itself. It allows `publish` only with the right key and `read` only from loopback with the internal reader password.
 - FFmpeg reads `media.readUrl(feed)` and pushes `-c copy` to the platform.
-- **Guest feeds** (docs/GUEST-FEEDS.md): guests publish to `rtmp://<host>:1935/guest/<slot>?key=<k>` on the same MediaMTX (path regex `~^guest/[a-z0-9]{10}$`). The auth hook (`authorize.ts`) allows `publish` only with that slot's key and `read` only by Relay itself (loopback, internal reader). A guest path is never a feed path (`parseFeedPath` → null), so no push plan, destination or `feed` event can name one: guest feeds are **never restreamed**. Relay reads them back only for LL-HLS (`media.guestHlsSource`) and thumbnails (`media.guestReadUrl`).
+- **Guest feeds** (docs/GUEST-FEEDS.md): guests publish to `rtmp://<host>:1935/guest/<slot>?key=<k>` on the same MediaMTX (path regex `~^guest/[a-z0-9]{10}$`). The auth hook (`authorize.ts`) allows `publish` only with that slot's key and `read` only by Relay itself (loopback, internal reader). A guest path is never a feed path (`parseFeedPath` → null), so no push plan, destination or `feed` event can name one: guest feeds are **never restreamed**. Relay reads them back for LL-HLS (`media.guestHlsSource`), thumbnails (`media.guestReadUrl`), and for **guest feed routes** an admin sets up (`media/guest-routes.ts`): passthrough to a custom RTMP(S) server, or a republish into a profile's feed path with a one-time key the auth hook (`routeKey`) accepts from loopback only. Routes run on their own push supervisor and bus, so no destination or orchestrator sees their push events. Rows in `guest_routes` (g2 on the guest feeds' track), cascading with their slot and their target profile.
 
 ## Driver rules
 

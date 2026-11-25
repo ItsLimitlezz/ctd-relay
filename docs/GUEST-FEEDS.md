@@ -8,7 +8,9 @@ guest.
 ```
 guest (OBS, Larix, vMix…) ──RTMP──▶ Relay: MediaMTX guest/<slot> ──LL-HLS (Relay auth, feeds:watch)──▶ CTD OBS source
                                          │
-                                         └── never pushed to Twitch / YouTube / …: only OBS's program output is
+                                         ├── never pushed to Twitch / YouTube / … by itself: only OBS's program output is
+                                         └── or, if an admin sets a route (Routing, below), passthrough to a custom
+                                             RTMP(S) server, or into a profile as its Landscape / Vertical feed
 ```
 
 The API contract (JSON shapes, URLs, events, issues) is [API.md §18](API.md#18-guest-feeds-remote-video-into-ctd-obs-v117).
@@ -58,16 +60,13 @@ transcoded.
 
 ### Reaching Relay's RTMP port from the internet
 
-The guest has to reach Relay's RTMP port. [SECURITY.md](SECURITY.md) says **never forward 1935**, and
-that rule still stands for OBS's own feeds. For guests there are two ways:
+The guest has to reach Relay's RTMP port. [SECURITY.md](SECURITY.md) says **never forward 1935**
+(RTMP ingest) to the internet, and that holds for guests too: the port is shared with OBS's own
+feeds, so forwarding it would expose them to port scans and connection floods even though every
+publish needs a key.
 
-1. **A VPN into your network (recommended).** Give the guest a VPN account (WireGuard, Tailscale or
-   your router's VPN) and send them Relay's address on the VPN. Nothing is exposed.
-2. **Forwarding the RTMP port on purpose.** Every publish is still checked by Relay's auth hook
-   (random 144-bit keys, one per slot and feed, compared in constant time; refused attempts are
-   logged without the key, at most once a minute per path and address), and nothing can *read* any
-   feed or guest feed over RTMP from outside. But it opens the port to the whole internet (port
-   scans, connection floods). Whether to allow this is the owner's call: until it is made, use 1.
+**Use a VPN into your network.** Give the guest a VPN account (WireGuard, Tailscale or your router's
+VPN) and send them Relay's address on the VPN. Nothing is exposed to the internet.
 
 RTMPS and SRT ingest for guests are not in this release.
 
@@ -137,6 +136,56 @@ anything at or above 1.00× is real time.)
   players outside the LAN use your upload, the same upload your destinations push over. With
   destinations live, keep guests at 6 Mbit/s or less and watch them only from CTD OBS on the LAN.
 
+## Routing: sending a guest feed on
+
+"Stream from my MacBook and relay it somewhere else, or to a profile." On the **Guest feeds** card,
+each guest feed has **Send this feed to…** (admins) with two options:
+
+- **A custom server (RTMP/RTMPS)**: a server URL and an optional stream key, up to **3** per guest
+  feed. For a second restreamer, a recording box on the LAN, a platform Relay has no driver for.
+- **A profile's feed**: the guest becomes that profile's **Landscape** or **Vertical** feed (its own
+  profile or another). The profile then treats it exactly like a feed from OBS: its feed card (with
+  **Source: guest feed <name>**), the codec guard, **Go live**, test mode, destinations, reports and
+  alerts.
+
+Everyone signed in sees each route's state (Stopped, Waits for the guest, Starting, Sending, Retrying,
+Blocked, Failed) and its reason; admins **Start**/**Stop** it, switch **When the feed is online** (it
+then starts whenever the guest sends) and **Remove** it. Every change is in the audit log
+(`guest.route.*`), never the key.
+
+**Passthrough only.** A route copies the guest's video and audio as they come (FFmpeg `-c copy`, on
+the same push, retry and backoff code as destinations): nothing is transcoded, so the CPU cost is a
+copy. The guest must send what the target takes (H.264 + AAC for anything RTMP).
+
+**A route runs only while the guest sends**, and stops when they stop (or their key is rotated or
+revoked). A manual route then stays stopped; an automatic one starts again when the guest is back.
+
+**Custom servers.** `rtmp://` or `rtmps://` only. Relay refuses loopback (`localhost`, `127.0.0.1`,
+`::1`), link-local (`169.254.x.x`, `fe80::`) and multicast hosts, a user name or password in the URL,
+and **this Relay's own RTMP port** (a route can't feed Relay back into itself: to put a guest into a
+profile, use "A profile's feed"). LAN servers (192.168.x.x, 10.x.x.x, 172.16–31.x.x, Tailscale's
+100.64.x.x) are allowed by default; the owner can turn that off (`PUT /api/guest-routes/settings
+{"allowLan": false}`, admin). The stream key is stored encrypted (secrets scope
+`guest-route:<routeId>`), never shown again, never logged, and scrubbed from error messages.
+
+**Into a profile: the rules.**
+
+- **OBS always wins.** Relay refuses to route into an input while that profile's own OBS feed is on
+  it, with "OBS is already sending Landscape to …". If OBS starts sending that input while a route
+  holds it, OBS gets it and the route stops as **Blocked**, saying why. Never a silent switch.
+- **One route per input** at a time.
+- **Not while live.** Starting, stopping or removing a profile route by hand is refused while that
+  profile is live (it would cut every destination). End the live first. If the guest drops during a
+  live, the profile's feed goes offline exactly as if OBS stopped (destinations retry, `feed.offline`
+  is raised); no automatic switching to anything else. An automatic route resumes when the guest is
+  back, like OBS reconnecting.
+- **A route never starts Go live**, even with auto go-live on: auto go-live only counts OBS's own
+  feeds.
+
+How it works: Relay's FFmpeg reads `guest/<slot>` and republishes it on the loopback MediaMTX into
+the profile's feed path (`live/<slug>/<feed>`) with a one-time key that only lives in memory and that
+the auth hook accepts from loopback only.
+
 ## Alerts
 
 On the suite's alert contract (API.md §17): **`guest.feed.offline`** (warning) when a guest stops for
@@ -147,7 +196,9 @@ sends video that isn't H.264. A guest feed on program in CTD OBS is reported by 
 
 ## Database
 
-One table, `guest_feeds`, on its own migration track (`guest_feeds_meta`), like the report tables:
-`PRAGMA user_version` stays **4**, so 0.2.80 opens the database after a rollback and ignores the
-table (verified with 0.2.80's code; deleting a profile there removes its slots by cascade). Keys are
-in the encrypted secrets, scope `guest:<profileId>`.
+Two tables, `guest_feeds` (g1) and `guest_routes` (g2), on their own migration track
+(`guest_feeds_meta`), like the report tables: `PRAGMA user_version` stays **4**, so 0.2.80 opens the
+database after a rollback and ignores both tables (verified with 0.2.80's code; deleting a profile
+there removes its slots, their routes and the routes into it, by cascade). Keys are in the encrypted
+secrets, scopes `guest:<profileId>` (ingest keys) and `guest-route:<routeId>` (custom servers'
+stream keys).
