@@ -19,7 +19,7 @@ This page is for whoever runs the server.
 ## Slots
 
 Each Relay profile has up to **4** guest feed slots (`GUEST_FEEDS_MAX`). A slot has a name, an id
-(10 characters, fixed, never reused) and its own ingest key. In the web UI the **Guest feeds** card on
+(10 characters, fixed, never reused) and its own ingest key. In the web UI the **Extra feeds** card (the web UI calls guest feeds *extra feeds*, since they also fit your own extra inputs) on
 the dashboard (the selected profile's page, under its feed cards) lists them with their state, a
 thumbnail and **Watch**; admins also see:
 
@@ -138,14 +138,14 @@ anything at or above 1.00× is real time.)
 
 ## Routing: sending a guest feed on
 
-"Stream from my MacBook and relay it somewhere else, or to a profile." On the **Guest feeds** card,
+"Stream from my MacBook and relay it somewhere else, or to a profile." On the **Extra feeds** card,
 each guest feed has **Send this feed to…** (admins) with two options:
 
 - **A custom server (RTMP/RTMPS)**: a server URL and an optional stream key, up to **3** per guest
   feed. For a second restreamer, a recording box on the LAN, a platform Relay has no driver for.
 - **A profile's feed**: the guest becomes that profile's **Landscape** or **Vertical** feed (its own
   profile or another). The profile then treats it exactly like a feed from OBS: its feed card (with
-  **Source: guest feed <name>**), the codec guard, **Go live**, test mode, destinations, reports and
+  **Source: extra feed <name>**), the codec guard, **Go live**, test mode, destinations, reports and
   alerts.
 
 Everyone signed in sees each route's state (Stopped, Waits for the guest, Starting, Sending, Retrying,
@@ -178,7 +178,9 @@ profile, use "A profile's feed"). LAN servers (192.168.x.x, 10.x.x.x, 172.16–3
   profile is live (it would cut every destination). End the live first. If the guest drops during a
   live, the profile's feed goes offline exactly as if OBS stopped (destinations retry, `feed.offline`
   is raised); no automatic switching to anything else. An automatic route resumes when the guest is
-  back, like OBS reconnecting.
+  back, like OBS reconnecting, but only into an input it was the last to feed: if OBS published on
+  that input since (or an admin stopped the route), an automatic route doesn't start while the profile
+  is live (state *Blocked*), so a live profile whose OBS feed drops for a moment never gets a guest.
 - **A route never starts Go live**, even with auto go-live on: auto go-live only counts OBS's own
   feeds.
 
