@@ -1931,7 +1931,7 @@ What Relay does with a guest feed, and doesn't:
 - H.264 video and AAC audio only, like the main feeds (the codec guard, `problem` below).
 
 Slots are made, renamed and removed, and keys rotated and revoked, by an admin in the web UI
-(profile page → **Guest feeds**). The external API only **reads** them: there is no route that
+(dashboard → **Extra feeds**, the web UI's name for guest feeds). The external API only **reads** them: there is no route that
 returns a guest's ingest key.
 
 ### 18.1 The guest feed object
@@ -2152,7 +2152,7 @@ the scheme and host only, never the path or the stream key (both are write-only)
 
 | | |
 |---|---|
-| `GET /profiles/{id}/guest-routes` | `{ profileId, outbound: [route…], inbound: [route… + "guestName"] }`: routes of this profile's guest feeds, and routes into this profile's inputs (a feed card's "Source: guest feed …") |
+| `GET /profiles/{id}/guest-routes` | `{ profileId, outbound: [route…], inbound: [route… + "guestName"] }`: routes of this profile's guest feeds, and routes into this profile's inputs (a feed card's "Source: extra feed …") |
 | `GET /profiles/{id}/guest-feeds/{slot}/routes` | `{ profileId, slot, routes: [route…] }` |
 | `POST /profiles/{id}/guest-feeds/{slot}/routes` | `{ "kind": "rtmp", "url": "rtmps://live.example.com/app", "streamKey": "…", "auto": false, "name"?: "…" }` or `{ "kind": "profile", "profileId": "club", "feed": "landscape", "auto": true }` → `201` route |
 | `PATCH …/routes/{route}` | `{ name?, auto?, url?, streamKey? }` (`streamKey`: omitted = keep, `""`/`null` = clear); the server and key only while stopped (`409 route_active`) |
@@ -2180,6 +2180,28 @@ resolved when the route is saved and again when it starts.
   `unknown_guest_feed`, `unknown_profile`; `409 limit`, `409 exists` (this guest already feeds that
   input).
 
+### 18.9 Pull links: an RTMP address for OBS Media Source / VLC (v1.17, additive)
+
+A guest feed, and each of a profile's own two feeds, can have a pull link: a read key of its own and
+the address `rtmp://<host>:<rtmpPort>/<path>?key=<read key>`, played straight from Relay's MediaMTX
+on the RTMP ingest port. Off by default. The read key only reads; the ingest key never reads. At most
+`maxReaders` players per feed (`PULL_LINK_MAX_READERS`, default 2; 0 = off). Passthrough only. See
+docs/GUEST-FEEDS.md → Pull link.
+
+| Method and path | Scope | What |
+| --- | --- | --- |
+| `GET /api/v1/profiles/{id}/pull-links` | `status:read` | `{ profileId, maxReaders, guestFeeds: { <slot>: State }, feeds: { landscape: State, vertical: State } }`; State = `{ enabled, readers, maxReaders }`. Never a key. |
+| `GET …/guest-feeds/{slot}/pull`, `GET …/feeds/{feed}/pull` | `system:admin` | `State` + `url` (the link with the key; null while off) + `serverUrl` (without the key). `Cache-Control: no-store`. |
+| `PUT` same, body `{ "enabled": true\|false }` | `system:admin` | On: a new read key (kept if already on). Off: no key; current readers are disconnected. → the same object. |
+| `DELETE` same | `system:admin` | Revoke (= off). `204`. |
+| `POST` same + `/rotate` | `system:admin` | A new read key (turns it on); the old link stops working and its readers are disconnected. → the same object. |
+
+`system:admin` must be a token not limited to one profile (`403 profile_forbidden`). Errors:
+`404 unknown_profile | unknown_guest_feed | not_found` (a feed other than landscape/vertical),
+`409 limit` (pull links off on this server), `503 unavailable`. Every change is audited
+(`pull.enable`, `pull.disable`, `pull.revoke`, `pull.rotate`) without the key. Readers are counted
+from MediaMTX's connection list once a second; Relay's own readers are not counted.
+
 ## Changelog
 
 `apiVersion` stays `1`: every change below is additive, so clients written for an earlier v1
@@ -2201,6 +2223,11 @@ the revision in `info.version`.
   `POST …/routes`, `PATCH`/`DELETE …/routes/{route}`, `POST …/{route}/start|stop` (`system:admin`).
   Problem codes `unknown_route`, `invalid_target`, `input_busy`, `session_live`, `route_active`,
   `exists`. The guest feed objects and lists are unchanged.
+
+- **Pull links (§18.9, additive):** a per-feed read key and an RTMP address for an OBS Media Source
+  or VLC (guest feeds and a profile's own feeds), off by default. `GET /profiles/{id}/pull-links`
+  (`status:read`, no keys); `GET|PUT|DELETE …/guest-feeds/{slot}/pull` and `…/feeds/{feed}/pull`,
+  `POST …/pull/rotate` (`system:admin`). Env `PULL_LINK_MAX_READERS` (default 2).
 
 ### v1.16
 

@@ -277,6 +277,50 @@ describe('GuestRoutes: running with the guest feed', () => {
     expect(s.routes.isRouted('club', 'landscape')).toBe(false);
   });
 
+  it('an auto profile route does not start into a live profile when its guest comes online', async () => {
+    const s = setup();
+    const g = await s.guests.create('default', 'Cam');
+    const r = await s.routes.create('default', g.slot, { kind: 'profile', profileId: 'club', feed: 'landscape', auto: true });
+    // "Club" is live and its OBS landscape feed dropped for a moment: the guest appearing must not take the input.
+    s.live.value = true;
+    s.send(g.slot, true);
+    await flush(20);
+    expect(s.spawn.calls).toHaveLength(0);
+    expect(s.routes.isRouted('club', 'landscape')).toBe(false);
+    expect(s.routes.get('default', g.slot, r.id)).toMatchObject({ active: false, state: 'blocked', message: expect.stringMatching(/is live/) });
+  });
+
+  it('during a live, an auto route resumes into an input it was feeding, but not one OBS took back', async () => {
+    const s = setup();
+    const g = await s.guests.create('default', 'Cam');
+    const r = await s.routes.create('default', g.slot, { kind: 'profile', profileId: 'club', feed: 'landscape', auto: true });
+    s.send(g.slot, true);
+    await flush(20);
+    expect(s.spawn.calls).toHaveLength(1);
+    s.spawn.last()!.child.stdout.write('fps=30.00\nbitrate=2500.0kbits/s\ntotal_size=1000\nout_time_us=2000000\nspeed=1.00x\nprogress=continue\n');
+    await flush(20);
+    expect(s.routes.get('default', g.slot, r.id).state).toBe('running');
+    // "Club" goes live on the guest; the guest drops and comes back: the route resumes, like OBS reconnecting.
+    s.live.value = true;
+    s.send(g.slot, false);
+    await flush(20);
+    s.send(g.slot, true);
+    await flush(20);
+    expect(s.spawn.calls).toHaveLength(2);
+    expect(s.routes.isRouted('club', 'landscape')).toBe(true);
+    // OBS publishes on that input: the route stands down, and OBS is the source from now on.
+    expect(authorizeMediaRequest(publishReq(feedPath('landscape', 'club'), 'obs-club-key-000000000000', '192.168.1.20'), s.auth)).toBe(true);
+    await flush(20);
+    expect(s.routes.isRouted('club', 'landscape')).toBe(false);
+    // OBS drops for a moment, the guest drops and comes back: the route does not take the live input.
+    s.send(g.slot, false);
+    await flush(20);
+    s.send(g.slot, true);
+    await flush(20);
+    expect(s.spawn.calls).toHaveLength(2);
+    expect(s.routes.get('default', g.slot, r.id)).toMatchObject({ active: false, state: 'blocked', message: expect.stringMatching(/is live/) });
+  });
+
   it('a profile route can not be started or stopped by hand while that profile is live', async () => {
     const s = setup();
     const g = await s.guests.create('default', 'Cam');

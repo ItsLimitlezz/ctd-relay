@@ -4,6 +4,7 @@
 // default profile when omitted); creates carry it in the body (`profileId`).
 
 import type { CreateGuestFeedResponse, GuestFeed, GuestFeedList, GuestIngestInfo } from '@shared/guest-feeds';
+import type { PullLinkInfo, ProfilePullLinks } from '@shared/pull-links';
 import type { CreateGuestRouteRequest, GuestRoute, GuestRouteList, GuestRouteSettings, ProfileGuestRoutes, UpdateGuestRouteRequest } from '@shared/guest-routes';
 import type {
   ApiError,
@@ -274,6 +275,11 @@ export const api = {
   startGuestRoute: (profileId: string, slot: string, route: string) => post<GuestRoute>(`${guestBase(profileId)}/${slot}/routes/${route}/start`),
   stopGuestRoute: (profileId: string, slot: string, route: string) => post<GuestRoute>(`${guestBase(profileId)}/${slot}/routes/${route}/stop`),
   guestRouteSettings: () => get<GuestRouteSettings>('/api/guest-routes/settings'),
+  // Pull links (docs/GUEST-FEEDS.md → Pull link): state [user]; the link and managing it [admin].
+  pullLinks: (profileId: string) => get<ProfilePullLinks>(`/api/profiles/${encodeURIComponent(profileId)}/pull-links`),
+  pullLink: (profileId: string, target: PullLinkTarget) => get<PullLinkInfo>(pullBase(profileId, target)),
+  setPullLink: (profileId: string, target: PullLinkTarget, enabled: boolean) => put<PullLinkInfo>(pullBase(profileId, target), { enabled }),
+  rotatePullLink: (profileId: string, target: PullLinkTarget) => post<PullLinkInfo>(`${pullBase(profileId, target)}/rotate`),
   setGuestRouteSettings: (body: GuestRouteSettings) => put<GuestRouteSettings>('/api/guest-routes/settings', body),
 
   // accounts (list per profile; create carries body.profileId)
@@ -413,6 +419,13 @@ export function feedPreviewUrl(profileId: string, feed: Feed): string {
 }
 export function feedLiveUrl(profileId: string, feed: Feed): string {
   return `/api/profiles/${encodeURIComponent(profileId)}/feeds/${feed}/live.m3u8`;
+}
+
+/** A pull link's feed: a guest slot, or one of the profile's own feeds. */
+export type PullLinkTarget = { slot: string } | { feed: Feed };
+function pullBase(profileId: string, target: PullLinkTarget): string {
+  const p = `/api/profiles/${encodeURIComponent(profileId)}`;
+  return 'slot' in target ? `${p}/guest-feeds/${encodeURIComponent(target.slot)}/pull` : `${p}/feeds/${target.feed}/pull`;
 }
 
 function guestBase(profileId: string): string {

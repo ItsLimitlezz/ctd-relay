@@ -17,6 +17,7 @@ import type { AppConfig } from '../config.js';
 import type { EventBus } from '../events.js';
 import { profileSecretScope, type MediaMtxAuthRequest, type MediaServer, type Repos } from '../services.js';
 import { startAuthServer, type AuthServer } from './auth-server.js';
+import type { PullLinks } from './pull-links.js';
 import {
   authorizeMediaRequest,
   FEED_KEY_NAMES,
@@ -69,6 +70,8 @@ export interface MediaServerOptions {
   guests?: GuestFeeds;
   /** Guest feed routing into profiles (media/guest-routes.ts): the auth hook asks it about route keys. */
   routeAuth?: RouteAuth;
+  /** Pull links (media/pull-links.ts): read keys for OBS Media Source / VLC readers, and their count. */
+  pull?: PullLinks;
 }
 
 const RESTART_MIN_MS = 1_000;
@@ -117,7 +120,7 @@ interface ProfileIngest {
   feeds: Map<Feed, FeedSlot>;
 }
 
-export function createMediaServer({ config, bus, log, repos, guests, routeAuth }: MediaServerOptions, deps: MediaServerDeps = {}): MediaServer {
+export function createMediaServer({ config, bus, log, repos, guests, routeAuth, pull }: MediaServerOptions, deps: MediaServerDeps = {}): MediaServer {
   const spawn = deps.spawn ?? defaultSpawn;
   const now = deps.now ?? Date.now;
   const pollIntervalMs = deps.pollIntervalMs ?? 1_000;
@@ -292,6 +295,8 @@ export function createMediaServer({ config, bus, log, repos, guests, routeAuth }
       const id = profileIdOf(route);
       if (id && routeAuth) routeAuth.obsPublished(id, route.feed);
     },
+    pullKey: (p) => pull?.readKey(p) ?? null,
+    pullAdmit: (p) => pull?.admit(p) ?? false,
   };
 
   /** The profile id of a feed path (null = unknown profile). */
@@ -354,6 +359,7 @@ export function createMediaServer({ config, bus, log, repos, guests, routeAuth }
   function markAllOffline(): void {
     for (const entry of profiles.values()) markOffline(entry);
     guests?.resetAll();
+    pull?.resetAll();
   }
 
   function hlsAuthorization(): string | null {
@@ -390,6 +396,16 @@ export function createMediaServer({ config, bus, log, repos, guests, routeAuth }
         const items = await api.listPaths(pollAbort.signal);
         pollFailures = 0;
         if (running && proc) applyPaths(items);
+        if (running && proc && pull?.active() && api.listRtmpConns) {
+          // Pull link readers: their own try, so a failure here never marks the feeds offline.
+          try {
+            const fetchedAt = now();
+            const conns = await api.listRtmpConns(pollAbort.signal);
+            if (running && proc) await pull.apply(conns, fetchedAt);
+          } catch (err) {
+            log.debug({ err: err instanceof Error ? err.message : String(err) }, 'Could not count pull link readers');
+          }
+        }
       } catch (err) {
         pollFailures++;
         if (pollFailures === POLL_FAILURES_BEFORE_OFFLINE) {
@@ -514,6 +530,15 @@ export function createMediaServer({ config, bus, log, repos, guests, routeAuth }
     async kick(pathName) {
       if (!proc) return false;
       return api.kickPublisher(pathName);
+    },
+  });
+
+  pull?.attachMedia({
+    async listConns() {
+      return proc && api.listRtmpConns ? api.listRtmpConns() : [];
+    },
+    async kickConn(id) {
+      return proc && api.kickRtmpConn ? api.kickRtmpConn(id) : false;
     },
   });
 

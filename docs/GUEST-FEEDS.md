@@ -19,7 +19,7 @@ This page is for whoever runs the server.
 ## Slots
 
 Each Relay profile has up to **4** guest feed slots (`GUEST_FEEDS_MAX`). A slot has a name, an id
-(10 characters, fixed, never reused) and its own ingest key. In the web UI the **Guest feeds** card on
+(10 characters, fixed, never reused) and its own ingest key. In the web UI the **Extra feeds** card (the web UI calls guest feeds *extra feeds*, since they also fit your own extra inputs) on
 the dashboard (the selected profile's page, under its feed cards) lists them with their state, a
 thumbnail and **Watch**; admins also see:
 
@@ -138,14 +138,14 @@ anything at or above 1.00× is real time.)
 
 ## Routing: sending a guest feed on
 
-"Stream from my MacBook and relay it somewhere else, or to a profile." On the **Guest feeds** card,
+"Stream from my MacBook and relay it somewhere else, or to a profile." On the **Extra feeds** card,
 each guest feed has **Send this feed to…** (admins) with two options:
 
 - **A custom server (RTMP/RTMPS)**: a server URL and an optional stream key, up to **3** per guest
   feed. For a second restreamer, a recording box on the LAN, a platform Relay has no driver for.
 - **A profile's feed**: the guest becomes that profile's **Landscape** or **Vertical** feed (its own
   profile or another). The profile then treats it exactly like a feed from OBS: its feed card (with
-  **Source: guest feed <name>**), the codec guard, **Go live**, test mode, destinations, reports and
+  **Source: extra feed <name>**), the codec guard, **Go live**, test mode, destinations, reports and
   alerts.
 
 Everyone signed in sees each route's state (Stopped, Waits for the guest, Starting, Sending, Retrying,
@@ -178,13 +178,43 @@ profile, use "A profile's feed"). LAN servers (192.168.x.x, 10.x.x.x, 172.16–3
   profile is live (it would cut every destination). End the live first. If the guest drops during a
   live, the profile's feed goes offline exactly as if OBS stopped (destinations retry, `feed.offline`
   is raised); no automatic switching to anything else. An automatic route resumes when the guest is
-  back, like OBS reconnecting.
+  back, like OBS reconnecting, but only into an input it was the last to feed: if OBS published on
+  that input since (or an admin stopped the route), an automatic route doesn't start while the profile
+  is live (state *Blocked*), so a live profile whose OBS feed drops for a moment never gets a guest.
 - **A route never starts Go live**, even with auto go-live on: auto go-live only counts OBS's own
   feeds.
 
 How it works: Relay's FFmpeg reads `guest/<slot>` and republishes it on the loopback MediaMTX into
 the profile's feed path (`live/<slug>/<feed>`) with a one-time key that only lives in memory and that
 the auth hook accepts from loopback only.
+
+## Pull link: watch a feed in OBS or VLC without a server
+
+A guest feed (or a profile's own Landscape or Vertical feed) can have a **Pull link**: a plain
+address you paste into an OBS **Media Source** or VLC. No MediaMTX or other server is needed on the
+PC: OBS plays straight from Relay's bundled MediaMTX, on the RTMP port ingest already uses (so it
+works wherever ingest works, and needs no new port).
+
+- **Off by default.** Turn it on from the switch on the card, under "Pull link (OBS, VLC)". Turning
+  it on makes a **read key** for that feed. The read key is separate from the ingest key: the read
+  key only reads and never publishes, and the ingest key never reads.
+- **The link:** `rtmp://relay.example.com:1935/guest/<slot>?key=<read key>` (a profile's own feeds:
+  `…/live/landscape?key=…`, or `…/live/<slug>/vertical?key=…`). It's the same `?key=` form as ingest,
+  and real OBS/VLC/FFmpeg (`ffmpeg -i <link> -t 3 -f null -`) play it. The host is Settings →
+  Ingest host, else the address you opened Relay at.
+- **In OBS:** Sources → + (Add) → Media Source → untick "Local File" → paste the link into "Input".
+  **VLC:** Media → Open Network Stream.
+- **Keep it private.** Anyone with the link can watch. **Rotate key** gives a new link. Switching
+  it off revokes the key. Both disconnect everyone reading with the old link at once.
+- **Limits:** at most `PULL_LINK_MAX_READERS` players per feed at once (default 2; `0` turns pull
+  links off on the server). A reader that slips past the cap in a race is disconnected within a
+  second. The card shows how many are watching. Relay's own readers (thumbnails, Watch, routes) are
+  not counted.
+- **Passthrough only:** MediaMTX hands out the packets as they arrive (no transcoding, no CPU cost
+  beyond the network). Like ingest, a guest feed is still never restreamed to a platform.
+- SRT isn't enabled in Relay's MediaMTX, so the link is RTMP only.
+- **Keys:** stored encrypted (secret scope `pull`), shown only to admins (web UI or a `system:admin`
+  token), never logged, and never in the audit log. API: docs/API.md §18.9.
 
 ## Alerts
 

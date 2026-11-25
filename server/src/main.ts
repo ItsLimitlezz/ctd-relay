@@ -25,6 +25,10 @@ import { bindGuestFeeds } from './api/guest-feeds.js';
 import { DEFAULT_GUEST_LIMITS } from './media/guest-feeds.js';
 import { bindGuestRoutes, GuestRoutes, guestRoutesOf } from './media/guest-routes.js';
 import { createGuestRoutesRepo } from './db/guest-routes-repo.js';
+import { PullLinks } from './media/pull-links.js';
+import { bindPullLinks } from './api/pull-links.js';
+import { DEFAULT_PULL_LINK_MAX_READERS } from '../../shared/pull-links.js';
+import { DEFAULT_PROFILE_ID } from '../../shared/types.js';
 import { transcodeCapabilitiesFor } from './media/transcode-capabilities.js';
 import { createTranscodeRuntime } from './media/transcode-settings.js';
 import { errorMessage, redactText } from './orchestrator/async-utils.js';
@@ -167,7 +171,28 @@ export async function createServices(config: AppConfig): Promise<AppServices> {
     isLive: (profileId) => liveCheck(profileId),
     selfHosts: () => selfHosts(),
   });
-  const media = createMediaServer({ config, bus, log: log.child({ mod: 'mediamtx' }), repos, guests, routeAuth: guestRoutes });
+  // Pull links (docs/GUEST-FEEDS.md → Pull link): OBS Media Source / VLC read a guest feed (or a
+  // profile's own feed) straight from MediaMTX with a per-feed read key. Off by default.
+  const pull = new PullLinks({
+    secrets: repos.secrets,
+    log: log.child({ mod: 'pull-links' }),
+    maxReaders: config.pullLinkMaxReaders ?? DEFAULT_PULL_LINK_MAX_READERS,
+    guestProfileOf: (slot) => guests.profileOf(slot),
+    slugOf: (profileId) => {
+      if (profileId === DEFAULT_PROFILE_ID) return null;
+      return repos.profiles.get(profileId)?.slug;
+    },
+    profileOfSlug: (slug) => {
+      if (slug === null) return DEFAULT_PROFILE_ID;
+      const row = repos.profiles.getBySlug(slug);
+      return row && row.id !== DEFAULT_PROFILE_ID ? row.id : null;
+    },
+  });
+  bus.on('guest-feeds-changed', (e) => {
+    for (const slot of e.removed) void pull.forgetGuest(slot).catch(() => {});
+  });
+  void pull.load().catch((err: unknown) => log.error({ err: err instanceof Error ? err.message : String(err) }, 'Could not load pull link keys'));
+  const media = createMediaServer({ config, bus, log: log.child({ mod: 'mediamtx' }), repos, guests, routeAuth: guestRoutes, pull });
   guestRoutes.attachMedia(media);
   void guestRoutes.load();
   // Push ids are destination ids; the supervisor reads the destination's profile to pick its feeds.
@@ -231,6 +256,7 @@ export async function createServices(config: AppConfig): Promise<AppServices> {
 
   bindGuestFeeds(services, guests);
   bindGuestRoutes(services, guestRoutes);
+  bindPullLinks(services, pull);
   liveCheck = (profileId) => {
     try {
       return services.orchestrators.get(profileId).state().status !== 'offline';
