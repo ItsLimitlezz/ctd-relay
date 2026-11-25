@@ -33,6 +33,14 @@ export interface IngestAuthState {
   guestKey?(slot: string): string | null;
   /** Does the guest slot exist (it may be read back by Relay)? */
   guestExists?(slot: string): boolean;
+  /**
+   * Guest feed routing (docs/GUEST-FEEDS.md → Routing): the one-time publish key of the route that
+   * holds this feed path right now (Relay's own FFmpeg republishing a guest feed into a profile), or
+   * null. Accepted from loopback only.
+   */
+  routeKey?(route: IngestRoute): string | null;
+  /** OBS (its own key) was let in on a feed path: a route holding that input must stand down. */
+  obsPublished?(route: IngestRoute): void;
 }
 
 /** 24-char URL-safe random key (144 bits). */
@@ -104,7 +112,14 @@ export function authorizeMediaRequest(req: MediaMtxAuthRequest, auth: IngestAuth
       const expected = auth.publishKey(route);
       if (!expected) return false;
       const key = queryParam(req.query ?? '', 'key');
-      return key !== null && key.length > 0 && safeEqual(key, expected);
+      if (key === null || key.length === 0) return false;
+      if (safeEqual(key, expected)) {
+        auth.obsPublished?.(route);
+        return true;
+      }
+      // A guest feed routed into this input: Relay's own FFmpeg, from loopback, with the route's key.
+      const routeKey = auth.routeKey?.(route) ?? null;
+      return routeKey !== null && routeKey.length > 0 && isLoopbackIp(req.ip ?? '') && safeEqual(key, routeKey);
     }
     case 'read':
       return auth.publishKey(route) !== null && isInternalReader(req, auth); // a known profile

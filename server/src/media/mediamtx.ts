@@ -31,6 +31,14 @@ import { FeedTracker, offlineFeedState, shouldEmitFeed, type FeedMeasurements, t
 import { createMediaMtxApi, type FetchFn } from './mediamtx-api.js';
 import { buildMediaMtxConfig } from './mediamtx-config.js';
 import type { GuestFeeds } from './guest-feeds.js';
+
+/** What the auth hook needs of guest feed routing (media/guest-routes.ts). */
+export interface RouteAuth {
+  /** The publish key of the route holding this profile input right now, or null. */
+  routeKey(profileId: string, feed: Feed): string | null;
+  /** OBS was let in on this profile input with its own key. */
+  obsPublished(profileId: string, feed: Feed): void;
+}
 import { DEFAULT_LIVE_MAX_VIEWERS } from './live-preview.js';
 import { APP_NAME, feedPath, guestPath, INTERNAL_READER_USER, streamKeyPath, type IngestRoute } from './paths.js';
 import { defaultSpawn, onLines, terminate, type SpawnFn } from './process-utils.js';
@@ -59,6 +67,8 @@ export interface MediaServerOptions {
   repos: Pick<Repos, 'secrets' | 'profiles'>;
   /** Guest feeds (docs/API.md §18): their auth, state and LL-HLS share this MediaMTX. Optional (tests). */
   guests?: GuestFeeds;
+  /** Guest feed routing into profiles (media/guest-routes.ts): the auth hook asks it about route keys. */
+  routeAuth?: RouteAuth;
 }
 
 const RESTART_MIN_MS = 1_000;
@@ -107,7 +117,7 @@ interface ProfileIngest {
   feeds: Map<Feed, FeedSlot>;
 }
 
-export function createMediaServer({ config, bus, log, repos, guests }: MediaServerOptions, deps: MediaServerDeps = {}): MediaServer {
+export function createMediaServer({ config, bus, log, repos, guests, routeAuth }: MediaServerOptions, deps: MediaServerDeps = {}): MediaServer {
   const spawn = deps.spawn ?? defaultSpawn;
   const now = deps.now ?? Date.now;
   const pollIntervalMs = deps.pollIntervalMs ?? 1_000;
@@ -274,7 +284,22 @@ export function createMediaServer({ config, bus, log, repos, guests }: MediaServ
     },
     guestKey: (slot) => guests?.guestKey(slot) ?? null,
     guestExists: (slot) => guests?.guestExists(slot) ?? false,
+    routeKey: (route) => {
+      const id = profileIdOf(route);
+      return id && routeAuth ? routeAuth.routeKey(id, route.feed) : null;
+    },
+    obsPublished: (route) => {
+      const id = profileIdOf(route);
+      if (id && routeAuth) routeAuth.obsPublished(id, route.feed);
+    },
   };
+
+  /** The profile id of a feed path (null = unknown profile). */
+  function profileIdOf(route: IngestRoute): string | null {
+    if (route.slug === null) return DEFAULT_PROFILE_ID;
+    const id = bySlug.get(route.slug);
+    return id !== undefined && profiles.has(id) ? id : null;
+  }
 
   // ---- feed state -------------------------------------------------------
 

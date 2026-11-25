@@ -4,6 +4,7 @@
 // default profile when omitted); creates carry it in the body (`profileId`).
 
 import type { CreateGuestFeedResponse, GuestFeed, GuestFeedList, GuestIngestInfo } from '@shared/guest-feeds';
+import type { CreateGuestRouteRequest, GuestRoute, GuestRouteList, GuestRouteSettings, ProfileGuestRoutes, UpdateGuestRouteRequest } from '@shared/guest-routes';
 import type {
   ApiError,
   ApiTokensResponse,
@@ -263,6 +264,17 @@ export const api = {
   guestIngest: (profileId: string, slot: string) => get<GuestIngestInfo>(`${guestBase(profileId)}/${slot}/ingest`),
   rotateGuestKey: (profileId: string, slot: string) => post<GuestIngestInfo>(`${guestBase(profileId)}/${slot}/rotate`),
   revokeGuestKey: (profileId: string, slot: string) => post<GuestFeed>(`${guestBase(profileId)}/${slot}/revoke`),
+  // Guest feed routing (docs/GUEST-FEEDS.md → Routing): reading [user]; everything else [admin].
+  profileGuestRoutes: (profileId: string) => get<ProfileGuestRoutes>(`/api/profiles/${encodeURIComponent(profileId)}/guest-routes`),
+  guestRoutes: (profileId: string, slot: string) => get<GuestRouteList>(`${guestBase(profileId)}/${slot}/routes`),
+  addGuestRoute: (profileId: string, slot: string, body: CreateGuestRouteRequest) => post<GuestRoute>(`${guestBase(profileId)}/${slot}/routes`, body),
+  updateGuestRoute: (profileId: string, slot: string, route: string, body: UpdateGuestRouteRequest) =>
+    patch<GuestRoute>(`${guestBase(profileId)}/${slot}/routes/${route}`, body),
+  removeGuestRoute: (profileId: string, slot: string, route: string) => del<object>(`${guestBase(profileId)}/${slot}/routes/${route}`),
+  startGuestRoute: (profileId: string, slot: string, route: string) => post<GuestRoute>(`${guestBase(profileId)}/${slot}/routes/${route}/start`),
+  stopGuestRoute: (profileId: string, slot: string, route: string) => post<GuestRoute>(`${guestBase(profileId)}/${slot}/routes/${route}/stop`),
+  guestRouteSettings: () => get<GuestRouteSettings>('/api/guest-routes/settings'),
+  setGuestRouteSettings: (body: GuestRouteSettings) => put<GuestRouteSettings>('/api/guest-routes/settings', body),
 
   // accounts (list per profile; create carries body.profileId)
   accounts: (profileId?: string) => get<Account[]>(withProfileQuery('/api/accounts', profileId)),

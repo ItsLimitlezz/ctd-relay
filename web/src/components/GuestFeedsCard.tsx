@@ -10,6 +10,7 @@ import { Button } from './Button';
 import { Card } from './Card';
 import { ConfirmButton } from './ConfirmButton';
 import { FeedThumbnail } from './FeedThumbnail';
+import { GuestRoutesPanel } from './GuestRoutes';
 import { LivePlayerModal } from './LivePlayer';
 import { Spinner } from './Spinner';
 import { TextInput } from './TextInput';
@@ -235,6 +236,7 @@ function GuestRow({
             </ConfirmButton>
           </div>
         )}
+        <GuestRoutesPanel profileId={profileId} slot={g.slot} guestName={g.name} isAdmin={isAdmin} />
       </div>
     </li>
   );

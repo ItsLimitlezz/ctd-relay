@@ -29,7 +29,13 @@ export type ProblemCode =
   | 'viewer_cap'
   | 'live_off'
   | 'live_ended'
-  | 'unknown_guest_feed';
+  | 'unknown_guest_feed'
+  | 'unknown_route'
+  | 'input_busy'
+  | 'session_live'
+  | 'invalid_target'
+  | 'route_active'
+  | 'exists';
 
 const TITLES: Record<ProblemCode, string> = {
   unauthenticated: 'Unauthenticated',
@@ -39,6 +45,12 @@ const TITLES: Record<ProblemCode, string> = {
   not_found: 'Not found',
   unknown_profile: 'Unknown profile',
   unknown_guest_feed: 'Unknown guest feed',
+  unknown_route: 'Unknown route',
+  input_busy: 'Input in use',
+  session_live: 'Profile is live',
+  invalid_target: 'Target refused',
+  route_active: 'Route running',
+  exists: 'Already exists',
   profile_forbidden: 'Other profile',
   app_owned: 'App registered by another token',
   limit: 'Limit reached',

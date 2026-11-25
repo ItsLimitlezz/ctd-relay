@@ -23,6 +23,8 @@ import { GuestFeeds } from './media/guest-feeds.js';
 import { createGuestFeedsRepo } from './db/guest-feeds-repo.js';
 import { bindGuestFeeds } from './api/guest-feeds.js';
 import { DEFAULT_GUEST_LIMITS } from './media/guest-feeds.js';
+import { bindGuestRoutes, GuestRoutes, guestRoutesOf } from './media/guest-routes.js';
+import { createGuestRoutesRepo } from './db/guest-routes-repo.js';
 import { transcodeCapabilitiesFor } from './media/transcode-capabilities.js';
 import { createTranscodeRuntime } from './media/transcode-settings.js';
 import { errorMessage, redactText } from './orchestrator/async-utils.js';
@@ -149,7 +151,25 @@ export async function createServices(config: AppConfig): Promise<AppServices> {
     limits: config.guestFeeds ?? DEFAULT_GUEST_LIMITS,
   });
   // Every profile's OBS ingest (the default profile keeps live/landscape|vertical and the 'ingest' keys).
-  const media = createMediaServer({ config, bus, log: log.child({ mod: 'mediamtx' }), repos, guests });
+  // Guest feed routing (docs/GUEST-FEEDS.md → Routing): passthrough to custom servers or into a
+  // profile's input. Its own push supervisor and bus; the auth hook asks it about route keys.
+  let liveCheck: (profileId: string) => boolean = () => false;
+  let selfHosts: () => string[] = () => [];
+  const guestRoutes = new GuestRoutes({
+    config,
+    repo: createGuestRoutesRepo(db),
+    guests,
+    secrets: repos.secrets,
+    settings: repos.settings,
+    profiles: repos.profiles,
+    bus,
+    log: log.child({ mod: 'guest-routes' }),
+    isLive: (profileId) => liveCheck(profileId),
+    selfHosts: () => selfHosts(),
+  });
+  const media = createMediaServer({ config, bus, log: log.child({ mod: 'mediamtx' }), repos, guests, routeAuth: guestRoutes });
+  guestRoutes.attachMedia(media);
+  void guestRoutes.load();
   // Push ids are destination ids; the supervisor reads the destination's profile to pick its feeds.
   // A destination with a transcoding profile encodes in its own push while Settings → Transcoding is
   // on (off by default; docs/TRANSCODING.md). The capability service lives on `services`, built below.
@@ -210,6 +230,15 @@ export async function createServices(config: AppConfig): Promise<AppServices> {
   } as Omit<AppServices, 'orchestrators' | 'driverContext'> as AppServices;
 
   bindGuestFeeds(services, guests);
+  bindGuestRoutes(services, guestRoutes);
+  liveCheck = (profileId) => {
+    try {
+      return services.orchestrators.get(profileId).state().status !== 'offline';
+    } catch {
+      return false;
+    }
+  };
+  selfHosts = () => [appSettings().ingestHost, config.publicHost ?? '', config.publicIp ?? '', tls.status().publicIp ?? ''].filter((h): h is string => Boolean(h));
 
   services.driverContext = async ({ platform, accountId, destinationId, signal }): Promise<DriverContext> => {
     const app = await repos.secrets.scoped(`app:${platform}`).getJson<Record<string, string>>('values');
@@ -306,6 +335,7 @@ export async function main(): Promise<void> {
       await services.orchestrators.shutdown();
       await earlySave;
       await services.pushes.stopAll();
+      await guestRoutesOf(services)?.stopAll();
       await services.browser.shutdown();
       await services.media.stop();
       await services.tls.stop();

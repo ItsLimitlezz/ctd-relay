@@ -30,6 +30,9 @@ import { openDatabase } from '../db/database.js';
 import { createGuestFeedsRepo } from '../db/guest-feeds-repo.js';
 import { DEFAULT_GUEST_LIMITS, GuestFeeds, type GuestFeedLimits } from '../media/guest-feeds.js';
 import { bindGuestFeeds, bindGuestLive } from './guest-feeds.js';
+import { bindGuestRoutes, GuestRoutes } from '../media/guest-routes.js';
+import { createGuestRoutesRepo } from '../db/guest-routes-repo.js';
+import { fakeSpawn } from '../media/test-helpers.js';
 import { createRepos } from '../db/repos.js';
 import { EventBus } from '../events.js';
 import authPlugin from '../http/auth-plugin.js';
@@ -306,6 +309,22 @@ export async function createTestApi(
   });
   bindGuestFeeds(services, guests);
   if (opts.guestLive) bindGuestLive(services, opts.guestLive(guests));
+  // Guest feed routing (no FFmpeg: a spawn that never runs anything).
+  const guestRoutes = new GuestRoutes({
+    config: { rtmpPort: 1935, ffmpegBin: 'ffmpeg' },
+    repo: createGuestRoutesRepo(db),
+    guests,
+    secrets: repos.secrets,
+    settings: repos.settings,
+    profiles: repos.profiles,
+    bus: services.bus,
+    log: silentLog,
+    lookup: async () => ['203.0.113.50'],
+    localAddresses: () => ['127.0.0.1'],
+    supervisorDeps: { spawn: fakeSpawn().spawn },
+  });
+  guestRoutes.attachMedia({ guestReadUrl: (slot: string) => `rtmp://127.0.0.1:1935/guest/${slot}`, feed: () => ({ online: false }) } as unknown as AppServices['media']);
+  bindGuestRoutes(services, guestRoutes);
 
   const hub = new EventHub({ ...eventHubDeps(services), log: silentLog, platformInfo, ...(opts.now ? { now: opts.now } : {}) });
 

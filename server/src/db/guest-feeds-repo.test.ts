@@ -12,7 +12,7 @@ describe('guest feed table (own migration track)', () => {
     expect(schemaVersion(db)).toBe(before);
     expect(guestFeedSchemaVersion(db)).toBe(GUEST_FEED_MIGRATIONS.length);
     const tables = db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name LIKE 'guest_%' ORDER BY name").all().map((r) => r.name);
-    expect(tables).toEqual(['guest_feeds', 'guest_feeds_meta']);
+    expect(tables).toEqual(['guest_feeds', 'guest_feeds_meta', 'guest_routes']);
     db.close();
   });
 
@@ -38,7 +38,7 @@ describe('guest feed table (own migration track)', () => {
     db.exec('CREATE TABLE profiles (id TEXT PRIMARY KEY)');
     migrateGuestFeeds(db);
     migrateGuestFeeds(db);
-    expect(guestFeedSchemaVersion(db)).toBe(1);
+    expect(guestFeedSchemaVersion(db)).toBe(GUEST_FEED_MIGRATIONS.length);
     expect(() => migrateGuestFeeds(db, [])).toThrow(/newer than this app supports/);
     db.close();
   });

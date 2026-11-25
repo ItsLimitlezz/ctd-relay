@@ -22,6 +22,8 @@ import { ConfirmButton } from '../components/ConfirmButton';
 import { EmptyState } from '../components/EmptyState';
 import { FeedThumbnail } from '../components/FeedThumbnail';
 import { GuestFeedsCard } from '../components/GuestFeedsCard';
+import { ROUTE_POLL_MS, usePoll } from '../components/GuestRoutes';
+import type { ProfileGuestRoutes } from '@shared/guest-routes';
 import { Field } from '../components/Field';
 import {
   elapsedSeconds,
@@ -389,6 +391,9 @@ const FEED_HINT: Record<Feed, string> = {
 function FeedsRow({ feeds }: { feeds: FeedState[] | null }) {
   const profileId = useProfileId();
   const [watching, setWatching] = useState<Feed | null>(null);
+  // Guest feeds routed into this profile's inputs (docs/GUEST-FEEDS.md → Routing).
+  const routes = useApi(() => api.profileGuestRoutes(profileId).catch(() => null), [profileId]);
+  usePoll(routes.reload, ROUTE_POLL_MS);
   // Another profile on screen: its player isn't the one that was open.
   useEffect(() => setWatching(null), [profileId]);
   return (
@@ -401,6 +406,7 @@ function FeedsRow({ feeds }: { feeds: FeedState[] | null }) {
           loading={!feeds}
           profileId={profileId}
           onWatch={() => setWatching(feed)}
+          routedFrom={routedFrom(routes.data ?? null, feed)}
         />
       ))}
       {watching && (
@@ -422,12 +428,19 @@ const KEYFRAME_FIX: Record<Feed, string> = {
   vertical: 'In the Aitum Vertical dock: settings → Keyframe Interval: 2 s, then restart the vertical stream.',
 };
 
+/** The guest feed routed into this input right now (its name), or null. */
+export function routedFrom(routes: ProfileGuestRoutes | null, feed: Feed): string | null {
+  const r = routes?.inbound.find((x) => x.active && x.target.kind === 'profile' && x.target.feed === feed);
+  return r ? (r.guestName ?? r.name) : null;
+}
+
 export function FeedCard({
   feed,
   state,
   loading,
   profileId,
   onWatch,
+  routedFrom: source = null,
 }: {
   feed: Feed;
   state: FeedState | null;
@@ -435,6 +448,8 @@ export function FeedCard({
   /** With a profile, the card shows the feed's preview (thumbnail + Watch). */
   profileId?: string;
   onWatch?: () => void;
+  /** A guest feed routed into this input: its name ("Source: guest feed …"). */
+  routedFrom?: string | null;
 }) {
   const online = !!state?.online;
   const Icon = feed === 'landscape' ? LandscapeIcon : VerticalIcon;
@@ -464,6 +479,11 @@ export function FeedCard({
           </>
         )}
       </div>
+      {source && (
+        <p className="small feed-source" data-testid={`feed-source-${feed}`}>
+          <Badge tone="accent">Source: guest feed {source}</Badge>
+        </p>
+      )}
       {profileId && !loading && state && (
         <FeedThumbnail profileId={profileId} feed={feed} state={state} {...(onWatch ? { onWatch } : {})} />
       )}
