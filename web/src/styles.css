@@ -2772,3 +2772,8 @@ img {
 .text-warn {
   color: var(--warn, #b7791f);
 }
+
+/* Pull link (OBS, VLC) on a guest feed card (docs/GUEST-FEEDS.md → Pull link). */
+.pull-link { display: flex; flex-direction: column; gap: 6px; margin-top: 6px; }
+.pull-link-url { overflow-wrap: anywhere; word-break: break-all; }
+.pull-link-steps { margin: 0; padding-left: 1.25em; }

@@ -7,6 +7,7 @@ import {
   DEFAULT_GUEST_FEED_WARN_KBPS,
   DEFAULT_GUEST_FEEDS_MAX,
 } from '../../shared/guest-feeds.js';
+import { DEFAULT_PULL_LINK_MAX_READERS } from '../../shared/pull-links.js';
 import type { TlsMode } from '../../shared/types.js';
 
 const bool = z
@@ -41,6 +42,8 @@ const EnvSchema = z.object({
   GUEST_FEED_WARN_KBPS: z.coerce.number().int().min(100).max(1_000_000).default(DEFAULT_GUEST_FEED_WARN_KBPS),
   /** Guest feeds: disconnect a guest above this bitrate (kbps) for 10 s. 0 = no limit. */
   GUEST_FEED_MAX_KBPS: z.coerce.number().int().min(0).max(1_000_000).default(DEFAULT_GUEST_FEED_MAX_KBPS),
+  /** Pull links (docs/GUEST-FEEDS.md → Pull link): OBS/VLC readers per feed at once. 0 = pull links off. */
+  PULL_LINK_MAX_READERS: z.coerce.number().int().min(0).max(20).default(DEFAULT_PULL_LINK_MAX_READERS),
   /** Externally visible HTTPS port (what the router forwards), used to build public URLs. */
   PUBLIC_PORT: z.coerce.number().int().default(443),
   TLS_MODE: z.enum(['auto', 'letsencrypt', 'self-signed', 'manual', 'off']).default('auto'),
@@ -97,6 +100,8 @@ export interface AppConfig {
   livePreviewMaxViewers?: number;
   /** Guest feed limits (docs/GUEST-FEEDS.md). Missing in test configs (= the defaults). */
   guestFeeds?: { maxSlots: number; maxViewers: number; warnAboveKbps: number; maxKbps: number };
+  /** Pull links: concurrent OBS/VLC readers per feed; 0 = off. Missing in test configs (= the default). */
+  pullLinkMaxReaders?: number;
   publicPort: number;
   tlsMode: TlsMode;
   publicIp: string | null;
@@ -150,6 +155,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env, version = '0.0.
       warnAboveKbps: e.GUEST_FEED_WARN_KBPS,
       maxKbps: e.GUEST_FEED_MAX_KBPS,
     },
+    pullLinkMaxReaders: e.PULL_LINK_MAX_READERS,
     publicPort: e.PUBLIC_PORT,
     tlsMode: e.TLS_MODE,
     publicIp: e.PUBLIC_IP ?? null,

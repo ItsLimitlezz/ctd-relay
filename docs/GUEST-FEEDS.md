@@ -186,6 +186,34 @@ How it works: Relay's FFmpeg reads `guest/<slot>` and republishes it on the loop
 the profile's feed path (`live/<slug>/<feed>`) with a one-time key that only lives in memory and that
 the auth hook accepts from loopback only.
 
+## Pull link: watch a feed in OBS or VLC without a server
+
+A guest feed (or a profile's own Landscape or Vertical feed) can have a **Pull link**: a plain
+address you paste into an OBS **Media Source** or VLC. No MediaMTX or other server is needed on the
+PC: OBS plays straight from Relay's bundled MediaMTX, on the RTMP port ingest already uses (so it
+works wherever ingest works, and needs no new port).
+
+- **Off by default.** Turn it on from the switch on the card, under "Pull link (OBS, VLC)". Turning
+  it on makes a **read key** for that feed. The read key is separate from the ingest key: the read
+  key only reads and never publishes, and the ingest key never reads.
+- **The link:** `rtmp://relay.example.com:1935/guest/<slot>?key=<read key>` (a profile's own feeds:
+  `…/live/landscape?key=…`, or `…/live/<slug>/vertical?key=…`). It's the same `?key=` form as ingest,
+  and real OBS/VLC/FFmpeg (`ffmpeg -i <link> -t 3 -f null -`) play it. The host is Settings →
+  Ingest host, else the address you opened Relay at.
+- **In OBS:** Sources → + (Add) → Media Source → untick "Local File" → paste the link into "Input".
+  **VLC:** Media → Open Network Stream.
+- **Keep it private.** Anyone with the link can watch. **Rotate key** gives a new link. Switching
+  it off revokes the key. Both disconnect everyone reading with the old link at once.
+- **Limits:** at most `PULL_LINK_MAX_READERS` players per feed at once (default 2; `0` turns pull
+  links off on the server). A reader that slips past the cap in a race is disconnected within a
+  second. The card shows how many are watching. Relay's own readers (thumbnails, Watch, routes) are
+  not counted.
+- **Passthrough only:** MediaMTX hands out the packets as they arrive (no transcoding, no CPU cost
+  beyond the network). Like ingest, a guest feed is still never restreamed to a platform.
+- SRT isn't enabled in Relay's MediaMTX, so the link is RTMP only.
+- **Keys:** stored encrypted (secret scope `pull`), shown only to admins (web UI or a `system:admin`
+  token), never logged, and never in the audit log. API: docs/API.md §18.9.
+
 ## Alerts
 
 On the suite's alert contract (API.md §17): **`guest.feed.offline`** (warning) when a guest stops for

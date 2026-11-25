@@ -414,6 +414,7 @@ export function openApiDocument(version: string): Record<string, unknown> {
         },
       },
       ...guestRoutePaths(),
+      ...pullLinkPaths(),
       '/obs/socket': {
         get: {
           summary: 'OBS socket relay: obs-websocket 5 to OBS on the LAN, from anywhere (WebSocket, v1.6)',
@@ -1465,8 +1466,46 @@ const guestRouteSchemas = {
   },
 };
 
+/** v1.17: pull links (docs/API.md §18.9). */
+const pullState = {
+  type: 'object',
+  required: ['enabled', 'readers', 'maxReaders'],
+  properties: {
+    enabled: { type: 'boolean' },
+    readers: { type: 'integer', description: "Players reading through the pull link now (Relay's own readers aren't counted)" },
+    maxReaders: { type: 'integer', description: 'Concurrent readers per feed (PULL_LINK_MAX_READERS, default 2); 0 = pull links off' },
+  },
+};
+const pullLinkSchemas = {
+  PullLinkState: pullState,
+  PullLinkInfo: {
+    type: 'object',
+    required: ['enabled', 'readers', 'maxReaders', 'url', 'serverUrl'],
+    properties: {
+      ...pullState.properties,
+      url: { oneOf: [{ type: 'string' }, { type: 'null' }], description: 'rtmp://<host>:<port>/<path>?key=<read key>: paste into an OBS Media Source (Input) or VLC. Null while off. A secret.' },
+      serverUrl: { type: 'string', description: 'The same without the key' },
+    },
+  },
+  ProfilePullLinks: {
+    type: 'object',
+    required: ['profileId', 'maxReaders', 'guestFeeds', 'feeds'],
+    properties: {
+      profileId: { type: 'string' },
+      maxReaders: { type: 'integer' },
+      guestFeeds: { type: 'object', additionalProperties: { $ref: '#/components/schemas/PullLinkState' }, description: 'By slot id' },
+      feeds: {
+        type: 'object',
+        required: ['landscape', 'vertical'],
+        properties: { landscape: { $ref: '#/components/schemas/PullLinkState' }, vertical: { $ref: '#/components/schemas/PullLinkState' } },
+      },
+    },
+  },
+};
+
 const issueSchemas = {
   ...guestFeedSchemas,
+  ...pullLinkSchemas,
   ...guestRouteSchemas,
   Issue: { type: 'object', required: issueRequired, properties: issueProperties },
   IssueRaised: {
@@ -1636,4 +1675,68 @@ function guestRoutePaths(): Record<string, unknown> {
       },
     },
   };
+}
+
+
+// ---- v1.17 (additive): pull links (docs/API.md §18.9) ----
+
+function pullLinkPaths(): Record<string, unknown> {
+  const adminErrors = {
+    '401': errors['401'],
+    '403': problemResponse('Token without `system:admin` (`missing_scope`) or limited to one profile (`profile_forbidden`)'),
+    '404': problemResponse('No such profile (`unknown_profile`), guest feed (`unknown_guest_feed`) or feed (`not_found`)'),
+    '429': errors['429'],
+    '503': problemResponse('Pull links are not available on this server (`unavailable`)'),
+  };
+  const ok = { description: 'The pull link, with the link itself (admin only; a secret)', content: json(ref('PullLinkInfo')) };
+  const feedPathParam = { name: 'feed', in: 'path', required: true, schema: { enum: ['landscape', 'vertical'] } };
+  const out: Record<string, unknown> = {
+    '/profiles/{id}/pull-links': {
+      get: {
+        summary: "Pull links of a profile's guest feeds and own feeds: on/off and readers (v1.17)",
+        operationId: 'getPullLinks',
+        tags: ['profiles'],
+        description: 'Needs `status:read`. Never a key or a link. See docs/API.md §18.9.',
+        parameters: [idPath],
+        responses: { '200': { description: 'The state', content: json(ref('ProfilePullLinks')) }, ...errors, ...profileErrors },
+      },
+    },
+  };
+  for (const [kind, base, params] of [
+    ['guest feed', '/profiles/{id}/guest-feeds/{slot}/pull', [idPath, slotPath]],
+    ['feed', '/profiles/{id}/feeds/{feed}/pull', [idPath, feedPathParam]],
+  ] as const) {
+    const op = kind === 'feed' ? 'FeedPullLink' : 'GuestPullLink';
+    out[base] = {
+      get: { summary: `A ${kind}'s pull link (v1.17)`, operationId: `get${op}`, tags: ['profiles'], description: 'Needs `system:admin`.', parameters: params, responses: { '200': ok, ...adminErrors } },
+      put: {
+        summary: `Turn a ${kind}'s pull link on or off (v1.17)`,
+        operationId: `set${op}`,
+        tags: ['profiles'],
+        description: 'Needs `system:admin`. On: a new read key (separate from the ingest key). Off: no key; current readers are disconnected.',
+        parameters: params,
+        requestBody: { required: true, content: json({ type: 'object', required: ['enabled'], properties: { enabled: bool }, additionalProperties: false }) },
+        responses: { '200': ok, '400': problemResponse('Invalid body (`invalid`)'), '409': problemResponse('Pull links are off on this server (`limit`)'), ...adminErrors },
+      },
+      delete: {
+        summary: `Revoke a ${kind}'s pull link (= off) (v1.17)`,
+        operationId: `revoke${op}`,
+        tags: ['profiles'],
+        description: 'Needs `system:admin`. Current readers are disconnected.',
+        parameters: params,
+        responses: { '204': { description: 'Revoked' }, ...adminErrors },
+      },
+    };
+    out[`${base}/rotate`] = {
+      post: {
+        summary: `A new read key for a ${kind}'s pull link (v1.17)`,
+        operationId: `rotate${op}`,
+        tags: ['profiles'],
+        description: 'Needs `system:admin`. Turns the link on; the old link stops working and its readers are disconnected.',
+        parameters: params,
+        responses: { '200': ok, '409': problemResponse('Pull links are off on this server (`limit`)'), ...adminErrors },
+      },
+    };
+  }
+  return out;
 }

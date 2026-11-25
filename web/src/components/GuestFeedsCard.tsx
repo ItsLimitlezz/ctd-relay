@@ -12,6 +12,7 @@ import { ConfirmButton } from './ConfirmButton';
 import { FeedThumbnail } from './FeedThumbnail';
 import { GuestRoutesPanel } from './GuestRoutes';
 import { LivePlayerModal } from './LivePlayer';
+import { PullLinkPanel } from './PullLink';
 import { Spinner } from './Spinner';
 import { TextInput } from './TextInput';
 import { toast } from './Toast';
@@ -236,6 +237,7 @@ function GuestRow({
             </ConfirmButton>
           </div>
         )}
+        <PullLinkPanel profileId={profileId} target={{ slot: g.slot }} label={`guest feed "${g.name}"`} isAdmin={isAdmin} />
         <GuestRoutesPanel profileId={profileId} slot={g.slot} guestName={g.name} isAdmin={isAdmin} />
       </div>
     </li>

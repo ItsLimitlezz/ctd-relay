@@ -2180,6 +2180,28 @@ resolved when the route is saved and again when it starts.
   `unknown_guest_feed`, `unknown_profile`; `409 limit`, `409 exists` (this guest already feeds that
   input).
 
+### 18.9 Pull links: an RTMP address for OBS Media Source / VLC (v1.17, additive)
+
+A guest feed, and each of a profile's own two feeds, can have a pull link: a read key of its own and
+the address `rtmp://<host>:<rtmpPort>/<path>?key=<read key>`, played straight from Relay's MediaMTX
+on the RTMP ingest port. Off by default. The read key only reads; the ingest key never reads. At most
+`maxReaders` players per feed (`PULL_LINK_MAX_READERS`, default 2; 0 = off). Passthrough only. See
+docs/GUEST-FEEDS.md → Pull link.
+
+| Method and path | Scope | What |
+| --- | --- | --- |
+| `GET /api/v1/profiles/{id}/pull-links` | `status:read` | `{ profileId, maxReaders, guestFeeds: { <slot>: State }, feeds: { landscape: State, vertical: State } }`; State = `{ enabled, readers, maxReaders }`. Never a key. |
+| `GET …/guest-feeds/{slot}/pull`, `GET …/feeds/{feed}/pull` | `system:admin` | `State` + `url` (the link with the key; null while off) + `serverUrl` (without the key). `Cache-Control: no-store`. |
+| `PUT` same, body `{ "enabled": true\|false }` | `system:admin` | On: a new read key (kept if already on). Off: no key; current readers are disconnected. → the same object. |
+| `DELETE` same | `system:admin` | Revoke (= off). `204`. |
+| `POST` same + `/rotate` | `system:admin` | A new read key (turns it on); the old link stops working and its readers are disconnected. → the same object. |
+
+`system:admin` must be a token not limited to one profile (`403 profile_forbidden`). Errors:
+`404 unknown_profile | unknown_guest_feed | not_found` (a feed other than landscape/vertical),
+`409 limit` (pull links off on this server), `503 unavailable`. Every change is audited
+(`pull.enable`, `pull.disable`, `pull.revoke`, `pull.rotate`) without the key. Readers are counted
+from MediaMTX's connection list once a second; Relay's own readers are not counted.
+
 ## Changelog
 
 `apiVersion` stays `1`: every change below is additive, so clients written for an earlier v1
@@ -2201,6 +2223,11 @@ the revision in `info.version`.
   `POST …/routes`, `PATCH`/`DELETE …/routes/{route}`, `POST …/{route}/start|stop` (`system:admin`).
   Problem codes `unknown_route`, `invalid_target`, `input_busy`, `session_live`, `route_active`,
   `exists`. The guest feed objects and lists are unchanged.
+
+- **Pull links (§18.9, additive):** a per-feed read key and an RTMP address for an OBS Media Source
+  or VLC (guest feeds and a profile's own feeds), off by default. `GET /profiles/{id}/pull-links`
+  (`status:read`, no keys); `GET|PUT|DELETE …/guest-feeds/{slot}/pull` and `…/feeds/{feed}/pull`,
+  `POST …/pull/rotate` (`system:admin`). Env `PULL_LINK_MAX_READERS` (default 2).
 
 ### v1.16
 

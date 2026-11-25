@@ -51,6 +51,7 @@ import { Toggle } from '../components/Toggle';
 import { cx, safeHttpUrl, type Tone } from '../components/utils';
 import { Link } from '../router';
 import { useAuth } from '../state/auth';
+import { PullLinkPanel } from '../components/PullLink';
 import { errorMessage } from '../state/errors';
 import { useApi, useDestinations, useNow } from '../state/hooks';
 import { useAccountsVersion, useChat, useLiveActions, useSession, type LiveActions } from '../state/live';
@@ -390,6 +391,7 @@ const FEED_HINT: Record<Feed, string> = {
 
 function FeedsRow({ feeds }: { feeds: FeedState[] | null }) {
   const profileId = useProfileId();
+  const { isAdmin } = useAuth();
   const [watching, setWatching] = useState<Feed | null>(null);
   // Guest feeds routed into this profile's inputs (docs/GUEST-FEEDS.md → Routing).
   const routes = useApi(() => api.profileGuestRoutes(profileId).catch(() => null), [profileId]);
@@ -407,6 +409,7 @@ function FeedsRow({ feeds }: { feeds: FeedState[] | null }) {
           profileId={profileId}
           onWatch={() => setWatching(feed)}
           routedFrom={routedFrom(routes.data ?? null, feed)}
+          pullLink={{ isAdmin }}
         />
       ))}
       {watching && (
@@ -441,6 +444,7 @@ export function FeedCard({
   profileId,
   onWatch,
   routedFrom: source = null,
+  pullLink,
 }: {
   feed: Feed;
   state: FeedState | null;
@@ -450,6 +454,8 @@ export function FeedCard({
   onWatch?: () => void;
   /** A guest feed routed into this input: its name ("Source: guest feed …"). */
   routedFrom?: string | null;
+  /** Show the feed's "Pull link (OBS, VLC)" panel (docs/GUEST-FEEDS.md → Pull link). */
+  pullLink?: { isAdmin: boolean };
 }) {
   const online = !!state?.online;
   const Icon = feed === 'landscape' ? LandscapeIcon : VerticalIcon;
@@ -528,6 +534,9 @@ export function FeedCard({
       )}
       {online && state ? null : (
         !loading && <p className="muted small" style={{ marginTop: 10 }}>{FEED_HINT[feed]}</p>
+      )}
+      {profileId && pullLink !== undefined && (
+        <PullLinkPanel profileId={profileId} target={{ feed }} label={`${FEED_LABEL[feed]} feed`} isAdmin={pullLink.isAdmin} />
       )}
     </Card>
   );
