@@ -36,6 +36,11 @@ export function slotOf(guests: GuestFeeds, req: FastifyRequest, profileId: strin
   return guests.feed(profileId, slot) ? slot : null;
 }
 
+/** Test seam: the guest feeds' LL-HLS service (default: built from MediaMTX on first use). */
+export function bindGuestLive(services: object, live: LivePreviewService<string>): void {
+  lives.set(services, live);
+}
+
 /** LL-HLS players for guest feeds (one service per AppServices, its own viewer cap). */
 export function guestLiveOf(services: AppServices, guests: GuestFeeds): LivePreviewService<string> {
   let s = lives.get(services);

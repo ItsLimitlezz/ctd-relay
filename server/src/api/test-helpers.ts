@@ -27,6 +27,9 @@ import {
 } from '../../../shared/types.js';
 import type { AppConfig } from '../config.js';
 import { openDatabase } from '../db/database.js';
+import { createGuestFeedsRepo } from '../db/guest-feeds-repo.js';
+import { DEFAULT_GUEST_LIMITS, GuestFeeds, type GuestFeedLimits } from '../media/guest-feeds.js';
+import { bindGuestFeeds, bindGuestLive } from './guest-feeds.js';
 import { createRepos } from '../db/repos.js';
 import { EventBus } from '../events.js';
 import authPlugin from '../http/auth-plugin.js';
@@ -226,6 +229,8 @@ export interface TestApi {
   repos: Repos;
   bus: EventBus;
   hub: EventHub;
+  /** The guest feeds (docs/API.md §18), on the same database. */
+  guests: GuestFeeds;
   apps: AppRegistryHandle;
   pairings: PairingServiceHandle;
   /** Mutable orchestrator state of the default profile (services.orchestrators.get('default').state()). */
@@ -250,6 +255,10 @@ export async function createTestApi(
     previews?: PreviewService;
     live?: LivePreviewService;
     blobLimits?: () => BlobLimits;
+    /** Guest feed limits (default DEFAULT_GUEST_LIMITS). */
+    guestLimits?: Partial<GuestFeedLimits>;
+    /** The guest feeds' LL-HLS service (default: none, the routes answer 503 unavailable). */
+    guestLive?: (guests: GuestFeeds) => LivePreviewService<string>;
   } = {},
 ): Promise<TestApi> {
   const now = opts.now ?? Date.now;
@@ -286,6 +295,17 @@ export async function createTestApi(
     appSettings: () => ({ publicBaseUrl: '', ingestHost: settings.ingestHost, disconnectGraceSec: 15 }),
     publicBaseUrl: () => 'https://203.0.113.7',
   } as unknown as AppServices;
+
+  const guests = new GuestFeeds({
+    repo: createGuestFeedsRepo(db),
+    secrets: repos.secrets,
+    bus,
+    log: silentLog,
+    limits: { ...DEFAULT_GUEST_LIMITS, ...opts.guestLimits },
+    now,
+  });
+  bindGuestFeeds(services, guests);
+  if (opts.guestLive) bindGuestLive(services, opts.guestLive(guests));
 
   const hub = new EventHub({ ...eventHubDeps(services), log: silentLog, platformInfo, ...(opts.now ? { now: opts.now } : {}) });
 
@@ -338,6 +358,7 @@ export async function createTestApi(
     repos,
     bus,
     hub,
+    guests,
     apps,
     pairings,
     state,

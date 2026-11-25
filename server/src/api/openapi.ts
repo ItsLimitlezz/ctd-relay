@@ -18,7 +18,7 @@ import { reportPaths, reportSchemas } from './openapi-reports.js';
 import { showPaths, showSchemas } from './openapi-show.js';
 
 /** Minor revision of the v1 contract (additive changes only; see the changelog in docs/API.md). */
-export const API_REVISION = '1.16';
+export const API_REVISION = '1.17';
 
 const ref = (name: string) => ({ $ref: `#/components/schemas/${name}` });
 const nullable = (schema: object) => ({ oneOf: [schema, { type: 'null' }] });
@@ -338,6 +338,75 @@ export function openApiDocument(version: string): Record<string, unknown> {
             '200': { description: 'A media playlist or an fMP4 file', content: { 'application/vnd.apple.mpegurl': { schema: str }, 'video/mp4': { schema: { type: 'string', format: 'binary' } } } },
             '404': problemResponse('No such file (`not_found`, e.g. a part the player fell behind on) or the feed went offline (`feed_offline`)'),
             '409': problemResponse('The feed turned HEVC/AV1 (`feed_codec`)'),
+            '410': problemResponse('This player ended (`live_ended`): open live.m3u8 again'),
+            '401': errors['401'],
+            '429': errors['429'],
+          },
+        },
+      },
+      '/profiles/{id}/guest-feeds': {
+        get: {
+          summary: "A profile's guest feed slots and their state (v1.17)",
+          operationId: 'getGuestFeeds',
+          tags: ['profiles'],
+          description: 'Needs `status:read`. Remote video a guest sends to Relay, for CTD OBS to use as a source; never restreamed. Slots and keys are managed in the web UI only. See docs/API.md §18.',
+          parameters: [idPath],
+          responses: { '200': { description: 'The slots', content: json(ref('GuestFeedList')) }, ...errors, ...profileErrors },
+        },
+      },
+      '/profiles/{id}/guest-feeds/{slot}/preview': {
+        get: {
+          summary: 'JPEG preview of a guest feed (v1.17)',
+          operationId: 'getGuestFeedPreview',
+          tags: ['profiles'],
+          description: `Needs \`status:read\` (\`Authorization\`, or \`?access_token=\`). Like the feed previews: one keyframe, 640 px wide, cached ${PREVIEW_MAX_AGE_MS / 1000} s.`,
+          parameters: [idPath, slotPath, { name: 'access_token', in: 'query', required: false, schema: str }],
+          responses: {
+            '200': { description: 'The preview', content: { 'image/jpeg': { schema: { type: 'string', format: 'binary' } } } },
+            '404': problemResponse('The guest is not sending (`feed_offline`), no such slot (`unknown_guest_feed`) or profile (`unknown_profile`)'),
+            '503': problemResponse('The preview could not be taken right now (`unavailable`, with Retry-After)'),
+            '401': errors['401'],
+            '429': errors['429'],
+          },
+        },
+      },
+      '/profiles/{id}/guest-feeds/{slot}/live.m3u8': {
+        get: {
+          summary: 'A guest feed live: Low-Latency HLS multivariant playlist (v1.17)',
+          operationId: 'getGuestFeedLive',
+          tags: ['profiles'],
+          description: 'Needs `feeds:watch` in the `Authorization` header on this and every request it leads to. Works exactly like the feed live preview (§10): passthrough H.264 + AAC, one viewer per request, relative URIs `live/<file>?v=<viewer>`, muxing on demand. At most `maxViewers` players per guest feed (GUEST_FEED_MAX_VIEWERS, default 2). See docs/API.md §18.3.',
+          parameters: [idPath, slotPath],
+          responses: {
+            '200': { description: 'The multivariant playlist', content: { 'application/vnd.apple.mpegurl': { schema: str } } },
+            '404': problemResponse('The guest is not sending or the key is revoked (`feed_offline`), no such slot (`unknown_guest_feed`) or profile (`unknown_profile`)'),
+            '409': problemResponse('The guest sends HEVC/AV1 (`feed_codec`)'),
+            '429': {
+              ...problemResponse('Too many players on this guest feed (`viewer_cap`), or over the rate limit (`rate_limited`)'),
+              headers: { 'Retry-After': { schema: int, description: 'Seconds to wait' } },
+            },
+            '503': problemResponse('Watching guest feeds is off (`live_off`) or not available right now (`unavailable`, with Retry-After)'),
+            '401': errors['401'],
+            '403': problemResponse('Token without `feeds:watch` (`missing_scope`) or limited to another profile (`profile_forbidden`)'),
+          },
+        },
+      },
+      '/profiles/{id}/guest-feeds/{slot}/live/{file}': {
+        get: {
+          summary: "A guest feed's media playlist or fMP4 part/segment (v1.17)",
+          operationId: 'getGuestFeedLiveFile',
+          tags: ['profiles'],
+          description: 'The URIs of the guest feed playlists, as given (`?v=<viewer>`). `410 live_ended`: open `live.m3u8` again.',
+          parameters: [
+            idPath,
+            slotPath,
+            { name: 'file', in: 'path', required: true, schema: { type: 'string', pattern: '^[A-Za-z0-9_-]{1,128}\\.(m3u8|mp4)$' } },
+            { name: 'v', in: 'query', required: true, schema: str, description: 'The viewer id from the playlist' },
+          ],
+          responses: {
+            '200': { description: 'A media playlist or an fMP4 file', content: { 'application/vnd.apple.mpegurl': { schema: str }, 'video/mp4': { schema: { type: 'string', format: 'binary' } } } },
+            '404': problemResponse('No such file (`not_found`), the guest stopped (`feed_offline`) or no such slot (`unknown_guest_feed`)'),
+            '409': problemResponse('The guest switched to HEVC/AV1 (`feed_codec`)'),
             '410': problemResponse('This player ended (`live_ended`): open live.m3u8 again'),
             '401': errors['401'],
             '429': errors['429'],
@@ -754,6 +823,8 @@ export function openApiDocument(version: string): Record<string, unknown> {
                 ref('AppsChanged'),
                 ref('AppMessage'),
                 ref('ShowChanged'),
+                ref('GuestFeed'),
+                ref('GuestFeedList'),
                 { type: 'object', maxProperties: 0, description: 'system.reset, profiles.changed, library.changed' },
               ],
             },
@@ -1279,9 +1350,10 @@ const issueSubject = {
       required: ['type', 'appId', 'source', 'path'],
       properties: { type: { const: 'obs.source' }, appId: str, source: str, path: nullable(str) },
     },
+    { type: 'object', required: ['type', 'slot', 'name'], properties: { type: { const: 'guest.feed' }, slot: str, name: str }, description: 'A guest feed slot (v1.17, §18)' },
   ],
 };
-const issueKind = { enum: ['feed.offline', 'destination.down', 'stream.down', 'obs.output.down', 'obs.issue'], description: 'Treat a kind you do not know by its severity and title' };
+const issueKind = { enum: ['feed.offline', 'destination.down', 'stream.down', 'obs.output.down', 'obs.issue', 'guest.feed.offline', 'guest.feed.codec'], description: 'Treat a kind you do not know by its severity and title' };
 const issueProperties = {
   id: { ...str, description: '<kind>|<subject key>: the one key for raise, update, clear and dedupe. Opaque' },
   kind: issueKind,
@@ -1296,7 +1368,42 @@ const issueProperties = {
   updatedAt: { type: 'integer', description: 'Epoch ms of the latest change' },
 };
 const issueRequired = ['id', 'kind', 'rule', 'severity', 'title', 'message', 'subject', 'onProgram', 'scene', 'firstSeen', 'updatedAt'];
+/** v1.17: guest feeds (docs/API.md §18). */
+const slotPath = { name: 'slot', in: 'path', required: true, schema: { type: 'string', pattern: '^[a-z0-9]{10}$' } };
+const guestFeedSchemas = {
+  GuestFeed: {
+    type: 'object',
+    required: ['slot', 'name', 'key', 'online', 'since', 'video', 'audio', 'bitrateKbps', 'bitrateWarning', 'problem', 'limitedAt'],
+    properties: {
+      slot: { type: 'string', pattern: '^[a-z0-9]{10}$', description: 'Fixed for the slot\'s life, never reused' },
+      name: { type: 'string', minLength: 1, maxLength: 60 },
+      key: { enum: ['active', 'revoked'] },
+      online: { type: 'boolean' },
+      since: { oneOf: [{ type: 'string', format: 'date-time' }, { type: 'null' }] },
+      video: { oneOf: [{ type: 'object', properties: { codec: { type: 'string' }, width: { type: 'integer' }, height: { type: 'integer' } } }, { type: 'null' }] },
+      audio: { oneOf: [{ type: 'object', properties: { codec: { type: 'string' }, sampleRate: { type: 'integer' }, channels: { type: 'integer' } } }, { type: 'null' }] },
+      bitrateKbps: { oneOf: [{ type: 'number' }, { type: 'null' }] },
+      bitrateWarning: { type: 'boolean', description: 'bitrateKbps is above warnAboveKbps' },
+      problem: { oneOf: [{ type: 'object', description: 'The codec guard (same shape as Feed.problem); blocking = it cannot be watched' }, { type: 'null' }] },
+      limitedAt: { oneOf: [{ type: 'string', format: 'date-time' }, { type: 'null' }], description: 'When Relay last disconnected this guest for going over maxKbps (kept 10 minutes)' },
+    },
+  },
+  GuestFeedList: {
+    type: 'object',
+    required: ['profileId', 'maxSlots', 'maxViewers', 'warnAboveKbps', 'maxKbps', 'guestFeeds'],
+    properties: {
+      profileId: { type: 'string' },
+      maxSlots: { type: 'integer', description: 'Slots per profile (GUEST_FEEDS_MAX); 0 = guest feeds off' },
+      maxViewers: { type: 'integer', description: 'Players per guest feed (GUEST_FEED_MAX_VIEWERS); 0 = they cannot be watched' },
+      warnAboveKbps: { type: 'integer' },
+      maxKbps: { type: 'integer', description: '0 = no hard limit' },
+      guestFeeds: { type: 'array', items: { $ref: '#/components/schemas/GuestFeed' } },
+    },
+  },
+};
+
 const issueSchemas = {
+  ...guestFeedSchemas,
   Issue: { type: 'object', required: issueRequired, properties: issueProperties },
   IssueRaised: {
     type: 'object',
