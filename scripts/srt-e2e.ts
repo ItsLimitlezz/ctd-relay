@@ -16,7 +16,7 @@ import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import pino from 'pino';
-import { srtPublishUrlFromStreamKey, srtUrl } from '../shared/srt.js';
+import { SRT_LATENCY_LAN_MS, srtLatencyParam, srtPublishUrlFromStreamKey, srtUrl, withSrtLatency } from '../shared/srt.js';
 import { DEFAULT_PROFILE_ID, type FeedState } from '../shared/types.js';
 import { grabWithFfmpeg } from '../server/src/api/previews.js';
 import { loadConfig } from '../server/src/config.js';
@@ -119,11 +119,7 @@ async function step<T>(name: string, fn: () => Promise<T>): Promise<T> {
   }
 }
 
-/**
- * Test pattern, like OBS at low delay: x264 zerolatency (no B-frames), 1 s keyframes, AAC.
- * `-output_ts_offset <now>` makes PTS = wall clock (seconds since the epoch), so a reader can tell how
- * late each frame arrives. MPEG-TS gets `-muxdelay 0` (else FFmpeg shifts PTS by 0.7 s).
- */
+/** Test pattern, like OBS at low delay: x264 zerolatency (no B-frames), 1 s keyframes, AAC. MPEG-TS gets `-muxdelay 0`. */
 function pattern(url: string, format: 'flv' | 'mpegts', extra: string[] = []): string[] {
   const ts = format === 'mpegts' ? ['-muxdelay', '0', '-muxpreload', '0', '-pkt_size', '1316'] : [];
   return [
@@ -132,26 +128,78 @@ function pattern(url: string, format: 'flv' | 'mpegts', extra: string[] = []): s
     '-f', 'lavfi', '-i', 'sine=frequency=700',
     '-c:v', 'libx264', '-preset', 'veryfast', '-tune', 'zerolatency', '-bf', '0', '-g', '30', '-pix_fmt', 'yuv420p', '-b:v', '3000k',
     '-c:a', 'aac', '-b:a', '128k',
-    '-output_ts_offset', (Date.now() / 1000).toFixed(3),
     ...extra, ...ts, '-f', format, url,
   ];
 }
 
-/** Read a URL and stamp every decoded frame: lateness = arrival wall clock − PTS (ms). */
-function measure(bin: string, url: string, seconds: number): Promise<number[]> {
-  const late: number[] = [];
-  const reader = ffmpeg(bin, ['-loglevel', 'info', '-fflags', 'nobuffer', '-flags', 'low_delay', '-copyts', '-i', url, '-map', '0:v', '-vf', 'showinfo', '-t', String(seconds), '-f', 'null', '-'], (line) => {
-    const m = /pts_time:([\d.]+)/.exec(line);
-    if (m) late.push(Date.now() - Number(m[1]) * 1000);
+/**
+ * Delay probe: the frame number N is drawn into the picture as 16 vertical black/white bands (bit i of
+ * N in band i), so it survives any timestamp rewriting on the way. The publisher stamps the wall clock
+ * when frame N leaves its filter graph (showinfo, after `-re` pacing, right before x264 zerolatency);
+ * the reader scales each decoded frame to 16×1 gray, reads N back and stamps its arrival.
+ */
+function counterPublisher(bin: string, url: string, format: 'flv' | 'mpegts', sent: Map<number, number>, extra: string[] = []): Proc {
+  const ts = format === 'mpegts' ? ['-muxdelay', '0', '-muxpreload', '0', '-pkt_size', '1316'] : [];
+  return ffmpeg(
+    bin,
+    [
+      '-loglevel', 'info', '-re',
+      '-f', 'lavfi', '-i', "nullsrc=size=640x360:rate=30,format=gray,geq=lum='255*mod(floor(N/pow(2,floor(X*16/W))),2)',format=yuv420p",
+      '-f', 'lavfi', '-i', 'sine=frequency=700',
+      '-vf', 'showinfo',
+      '-c:v', 'libx264', '-preset', 'veryfast', '-tune', 'zerolatency', '-bf', '0', '-g', '30', '-b:v', '2000k',
+      '-c:a', 'aac', '-b:a', '128k',
+      ...extra, ...ts, '-f', format, url,
+    ],
+    (line) => {
+      const m = /\bn:\s*(\d+)\s/.exec(line);
+      if (m && line.includes('pts_time')) sent.set(Number(m[1]), Date.now());
+    },
+  );
+}
+
+/** Read a URL for `seconds`, decode the frame numbers and return each one's arrival time. */
+function counterReader(bin: string, url: string, seconds: number, inputArgs: string[] = []): Promise<Map<number, number>> {
+  const arrived = new Map<number, number>();
+  const child = spawn(
+    bin,
+    ['-hide_banner', '-nostdin', '-loglevel', 'error', '-fflags', 'nobuffer', '-flags', 'low_delay', ...inputArgs, '-i', url, '-t', String(seconds), '-an', '-vf', 'scale=16:1:flags=area,format=gray', '-f', 'rawvideo', 'pipe:1'],
+    { stdio: ['ignore', 'pipe', 'ignore'], windowsHide: true },
+  );
+  children.add(child);
+  let pending = Buffer.alloc(0);
+  child.stdout!.on('data', (d: Buffer) => {
+    const at = Date.now();
+    pending = Buffer.concat([pending, d]);
+    while (pending.length >= 16) {
+      let n = 0;
+      for (let i = 0; i < 16; i++) if (pending[i]! > 127) n += 2 ** i;
+      if (!arrived.has(n)) arrived.set(n, at);
+      pending = pending.subarray(16);
+    }
   });
-  return exitCode(reader, (seconds + 20) * 1000).then(() => late);
+  return exitCode(child, (seconds + 25) * 1000).then(() => {
+    children.delete(child);
+    return arrived;
+  });
+}
+
+/** Delay per frame (arrival − send), steady state (the reader's first second is its catch-up). */
+function delays(sent: Map<number, number>, arrived: Map<number, number>): number[] {
+  const out: { n: number; d: number }[] = [];
+  for (const [n, at] of arrived) {
+    const s = sent.get(n);
+    if (s !== undefined) out.push({ n, d: at - s });
+  }
+  out.sort((a, b) => a.n - b.n);
+  return out.slice(30).map((x) => x.d);
 }
 
 function stats(late: number[]): string {
-  const steady = late.slice(Math.floor(late.length / 3)).sort((a, b) => a - b); // after the reader caught up
-  if (steady.length === 0) return 'no frames';
-  const q = (f: number) => steady[Math.min(steady.length - 1, Math.floor(f * steady.length))]!;
-  return `median ${q(0.5).toFixed(0)} ms, p10 ${q(0.1).toFixed(0)} ms, p90 ${q(0.9).toFixed(0)} ms (${steady.length} frames)`;
+  const sorted = [...late].sort((a, b) => a - b);
+  if (sorted.length === 0) return 'no frames';
+  const q = (f: number) => sorted[Math.min(sorted.length - 1, Math.floor(f * sorted.length))]!;
+  return `median ${q(0.5).toFixed(0)} ms, p10 ${q(0.1).toFixed(0)} ms, p90 ${q(0.9).toFixed(0)} ms (${sorted.length} frames)`;
 }
 
 async function run(): Promise<void> {
@@ -189,6 +237,8 @@ async function run(): Promise<void> {
   const host = '127.0.0.1';
   const rtmp = `rtmp://${host}:${rtmpPort}`;
   const srt = (mode: 'publish' | 'read', p: string, key: string) => srtUrl(host, srtPort, mode, p, key);
+  // SRT_E2E_LATENCY_MS: try another latency in the measured links (default: the one Relay hands out).
+  const latencyMs = Number(process.env.SRT_E2E_LATENCY_MS ?? SRT_LATENCY_LAN_MS);
   const isOnline = (f: FeedState) => f.profileId === DEFAULT_PROFILE_ID && f.feed === 'landscape' && f.online && !!f.video;
   const measureSec = Number(process.env.SRT_E2E_MEASURE_SEC ?? 8);
   const results: string[] = [];
@@ -202,7 +252,7 @@ async function run(): Promise<void> {
     });
     const keys = await media.ingestKeys(DEFAULT_PROFILE_ID);
     const keyField = await media.streamKeyField(DEFAULT_PROFILE_ID, 'landscape');
-    const obsSrtUrl = srtPublishUrlFromStreamKey(host, srtPort, media.appName, keyField)!;
+    const obsSrtUrl = srtPublishUrlFromStreamKey(host, srtPort, media.appName, keyField, latencyMs)!;
 
     let publisher!: Proc;
     const feed = await step('OBS-style SRT publish (Server = srt://…?streamid=publish:live/landscape:key=…, MPEG-TS H.264+AAC) → feed online', async () => {
@@ -296,35 +346,45 @@ async function run(): Promise<void> {
     // ---- delay through Relay ---------------------------------------------------------
     await pull.setEnabled(target, true);
     publisher.kill('SIGKILL');
-    await sleep(1500);
+    await until(() => !media.feed(DEFAULT_PROFILE_ID, 'landscape').online, 15_000, 'offline');
+    const info = () => pull.info(target, host, rtmpPort, media.srtStatus!());
     const runCase = async (name: string, pubUrl: string, format: 'flv' | 'mpegts', readUrl: () => string) => {
       await step(`measure ${name}`, async () => {
+        const sent = new Map<number, number>();
         const online = waitFor<FeedState>(bus, 'feed', isOnline, 30_000, 'online');
-        const pub = ffmpeg(ff, pattern(pubUrl, format));
+        const pub = counterPublisher(ff, pubUrl, format, sent);
         await online;
-        await sleep(1000);
-        const late = await measure(ff, readUrl(), measureSec);
+        const arrived = await counterReader(ff, readUrl(), measureSec);
         pub.kill('SIGKILL');
         await until(() => !media.feed(DEFAULT_PROFILE_ID, 'landscape').online, 15_000, 'offline');
-        results.push(`${name}: ${stats(late)}`);
+        const d = delays(sent, arrived);
+        if (d.length < 30) throw new Error(`only ${d.length} frames matched`);
+        results.push(`${name}: ${stats(d)}`);
       });
     };
-    const info = () => pull.info(target, host, rtmpPort, media.srtStatus!());
     await runCase('RTMP → Relay → RTMP pull', `${rtmp}/live/landscape?key=${keys.landscape}`, 'flv', () => info().url!);
-    await runCase('SRT → Relay → SRT pull (latency=150 ms)', obsSrtUrl, 'mpegts', () => info().srtUrl!);
-    await runCase('RTMP → Relay → SRT pull', `${rtmp}/live/landscape?key=${keys.landscape}`, 'flv', () => info().srtUrl!);
+    const srtPull = () => withSrtLatency(info().srtUrl!, latencyMs);
+    await runCase(`SRT → Relay → SRT pull (latency=${latencyMs} ms)`, obsSrtUrl, 'mpegts', srtPull);
+    await runCase('RTMP → Relay → SRT pull', `${rtmp}/live/landscape?key=${keys.landscape}`, 'flv', srtPull);
     await runCase('SRT → Relay → RTMP pull', obsSrtUrl, 'mpegts', () => info().url!);
-    // Baseline: the same publisher straight into a reader (SRT listener, no Relay): what FFmpeg itself adds.
-    await step('measure baseline: SRT publisher → SRT reader directly (no Relay)', async () => {
-      const port = await freeUdpPort();
-      const listenUrl = `srt://127.0.0.1:${port}?mode=listener&latency=150000`;
-      const lateP = measure(ff, listenUrl, measureSec);
-      await sleep(800);
-      const pub = ffmpeg(ff, ['-t', String(measureSec + 4), ...pattern(`srt://127.0.0.1:${port}?mode=caller&latency=150000`, 'mpegts')]);
-      results.push(`baseline SRT direct (no Relay): ${stats(await lateP)}`);
-      pub.kill('SIGKILL');
-    });
-    console.log('\nArrival minus publisher PTS (wall clock), steady state, loopback:');
+    // Baselines: the same publisher straight into the reader (no Relay): what FFmpeg + the protocol add.
+    const baseline = async (name: string, listenUrl: string, callUrl: string, format: 'flv' | 'mpegts', inputArgs: string[]) => {
+      await step(`measure baseline ${name}`, async () => {
+        const sent = new Map<number, number>();
+        const arrivedP = counterReader(ff, listenUrl, measureSec, inputArgs);
+        await sleep(800);
+        const pub = counterPublisher(ff, callUrl, format, sent);
+        const arrived = await arrivedP;
+        pub.kill('SIGKILL');
+        results.push(`baseline ${name} (no Relay): ${stats(delays(sent, arrived))}`);
+      });
+    };
+    const p1 = await freeUdpPort();
+    const lat = srtLatencyParam(latencyMs);
+    await baseline(`SRT → SRT direct (latency=${latencyMs} ms)`, `srt://127.0.0.1:${p1}?mode=listener&${lat}`, `srt://127.0.0.1:${p1}?mode=caller&${lat}`, 'mpegts', []);
+    const p2 = await freePort();
+    await baseline('RTMP → RTMP direct', `rtmp://127.0.0.1:${p2}/app/x`, `rtmp://127.0.0.1:${p2}/app/x`, 'flv', ['-listen', '1']);
+    console.log('\nDelay per frame (reader arrival − publisher send, same frame number), steady state, loopback:');
     for (const r of results) console.log(`  ${r}`);
     console.log('\nPASS');
   } finally {

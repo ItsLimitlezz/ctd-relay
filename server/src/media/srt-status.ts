@@ -3,6 +3,6 @@
 import { srtStatusOff, type SrtStatus } from '../../../shared/srt.js';
 import type { MediaServer } from '../services.js';
 
-export function srtStatusOf(media: Pick<MediaServer, 'srtStatus'>): SrtStatus {
-  return media.srtStatus?.() ?? srtStatusOff('SRT is not available on this server.');
+export function srtStatusOf(media: Pick<MediaServer, 'srtStatus'> | undefined): SrtStatus {
+  return media?.srtStatus?.() ?? srtStatusOff('SRT is not available on this server.');
 }
