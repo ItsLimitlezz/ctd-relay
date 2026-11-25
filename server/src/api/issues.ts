@@ -7,6 +7,8 @@
 //   stream.down       every counted destination of a running session is down
 //   obs.output.down   an OBS output reconnecting (when no Relay feed already tells the story)
 //   obs.issue         the plugin's obs.issue.raised / obs.issue.cleared, as they are
+//   guest.feed.offline  a running session's guest feed stopped (not because an admin rotated/revoked it)
+//   guest.feed.codec    a guest sends video that isn't H.264 (docs/API.md §18.5)
 //
 // Each open issue has one stable id (`<kind>|<subject key>`); hold times keep blips from becoming
 // alerts; a raise of an open id is an update; clears carry a resolution. Pure logic plus timers:
@@ -124,6 +126,22 @@ interface ProfileState {
   obsApps: Set<string>;
   open: Map<string, OpenIssue>;
   pending: Map<string, Pending>;
+  /** Guest feeds (docs/API.md §18): slot → what the tracker last heard. */
+  guests: Map<string, GuestSeen>;
+}
+
+/** Just what the tracker needs of a guest feed (shared/guest-feeds.ts GuestFeed). */
+export interface IssueGuestFeed {
+  slot: string;
+  name: string;
+  online: boolean;
+  problem: { blocking: boolean; label: string; message: string } | null;
+}
+
+interface GuestSeen {
+  online: boolean;
+  name: string;
+  problem: IssueGuestFeed['problem'];
 }
 
 function text(v: unknown, max: number): string | null {
@@ -203,7 +221,42 @@ export class IssueTracker {
     st.running = running;
     if (was !== running) st.lostAt.clear();
     if (was && !running) {
-      this.dropWhere(st, profileId, (i) => i.subject.type === 'feed' || i.subject.type === 'destination' || i.subject.type === 'stream', 'ended');
+      this.dropWhere(
+        st,
+        profileId,
+        (i) => i.subject.type === 'feed' || i.subject.type === 'destination' || i.subject.type === 'stream' || i.id.startsWith('guest.feed.offline|'),
+        'ended',
+      );
+    }
+  }
+
+  /**
+   * A guest feed's state (docs/API.md §18.5). `expectedOffline`: it went offline because an admin
+   * rotated or revoked its key, which is on purpose and raises nothing.
+   */
+  guestFeed(profileId: string, feed: IssueGuestFeed, expectedOffline = false): void {
+    const st = this.state(profileId);
+    const prev = st.guests.get(feed.slot);
+    st.guests.set(feed.slot, { online: feed.online, name: feed.name, problem: feed.problem });
+    const offId = `guest.feed.offline|${feed.slot}`;
+    if (feed.online) this.drop(st, profileId, offId, 'recovered');
+    else if (expectedOffline) this.drop(st, profileId, offId, 'removed');
+    else if (prev?.online === true && st.running) this.want(st, profileId, offId, this.holds.feed, () => this.guestOfflineDraft(profileId, feed.slot));
+    else if (this.hasIssue(st, offId)) this.want(st, profileId, offId, this.holds.feed, () => this.guestOfflineDraft(profileId, feed.slot)); // a rename
+
+    const codecId = `guest.feed.codec|${feed.slot}`;
+    if (feed.online && feed.problem?.blocking) this.want(st, profileId, codecId, 0, () => this.guestCodecDraft(profileId, feed.slot));
+    else this.drop(st, profileId, codecId, feed.online ? 'recovered' : 'ended');
+  }
+
+  /** A guest slot was removed, or its key rotated or revoked: its issues go (`removed`). */
+  guestRemoved(profileId: string, slot: string, slotGone: boolean): void {
+    const st = this.profiles.get(profileId);
+    if (!st) return;
+    this.drop(st, profileId, `guest.feed.offline|${slot}`, 'removed');
+    if (slotGone) {
+      this.drop(st, profileId, `guest.feed.codec|${slot}`, 'removed');
+      st.guests.delete(slot);
     }
   }
 
@@ -324,6 +377,41 @@ export class IssueTracker {
       title: `${FEED_NAME[feed]} feed lost`,
       message: text(message, MESSAGE_MAX),
       subject: { type: 'feed', feed },
+      onProgram: null,
+      scene: null,
+      src: { connection: 'core', platform: 'core' },
+    };
+  }
+
+  private guestOfflineDraft(profileId: string, slot: string): IssueDraft | null {
+    const st = this.profiles.get(profileId);
+    const g = st?.guests.get(slot);
+    if (!st || !g || g.online || !st.running) return null;
+    return {
+      id: `guest.feed.offline|${slot}`,
+      kind: 'guest.feed.offline',
+      rule: null,
+      severity: 'warning',
+      title: text(`Guest feed "${g.name}" lost`, TITLE_MAX) ?? 'Guest feed lost',
+      message: 'The guest stopped sending to Relay. CTD OBS shows its source as lost until they send again.',
+      subject: { type: 'guest.feed', slot, name: g.name },
+      onProgram: null,
+      scene: null,
+      src: { connection: 'core', platform: 'core' },
+    };
+  }
+
+  private guestCodecDraft(profileId: string, slot: string): IssueDraft | null {
+    const g = this.profiles.get(profileId)?.guests.get(slot);
+    if (!g || !g.online || !g.problem?.blocking) return null;
+    return {
+      id: `guest.feed.codec|${slot}`,
+      kind: 'guest.feed.codec',
+      rule: null,
+      severity: 'warning',
+      title: text(`Guest feed "${g.name}" is ${g.problem.label}`, TITLE_MAX) ?? 'Guest feed codec',
+      message: text(g.problem.message, MESSAGE_MAX),
+      subject: { type: 'guest.feed', slot, name: g.name },
       onProgram: null,
       scene: null,
       src: { connection: 'core', platform: 'core' },
@@ -519,6 +607,7 @@ export class IssueTracker {
         obsApps: new Set(),
         open: new Map(),
         pending: new Map(),
+        guests: new Map(),
       };
       this.profiles.set(profileId, st);
     }
@@ -642,6 +731,9 @@ export class IssueTracker {
         return { type: 'obs.output', appId: id.split('|')[1] ?? '', output: '', canvas: null };
       case 'obs.issue':
         return { type: 'obs.source', appId: id.split('|')[1] ?? '', source: '', path: null };
+      case 'guest.feed.offline':
+      case 'guest.feed.codec':
+        return { type: 'guest.feed', slot: id.split('|')[1] ?? '', name: '' };
       default:
         return null;
     }

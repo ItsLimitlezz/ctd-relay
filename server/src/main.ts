@@ -19,6 +19,10 @@ import { EventBus } from './events.js';
 import { buildApp } from './http/app.js';
 import { createPushSupervisor } from './media/ffmpeg-supervisor.js';
 import { createMediaServer } from './media/mediamtx.js';
+import { GuestFeeds } from './media/guest-feeds.js';
+import { createGuestFeedsRepo } from './db/guest-feeds-repo.js';
+import { bindGuestFeeds } from './api/guest-feeds.js';
+import { DEFAULT_GUEST_LIMITS } from './media/guest-feeds.js';
 import { transcodeCapabilitiesFor } from './media/transcode-capabilities.js';
 import { createTranscodeRuntime } from './media/transcode-settings.js';
 import { errorMessage, redactText } from './orchestrator/async-utils.js';
@@ -135,8 +139,17 @@ export async function createServices(config: AppConfig): Promise<AppServices> {
   const repos = createRepos(db, secretBox);
 
   const tls = createTlsManager({ config, log: log.child({ mod: 'tls' }), settings: repos.settings });
+  // Guest feeds (docs/GUEST-FEEDS.md): remote guests publish to guest/<slot> on the same MediaMTX;
+  // read back only as LL-HLS / thumbnails, never pushed. Own table track (guest_feeds_meta).
+  const guests = new GuestFeeds({
+    repo: createGuestFeedsRepo(db),
+    secrets: repos.secrets,
+    bus,
+    log: log.child({ mod: 'guest-feeds' }),
+    limits: config.guestFeeds ?? DEFAULT_GUEST_LIMITS,
+  });
   // Every profile's OBS ingest (the default profile keeps live/landscape|vertical and the 'ingest' keys).
-  const media = createMediaServer({ config, bus, log: log.child({ mod: 'mediamtx' }), repos });
+  const media = createMediaServer({ config, bus, log: log.child({ mod: 'mediamtx' }), repos, guests });
   // Push ids are destination ids; the supervisor reads the destination's profile to pick its feeds.
   // A destination with a transcoding profile encodes in its own push while Settings → Transcoding is
   // on (off by default; docs/TRANSCODING.md). The capability service lives on `services`, built below.
@@ -195,6 +208,8 @@ export async function createServices(config: AppConfig): Promise<AppServices> {
     appSettings,
     publicBaseUrl,
   } as Omit<AppServices, 'orchestrators' | 'driverContext'> as AppServices;
+
+  bindGuestFeeds(services, guests);
 
   services.driverContext = async ({ platform, accountId, destinationId, signal }): Promise<DriverContext> => {
     const app = await repos.secrets.scoped(`app:${platform}`).getJson<Record<string, string>>('values');

@@ -1,5 +1,6 @@
 import { EventEmitter } from 'node:events';
 import type { NowPlaying, SongRequestResult } from '../../shared/api.js';
+import type { GuestFeedEvent, GuestFeedsChangedEvent } from './media/guest-feeds.js';
 import type {
   Account,
   ChatMessage,
@@ -69,6 +70,10 @@ export interface AppEvents {
   'show-changed': [{ profileId: string; revision: number; parentRevision: number | null; byAppId: string | null }];
   /** The asset library changed (emitted by the Assets routes). `profileId` null = an every-profile entry. */
   'library-changed': [{ profileId: string | null }];
+  /** A guest feed's state changed: online/offline, codec, bitrate, name, key (emitted by GuestFeeds, media/guest-feeds.ts). */
+  'guest-feed': [GuestFeedEvent];
+  /** Guest feed slots added, renamed, removed, keys rotated or revoked (emitted by GuestFeeds). */
+  'guest-feeds-changed': [GuestFeedsChangedEvent];
 }
 
 /**

@@ -7,7 +7,7 @@ import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import { isIP } from 'node:net';
 import type { Feed } from '../../../shared/types.js';
 import type { MediaMtxAuthRequest } from '../services.js';
-import { INTERNAL_READER_USER, parseFeedPath, type IngestRoute } from './paths.js';
+import { INTERNAL_READER_USER, parseFeedPath, parseGuestPath, type IngestRoute } from './paths.js';
 
 /** One profile's publish keys (OBS stream keys), one per feed. */
 export type ProfileIngestKeys = Record<Feed, string>;
@@ -26,6 +26,13 @@ export interface IngestAuthState {
   readerPassword: string | null;
   /** The publish key for a path (default profile when slug is null); null = unknown profile. */
   publishKey(route: IngestRoute): string | null;
+  /**
+   * Guest feeds (docs/API.md §18): a slot's ingest key, or null when the slot doesn't exist, its key
+   * is revoked or guest feeds are off. Undefined = no guest feeds at all (deny every guest path).
+   */
+  guestKey?(slot: string): string | null;
+  /** Does the guest slot exist (it may be read back by Relay)? */
+  guestExists?(slot: string): boolean;
 }
 
 /** 24-char URL-safe random key (144 bits). */
@@ -87,6 +94,8 @@ export function singleProfileAuth(keys: IngestSecrets | null): IngestAuthState |
  */
 export function authorizeMediaRequest(req: MediaMtxAuthRequest, auth: IngestAuthState | null): boolean {
   if (!auth) return false;
+  const slot = parseGuestPath(req.path ?? '');
+  if (slot !== null) return authorizeGuest(req, auth, slot);
   const route = parseFeedPath(req.path ?? '');
   if (!route) return false;
 
@@ -97,19 +106,44 @@ export function authorizeMediaRequest(req: MediaMtxAuthRequest, auth: IngestAuth
       const key = queryParam(req.query ?? '', 'key');
       return key !== null && key.length > 0 && safeEqual(key, expected);
     }
-    case 'read': {
-      const reader = auth.readerPassword;
-      return (
-        reader !== null &&
-        reader.length > 0 &&
-        auth.publishKey(route) !== null && // a known profile
-        isLoopbackIp(req.ip ?? '') &&
-        req.user === INTERNAL_READER_USER &&
-        typeof req.password === 'string' &&
-        req.password.length > 0 &&
-        safeEqual(req.password, reader)
-      );
+    case 'read':
+      return auth.publishKey(route) !== null && isInternalReader(req, auth); // a known profile
+    default:
+      return false;
+  }
+}
+
+/** Relay itself reading (FFmpeg, the LL-HLS proxy): loopback, user 'internal', the reader password. */
+function isInternalReader(req: MediaMtxAuthRequest, auth: IngestAuthState): boolean {
+  const reader = auth.readerPassword;
+  return (
+    reader !== null &&
+    reader.length > 0 &&
+    isLoopbackIp(req.ip ?? '') &&
+    req.user === INTERNAL_READER_USER &&
+    typeof req.password === 'string' &&
+    req.password.length > 0 &&
+    safeEqual(req.password, reader)
+  );
+}
+
+/**
+ * Guest paths (`guest/<slot>`):
+ * - publish: an existing slot whose key isn't revoked, with `?key=` equal to that slot's key (any
+ *   source IP: guests are on the internet). A slot's key never works on another slot or a feed path.
+ * - read: only Relay itself (loopback, internal reader password), only an existing slot. Nothing
+ *   else ever reads a guest path: no push is built from one (parseFeedPath doesn't accept it).
+ */
+function authorizeGuest(req: MediaMtxAuthRequest, auth: IngestAuthState, slot: string): boolean {
+  switch (req.action) {
+    case 'publish': {
+      const expected = auth.guestKey?.(slot) ?? null;
+      if (!expected) return false;
+      const key = queryParam(req.query ?? '', 'key');
+      return key !== null && key.length > 0 && safeEqual(key, expected);
     }
+    case 'read':
+      return (auth.guestExists?.(slot) ?? false) && isInternalReader(req, auth);
     default:
       return false;
   }

@@ -1,6 +1,12 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { z } from 'zod';
+import {
+  DEFAULT_GUEST_FEED_MAX_KBPS,
+  DEFAULT_GUEST_FEED_MAX_VIEWERS,
+  DEFAULT_GUEST_FEED_WARN_KBPS,
+  DEFAULT_GUEST_FEEDS_MAX,
+} from '../../shared/guest-feeds.js';
 import type { TlsMode } from '../../shared/types.js';
 
 const bool = z
@@ -27,6 +33,14 @@ const EnvSchema = z.object({
   MEDIAMTX_HLS_PORT: z.coerce.number().int().default(9996),
   /** Live preview ("Watch"): viewers per feed at once. 0 turns the live preview off (thumbnails stay). */
   LIVE_PREVIEW_MAX_VIEWERS: z.coerce.number().int().min(0).max(50).default(4),
+  /** Guest feeds (docs/GUEST-FEEDS.md): slots per profile. 0 turns guest feeds off. */
+  GUEST_FEEDS_MAX: z.coerce.number().int().min(0).max(16).default(DEFAULT_GUEST_FEEDS_MAX),
+  /** Guest feeds: players per guest feed at once (CTD OBS + someone watching). 0 = they can't be watched. */
+  GUEST_FEED_MAX_VIEWERS: z.coerce.number().int().min(0).max(20).default(DEFAULT_GUEST_FEED_MAX_VIEWERS),
+  /** Guest feeds: show a warning above this inbound bitrate (kbps). */
+  GUEST_FEED_WARN_KBPS: z.coerce.number().int().min(100).max(1_000_000).default(DEFAULT_GUEST_FEED_WARN_KBPS),
+  /** Guest feeds: disconnect a guest above this bitrate (kbps) for 10 s. 0 = no limit. */
+  GUEST_FEED_MAX_KBPS: z.coerce.number().int().min(0).max(1_000_000).default(DEFAULT_GUEST_FEED_MAX_KBPS),
   /** Externally visible HTTPS port (what the router forwards), used to build public URLs. */
   PUBLIC_PORT: z.coerce.number().int().default(443),
   TLS_MODE: z.enum(['auto', 'letsencrypt', 'self-signed', 'manual', 'off']).default('auto'),
@@ -81,6 +95,8 @@ export interface AppConfig {
   mediamtxHlsPort?: number;
   /** Live preview viewers per feed at once; 0 = live preview off. Missing in test configs (= default). */
   livePreviewMaxViewers?: number;
+  /** Guest feed limits (docs/GUEST-FEEDS.md). Missing in test configs (= the defaults). */
+  guestFeeds?: { maxSlots: number; maxViewers: number; warnAboveKbps: number; maxKbps: number };
   publicPort: number;
   tlsMode: TlsMode;
   publicIp: string | null;
@@ -128,6 +144,12 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env, version = '0.0.
     mediamtxApiPort: e.MEDIAMTX_API_PORT,
     mediamtxHlsPort: e.MEDIAMTX_HLS_PORT,
     livePreviewMaxViewers: e.LIVE_PREVIEW_MAX_VIEWERS,
+    guestFeeds: {
+      maxSlots: e.GUEST_FEEDS_MAX,
+      maxViewers: e.GUEST_FEED_MAX_VIEWERS,
+      warnAboveKbps: e.GUEST_FEED_WARN_KBPS,
+      maxKbps: e.GUEST_FEED_MAX_KBPS,
+    },
     publicPort: e.PUBLIC_PORT,
     tlsMode: e.TLS_MODE,
     publicIp: e.PUBLIC_IP ?? null,

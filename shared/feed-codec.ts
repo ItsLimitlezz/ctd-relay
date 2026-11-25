@@ -216,3 +216,39 @@ export function explainNoStreamError(
   const names = needs.video.map((f) => FEED_NAMES[f].toLowerCase()).join(' and ');
   return `Relay found no video it can send in the ${names} feed${needs.video.length > 1 ? 's' : ''}. Feeds must be H.264 video with AAC audio. ${FIX_VIDEO}`;
 }
+
+const FIX_GUEST_VIDEO = 'Ask the guest to set their video encoder to H.264 (x264 or a hardware H.264 encoder).';
+const FIX_GUEST_AUDIO = 'Ask the guest to set their audio encoder to AAC.';
+
+/**
+ * A guest feed's codec problem (docs/API.md §18.1), or null. Guest feeds are passed on to CTD OBS as
+ * LL-HLS unchanged, H.264 + AAC only: other video can't be watched (`blocking`), other audio plays
+ * but players may get no sound. Offline, or tracks not known yet: null.
+ */
+export function guestFeedProblem(feed: Pick<FeedState, 'online' | 'video' | 'audio'> | null | undefined, name: string): FeedProblem | null {
+  if (!feed?.online || !feed.video) return null;
+  const who = `Guest feed "${name}"`;
+  const video = feed.video.codec.toLowerCase();
+  if (video !== SENDABLE_VIDEO_CODEC) {
+    const label = codecLabel(video);
+    return {
+      reason: 'feed-video-codec',
+      codec: video,
+      blocking: true,
+      label,
+      message: `${who} is ${label}. Relay passes guest feeds to CTD OBS unchanged and needs H.264. ${FIX_GUEST_VIDEO}`,
+    };
+  }
+  const audio = feed.audio?.codec?.toLowerCase();
+  if (audio && !SENDABLE_AUDIO_CODECS.has(audio)) {
+    const label = codecLabel(audio);
+    return {
+      reason: 'feed-audio-codec',
+      codec: audio,
+      blocking: false,
+      label,
+      message: `${who} audio is ${label}. Guest feeds need AAC audio, so players may get no sound. ${FIX_GUEST_AUDIO}`,
+    };
+  }
+  return null;
+}

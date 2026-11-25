@@ -3,7 +3,7 @@
 // MediaMTX rejects unknown keys, so only emit fields that exist in the pinned version.
 
 import { FEEDS } from '../../../shared/types.js';
-import { feedPath, PROFILE_PATHS_REGEX } from './paths.js';
+import { feedPath, GUEST_PATHS_REGEX, PROFILE_PATHS_REGEX } from './paths.js';
 
 export interface MediaMtxConfigOptions {
   /** RTMP ingest port (all interfaces; OBS is on the LAN). */
@@ -79,6 +79,10 @@ export function buildMediaMtxConfig(opts: MediaMtxConfigOptions): string {
     'paths:',
     ...FEEDS.flatMap((feed) => [`  ${feedPath(feed)}:`, '    source: publisher']),
     `  ${q(PROFILE_PATHS_REGEX)}:`,
+    '    source: publisher',
+    '# Guest feeds (docs/API.md §18): guest/<slot>, one regex; the auth hook only accepts existing',
+    '# slots with their own key. Read back only by Relay (LL-HLS preview, thumbnails), never pushed.',
+    `  ${q(GUEST_PATHS_REGEX)}:`,
     '    source: publisher',
     '',
   ];

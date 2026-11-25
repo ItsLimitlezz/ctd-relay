@@ -49,3 +49,29 @@ export function feedForPath(path: string): Feed | null {
  * so a new profile works without restarting MediaMTX; our auth hook decides which slugs exist.
  */
 export const PROFILE_PATHS_REGEX = `~^${APP_NAME}/${SLUG}/(${FEEDS.join('|')})$`;
+
+// ---- guest feeds (docs/API.md §18) ----
+
+/**
+ * Guests publish to their own RTMP application, `guest/<slot>` (server URL rtmp://<host>:<port>/guest,
+ * stream key `<slot>?key=<k>`): the same MediaMTX, port and key check as OBS's feeds, but a path
+ * prefix no feed path can have, so a guest path is never parsed as a feed (parseFeedPath → null) and
+ * nothing that reads feeds (pushes, the orchestrator) can ever reach a guest feed.
+ */
+export { GUEST_APP_NAME } from '../../../shared/guest-feeds.js';
+const GUEST_PREFIX = 'guest';
+const GUEST_PATH_RE = new RegExp(`^${GUEST_PREFIX}/([a-z0-9]{10})$`);
+
+/** MediaMTX path of a guest slot, e.g. 'guest/q7m2x9k4tb'. */
+export function guestPath(slot: string): string {
+  return `${GUEST_PREFIX}/${slot}`;
+}
+
+/** Inverse of guestPath: the slot id, or null for any other path. Tolerates a leading slash. */
+export function parseGuestPath(path: string): string | null {
+  const p = path.startsWith('/') ? path.slice(1) : path;
+  return GUEST_PATH_RE.exec(p)?.[1] ?? null;
+}
+
+/** MediaMTX path name (regex) covering every guest slot; the auth hook decides which slots exist. */
+export const GUEST_PATHS_REGEX = `~^${GUEST_PREFIX}/[a-z0-9]{10}$`;

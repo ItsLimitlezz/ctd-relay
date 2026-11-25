@@ -21,6 +21,7 @@ import type { LivePreviewService } from '../media/live-preview.js';
 import type { ApiEventType, Envelope } from './types.js';
 import { parseUlid } from './ulid.js';
 import { registerHubRoutes } from './v1-hub.js';
+import { registerGuestFeedApiRoutes } from './guest-feeds.js';
 import { musicFor } from '../music/music-service.js';
 import { transcodeCapabilitiesFor } from '../media/transcode-capabilities.js';
 import { registerObsSocketRoute } from './v1-obs-socket.js';
@@ -509,6 +510,7 @@ const v1Plugin: FastifyPluginAsync<V1Options> = async (app, opts) => {
   registerOverlaySummaryRoutes(app, ctx);
   registerObsSocketRoute(app, ctx);
   registerShowRoutes(app, ctx);
+  registerGuestFeedApiRoutes(app, ctx);
   registerPlatformRoutes(app, ctx);
   registerReportApiRoutes(app, ctx);
 };

@@ -16,7 +16,7 @@
 
 import { randomBytes } from 'node:crypto';
 import { Readable } from 'node:stream';
-import { feedProblem } from '../../../shared/feed-codec.js';
+import { feedProblem, type FeedProblem } from '../../../shared/feed-codec.js';
 import type { Feed, FeedState } from '../../../shared/types.js';
 
 /** Viewers per feed at once (LIVE_PREVIEW_MAX_VIEWERS). */
@@ -71,10 +71,25 @@ export interface LiveSource {
   authorization: string;
 }
 
-export interface LivePreviewDeps {
-  feed(profileId: string, feed: Feed): FeedState;
-  /** Where the feed's HLS is (null: HLS off or MediaMTX not running). */
-  source(profileId: string, feed: Feed): LiveSource | null;
+/** What the service needs of a stream's state (a FeedState, or a guest feed's). */
+export type LiveState = Pick<FeedState, 'online' | 'video' | 'audio'> & { feed?: Feed };
+
+/**
+ * `K` names one stream of a profile: a Feed ('landscape' | 'vertical') for the live preview, a slot
+ * id for guest feeds (docs/API.md §18), which reuse this service with their own deps and cap.
+ */
+export interface LivePreviewDeps<K extends string = Feed> {
+  feed(profileId: string, key: K): LiveState;
+  /** Where the stream's HLS is (null: HLS off or MediaMTX not running). */
+  source(profileId: string, key: K): LiveSource | null;
+  /** The codec guard's verdict on the state (default: the feed guard, feedProblem). */
+  problem?(state: LiveState, key: K): FeedProblem | null;
+  /** How messages name it: default "landscape feed". */
+  label?(key: K): string;
+  /** Why it is offline: default "OBS isn't sending it". */
+  offlineReason?: string;
+  /** The live_off message (maxViewers is 0). */
+  offMessage?: string;
   /** Viewers per feed at once; 0 = the live preview is off. */
   maxViewers: number;
   fetch?: typeof fetch;
@@ -84,12 +99,12 @@ export interface LivePreviewDeps {
   warn?: (fields: Record<string, unknown>, msg: string) => void;
 }
 
-interface Viewer {
+interface Viewer<K extends string> {
   id: string;
   /** Who opened it: 'session:<auth session>' (web UI) or 'token:<token id>' (API). */
   who: string;
   profileId: string;
-  feed: Feed;
+  feed: K;
   /** MediaMTX's session id for this reader (server-side only; '' while opening). */
   upstream: string;
   lastSeen: number;
@@ -150,13 +165,13 @@ export function upstreamSession(text: string): string | null {
   return id && SESSION_RE.test(id) ? id : null;
 }
 
-export class LivePreviewService {
-  private readonly viewers = new Map<string, Viewer>();
+export class LivePreviewService<K extends string = Feed> {
+  private readonly viewers = new Map<string, Viewer<K>>();
   private readonly fetch: typeof fetch;
   private readonly now: () => number;
   private readonly newViewerId: () => string;
 
-  constructor(private readonly deps: LivePreviewDeps) {
+  constructor(private readonly deps: LivePreviewDeps<K>) {
     this.fetch = deps.fetch ?? fetch;
     this.now = deps.now ?? Date.now;
     this.newViewerId = deps.newViewerId ?? (() => randomBytes(16).toString('base64url'));
@@ -167,7 +182,7 @@ export class LivePreviewService {
   }
 
   /** Open players on a feed right now. */
-  viewerCount(profileId: string, feed: Feed): number {
+  viewerCount(profileId: string, feed: K): number {
     this.prune();
     let n = 0;
     for (const v of this.viewers.values()) if (v.profileId === profileId && v.feed === feed) n++;
@@ -175,13 +190,13 @@ export class LivePreviewService {
   }
 
   /** Can this feed be watched now? Null when yes, else why not (same errors as open()). */
-  check(profileId: string, feed: Feed): LiveError | null {
+  check(profileId: string, feed: K): LiveError | null {
     if (this.deps.maxViewers <= 0) {
-      return fail(503, 'live_off', 'The live preview is turned off on this server (LIVE_PREVIEW_MAX_VIEWERS=0).');
+      return fail(503, 'live_off', this.deps.offMessage ?? 'The live preview is turned off on this server (LIVE_PREVIEW_MAX_VIEWERS=0).');
     }
     const state = this.deps.feed(profileId, feed);
-    if (!state.online) return fail(404, 'feed_offline', `The ${FEED_NAME[feed]} feed is offline (OBS isn't sending it).`);
-    const problem = feedProblem(state);
+    if (!state.online) return this.offline(feed);
+    const problem = this.deps.problem ? this.deps.problem(state, feed) : state.feed ? feedProblem({ ...state, feed: state.feed }) : null;
     // HEVC/AV1: browsers can't be counted on to play it, and the guard already blocks every destination.
     if (problem?.blocking) return fail(409, 'feed_codec', problem.message);
     return null;
@@ -191,7 +206,7 @@ export class LivePreviewService {
    * GET live.m3u8: a new player. Starts the feed's muxer if nobody watches yet and returns the
    * multivariant playlist, its URIs pointing at `live/<file>?v=<viewer>`.
    */
-  async open(profileId: string, feed: Feed, who: string, signal?: AbortSignal): Promise<LiveResult> {
+  async open(profileId: string, feed: K, who: string, signal?: AbortSignal): Promise<LiveResult> {
     const blocked = this.check(profileId, feed);
     if (blocked) return blocked;
     const source = this.deps.source(profileId, feed);
@@ -207,7 +222,7 @@ export class LivePreviewService {
         return fail(
           429,
           'viewer_cap',
-          `${max} ${max === 1 ? 'player is' : 'players are'} already open on the ${FEED_NAME[feed]} feed (the most at once). Try again when one is closed.`,
+          `${max} ${max === 1 ? 'player is' : 'players are'} already open on the ${this.label(feed)} (the most at once). Try again when one is closed.`,
           Math.ceil(VIEWER_IDLE_MS / 1000),
         );
       }
@@ -218,7 +233,7 @@ export class LivePreviewService {
       return fail(503, 'unavailable', "Couldn't start the live preview right now; retry in a few seconds.", 5);
     }
     // Hold the slot before waiting for MediaMTX (see Viewer.opening); give it back on any failure.
-    const slot: Viewer = { id: viewerId, who, profileId, feed, upstream: '', lastSeen: this.now(), opening: true };
+    const slot: Viewer<K> = { id: viewerId, who, profileId, feed, upstream: '', lastSeen: this.now(), opening: true };
     this.viewers.set(viewerId, slot);
     const release = () => {
       if (this.viewers.get(viewerId) === slot) this.viewers.delete(viewerId);
@@ -242,7 +257,7 @@ export class LivePreviewService {
     if (res.status === 404) {
       release();
       void res.body?.cancel();
-      return fail(404, 'feed_offline', `The ${FEED_NAME[feed]} feed is offline (OBS isn't sending it).`);
+      return this.offline(feed);
     }
     if (res.status !== 200) {
       release();
@@ -271,7 +286,7 @@ export class LivePreviewService {
   }
 
   /** GET live/<file>?v=<viewer>: a media playlist (rewritten) or an fMP4 part/segment (streamed). */
-  async file(profileId: string, feed: Feed, name: string, query: Record<string, unknown>, who: string, signal?: AbortSignal): Promise<LiveResult> {
+  async file(profileId: string, feed: K, name: string, query: Record<string, unknown>, who: string, signal?: AbortSignal): Promise<LiveResult> {
     if (!LIVE_FILE_RE.test(name)) return fail(404, 'not_found', 'No such live preview file.');
     const vid = typeof query.v === 'string' ? query.v : '';
     this.prune();
@@ -337,6 +352,14 @@ export class LivePreviewService {
       contentLength: res.headers.get('content-length'),
       body: Readable.fromWeb(res.body as import('node:stream/web').ReadableStream<Uint8Array>),
     };
+  }
+
+  private label(key: K): string {
+    return this.deps.label ? this.deps.label(key) : `${FEED_NAME[key as unknown as Feed] ?? key} feed`;
+  }
+
+  private offline(key: K): LiveError {
+    return fail(404, 'feed_offline', `The ${this.label(key)} is offline (${this.deps.offlineReason ?? "OBS isn't sending it"}).`);
   }
 
   private prune(): void {

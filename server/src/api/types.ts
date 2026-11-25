@@ -52,6 +52,8 @@ export type ApiEventType =
   | 'music.request'
   | 'show.changed'
   | 'library.changed'
+  | 'guest.feed.status'
+  | 'guest.feeds.changed'
   | 'system.reset';
 
 /** Scope each event type needs. system.reset is a control frame every stream may get. */
@@ -93,6 +95,8 @@ export const EVENT_SCOPES: Record<ApiEventType, ApiScope | null> = {
   'music.request': 'chat:read',
   'show.changed': 'show:read',
   'library.changed': 'show:read',
+  'guest.feed.status': 'status:read',
+  'guest.feeds.changed': 'status:read',
   'system.reset': null,
 };
 
@@ -314,7 +318,7 @@ export interface ApiNotice {
 export type IssueSeverity = 'info' | 'warning' | 'critical';
 export const ISSUE_SEVERITIES: readonly IssueSeverity[] = ['info', 'warning', 'critical'];
 
-export type IssueKind = 'feed.offline' | 'destination.down' | 'stream.down' | 'obs.output.down' | 'obs.issue';
+export type IssueKind = 'feed.offline' | 'destination.down' | 'stream.down' | 'obs.output.down' | 'obs.issue' | 'guest.feed.offline' | 'guest.feed.codec';
 
 export type IssueResolution = 'recovered' | 'ended' | 'removed' | 'stale';
 
@@ -323,7 +327,9 @@ export type ApiIssueSubject =
   | { type: 'destination'; destinationId: string; platform: PlatformId; name: string }
   | { type: 'stream' }
   | { type: 'obs.output'; appId: string; output: string; canvas: string | null }
-  | { type: 'obs.source'; appId: string; source: string; path: string | null };
+  | { type: 'obs.source'; appId: string; source: string; path: string | null }
+  /** A guest feed slot (docs/API.md §18, v1.17). */
+  | { type: 'guest.feed'; slot: string; name: string };
 
 /** An open issue (GET /status → issues; issue.raised without `update`). */
 export interface ApiIssue {
