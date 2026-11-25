@@ -1,6 +1,6 @@
 {
   "name": "ctd-relay",
-  "version": "0.2.80",
+  "version": "0.2.90",
   "description": "Self-hosted multistreaming: landscape + vertical from OBS to every platform, one title, one chat.",
   "license": "AGPL-3.0-only",
   "private": true,
@@ -21,6 +21,7 @@
     "setup-tools": "node scripts/setup-tools.mjs",
     "smoke": "tsx scripts/smoke-test.ts",
     "e2e:preview": "tsx scripts/preview-e2e.ts",
+    "e2e:guests": "tsx scripts/guest-feeds-e2e.ts",
     "cli": "tsx server/src/cli.ts"
   },
   "dependencies": {

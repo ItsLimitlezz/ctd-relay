@@ -3,6 +3,7 @@ import type { Account, Destination, FieldSpec } from '../../../shared/types.js';
 import { normalizeFields } from '../http/validation.js';
 import { DriverError, type ChatMessageInput, type PreparedLive } from '../platforms/types.js';
 import { advance, dest, driver, flush, goLive, harness, PLAN, prepared, STATS } from './test-helpers.js';
+import { bindGuestRoutes, type GuestRoutes } from '../media/guest-routes.js';
 
 beforeEach(() => {
   vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval', 'Date'] });
@@ -55,6 +56,22 @@ describe('go live', () => {
     await flush();
     expect(h.orch.state().status).toBe('live');
     expect(prepare).toHaveBeenCalledTimes(1);
+  });
+
+  it('a guest feed routed into an input never starts Go live (auto go-live counts OBS feeds only)', async () => {
+    const prepare = vi.fn(async () => prepared());
+    const h = harness({ dests: [dest('d1')], drivers: [driver('custom', { prepare })] });
+    const routed = new Set<string>(['landscape']);
+    bindGuestRoutes(h.services, { isRouted: (_p: string, feed: string) => routed.has(feed) } as unknown as GuestRoutes);
+    await h.orch.init();
+    h.media.set('landscape', true);
+    await flush();
+    expect(h.orch.state().status).toBe('offline');
+    expect(prepare).not.toHaveBeenCalled();
+    // OBS's own vertical feed comes online: that one does start it.
+    h.media.set('vertical', true);
+    await flush();
+    expect(h.orch.state().status).toBe('live');
   });
 
   it('does not auto start when auto go-live is off', async () => {

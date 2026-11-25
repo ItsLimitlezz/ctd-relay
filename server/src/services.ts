@@ -408,6 +408,13 @@ export interface MediaServer {
    * UnknownProfileError for an unknown profile.
    */
   hlsSource?(profileId: string, feed: Feed): { baseUrl: string; authorization: string } | null;
+  /**
+   * Guest feeds (docs/API.md §18): the same for a guest slot's path (`guest/<slot>`). null while HLS
+   * is off or the media server isn't running. Callers check the slot belongs to the profile first.
+   */
+  guestHlsSource?(slot: string): { baseUrl: string; authorization: string } | null;
+  /** Local URL Relay reads a guest slot with (thumbnails only; never a push). */
+  guestReadUrl?(slot: string): string;
 }
 
 /** Supervises one FFmpeg process per destination. Emits 'push' events on the EventBus. */

@@ -23,6 +23,9 @@ import browserRoutes from './routes/browser.js';
 import chatRoutes from './routes/chat.js';
 import destinationRoutes from './routes/destinations.js';
 import feedPreviewRoutes from './routes/feed-preview.js';
+import guestFeedRoutes from './routes/guest-feeds.js';
+import guestRouteRoutes from './routes/guest-routes.js';
+import pullLinkRoutes from './routes/pull-links.js';
 import healthRoutes from './routes/health.js';
 import ingestRoutes from './routes/ingest.js';
 import musicRoutes from './routes/music.js';
@@ -115,6 +118,9 @@ export async function buildApp(services: AppServices, tlsMaterial: TlsMaterial |
   await app.register(ingestRoutes, opts);
   // Feed thumbnails + the live preview (LL-HLS proxied from the loopback MediaMTX, docs/PREVIEW.md).
   await app.register(feedPreviewRoutes, opts);
+  await app.register(guestFeedRoutes, opts);
+  await app.register(guestRouteRoutes, opts);
+  await app.register(pullLinkRoutes, opts);
   await app.register(chatRoutes, opts);
   // Spotify now playing + chat song requests (Settings → Spotify).
   await app.register(musicRoutes, opts);

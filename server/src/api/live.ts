@@ -33,7 +33,7 @@ export function livePreviewOf(services: AppServices): LivePreviewService {
   });
 }
 
-export interface LiveRouteOptions {
+export interface LiveRouteOptions<K extends string = Feed> {
   /** e.g. '/api/profiles/:id/feeds/:feed' or '/profiles/:id/feeds/:feed' (under the /api/v1 prefix). */
   base: string;
   preHandler: (req: FastifyRequest, reply: FastifyReply) => Promise<unknown>;
@@ -44,8 +44,14 @@ export interface LiveRouteOptions {
   /** Who is asking ('session:<id>' / 'token:<id>'): a viewer only works for whoever opened it. */
   who(req: FastifyRequest): string;
   /** Send an error in the route family's own format. */
-  error(reply: FastifyReply, status: number, code: LiveError['code'], message: string): FastifyReply;
-  live: () => LivePreviewService;
+  error(reply: FastifyReply, status: number, code: LiveError['code'] | 'unknown_guest_feed', message: string): FastifyReply;
+  live: () => LivePreviewService<K>;
+  /**
+   * Which stream of the profile (default: the `:feed` param, landscape or vertical). Returning null
+   * sends 404: `notFound` (default `not_found`, "Feed: landscape or vertical.").
+   */
+  key?(req: FastifyRequest, profileId: string): K | null;
+  notFound?: { code: 'not_found' | 'unknown_guest_feed'; message: string };
 }
 
 function feedOf(req: FastifyRequest): Feed | null {
@@ -62,7 +68,7 @@ function clientGone(reply: FastifyReply): AbortSignal {
   return ac.signal;
 }
 
-function sendLive(reply: FastifyReply, result: LiveResult, opts: LiveRouteOptions): FastifyReply {
+function sendLive<K extends string>(reply: FastifyReply, result: LiveResult, opts: LiveRouteOptions<K>): FastifyReply {
   reply.header('cache-control', 'no-store');
   if (!result.ok) {
     if (result.retryAfterSec) reply.header('retry-after', String(result.retryAfterSec));
@@ -74,20 +80,23 @@ function sendLive(reply: FastifyReply, result: LiveResult, opts: LiveRouteOption
 }
 
 /** GET <base>/live.m3u8 and <base>/live/<file>. */
-export function registerLiveRoutes(app: FastifyInstance, opts: LiveRouteOptions): void {
+export function registerLiveRoutes<K extends string = Feed>(app: FastifyInstance, opts: LiveRouteOptions<K>): void {
+  const keyOf = opts.key ?? ((req: FastifyRequest) => feedOf(req) as K | null);
+  const notFound = opts.notFound ?? { code: 'not_found' as const, message: 'Feed: landscape or vertical.' };
+
   app.get(`${opts.base}/live.m3u8`, { preHandler: opts.preHandler }, async (req, reply) => {
     const profileId = opts.profile(req, reply);
     if (profileId === null) return reply;
-    const feed = feedOf(req);
-    if (!feed) return opts.error(reply, 404, 'not_found', 'Feed: landscape or vertical.');
+    const feed = keyOf(req, profileId);
+    if (!feed) return opts.error(reply, 404, notFound.code, notFound.message);
     return sendLive(reply, await opts.live().open(profileId, feed, opts.who(req), clientGone(reply)), opts);
   });
 
   app.get(`${opts.base}/live/:file`, { preHandler: opts.filePreHandler ?? opts.preHandler }, async (req, reply) => {
     const profileId = opts.profile(req, reply);
     if (profileId === null) return reply;
-    const feed = feedOf(req);
-    if (!feed) return opts.error(reply, 404, 'not_found', 'Feed: landscape or vertical.');
+    const feed = keyOf(req, profileId);
+    if (!feed) return opts.error(reply, 404, notFound.code, notFound.message);
     const file = (req.params as Record<string, unknown>).file;
     const query = (req.query ?? {}) as Record<string, unknown>;
     const result = await opts.live().file(profileId, feed, typeof file === 'string' ? file : '', query, opts.who(req), clientGone(reply));

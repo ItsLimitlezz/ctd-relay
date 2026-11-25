@@ -19,6 +19,16 @@ import { EventBus } from './events.js';
 import { buildApp } from './http/app.js';
 import { createPushSupervisor } from './media/ffmpeg-supervisor.js';
 import { createMediaServer } from './media/mediamtx.js';
+import { GuestFeeds } from './media/guest-feeds.js';
+import { createGuestFeedsRepo } from './db/guest-feeds-repo.js';
+import { bindGuestFeeds } from './api/guest-feeds.js';
+import { DEFAULT_GUEST_LIMITS } from './media/guest-feeds.js';
+import { bindGuestRoutes, GuestRoutes, guestRoutesOf } from './media/guest-routes.js';
+import { createGuestRoutesRepo } from './db/guest-routes-repo.js';
+import { PullLinks } from './media/pull-links.js';
+import { bindPullLinks } from './api/pull-links.js';
+import { DEFAULT_PULL_LINK_MAX_READERS } from '../../shared/pull-links.js';
+import { DEFAULT_PROFILE_ID } from '../../shared/types.js';
 import { transcodeCapabilitiesFor } from './media/transcode-capabilities.js';
 import { createTranscodeRuntime } from './media/transcode-settings.js';
 import { errorMessage, redactText } from './orchestrator/async-utils.js';
@@ -135,8 +145,56 @@ export async function createServices(config: AppConfig): Promise<AppServices> {
   const repos = createRepos(db, secretBox);
 
   const tls = createTlsManager({ config, log: log.child({ mod: 'tls' }), settings: repos.settings });
+  // Guest feeds (docs/GUEST-FEEDS.md): remote guests publish to guest/<slot> on the same MediaMTX;
+  // read back only as LL-HLS / thumbnails, never pushed. Own table track (guest_feeds_meta).
+  const guests = new GuestFeeds({
+    repo: createGuestFeedsRepo(db),
+    secrets: repos.secrets,
+    bus,
+    log: log.child({ mod: 'guest-feeds' }),
+    limits: config.guestFeeds ?? DEFAULT_GUEST_LIMITS,
+  });
   // Every profile's OBS ingest (the default profile keeps live/landscape|vertical and the 'ingest' keys).
-  const media = createMediaServer({ config, bus, log: log.child({ mod: 'mediamtx' }), repos });
+  // Guest feed routing (docs/GUEST-FEEDS.md → Routing): passthrough to custom servers or into a
+  // profile's input. Its own push supervisor and bus; the auth hook asks it about route keys.
+  let liveCheck: (profileId: string) => boolean = () => false;
+  let selfHosts: () => string[] = () => [];
+  const guestRoutes = new GuestRoutes({
+    config,
+    repo: createGuestRoutesRepo(db),
+    guests,
+    secrets: repos.secrets,
+    settings: repos.settings,
+    profiles: repos.profiles,
+    bus,
+    log: log.child({ mod: 'guest-routes' }),
+    isLive: (profileId) => liveCheck(profileId),
+    selfHosts: () => selfHosts(),
+  });
+  // Pull links (docs/GUEST-FEEDS.md → Pull link): OBS Media Source / VLC read a guest feed (or a
+  // profile's own feed) straight from MediaMTX with a per-feed read key. Off by default.
+  const pull = new PullLinks({
+    secrets: repos.secrets,
+    log: log.child({ mod: 'pull-links' }),
+    maxReaders: config.pullLinkMaxReaders ?? DEFAULT_PULL_LINK_MAX_READERS,
+    guestProfileOf: (slot) => guests.profileOf(slot),
+    slugOf: (profileId) => {
+      if (profileId === DEFAULT_PROFILE_ID) return null;
+      return repos.profiles.get(profileId)?.slug;
+    },
+    profileOfSlug: (slug) => {
+      if (slug === null) return DEFAULT_PROFILE_ID;
+      const row = repos.profiles.getBySlug(slug);
+      return row && row.id !== DEFAULT_PROFILE_ID ? row.id : null;
+    },
+  });
+  bus.on('guest-feeds-changed', (e) => {
+    for (const slot of e.removed) void pull.forgetGuest(slot).catch(() => {});
+  });
+  void pull.load().catch((err: unknown) => log.error({ err: err instanceof Error ? err.message : String(err) }, 'Could not load pull link keys'));
+  const media = createMediaServer({ config, bus, log: log.child({ mod: 'mediamtx' }), repos, guests, routeAuth: guestRoutes, pull });
+  guestRoutes.attachMedia(media);
+  void guestRoutes.load();
   // Push ids are destination ids; the supervisor reads the destination's profile to pick its feeds.
   // A destination with a transcoding profile encodes in its own push while Settings → Transcoding is
   // on (off by default; docs/TRANSCODING.md). The capability service lives on `services`, built below.
@@ -195,6 +253,18 @@ export async function createServices(config: AppConfig): Promise<AppServices> {
     appSettings,
     publicBaseUrl,
   } as Omit<AppServices, 'orchestrators' | 'driverContext'> as AppServices;
+
+  bindGuestFeeds(services, guests);
+  bindGuestRoutes(services, guestRoutes);
+  bindPullLinks(services, pull);
+  liveCheck = (profileId) => {
+    try {
+      return services.orchestrators.get(profileId).state().status !== 'offline';
+    } catch {
+      return false;
+    }
+  };
+  selfHosts = () => [appSettings().ingestHost, config.publicHost ?? '', config.publicIp ?? '', tls.status().publicIp ?? ''].filter((h): h is string => Boolean(h));
 
   services.driverContext = async ({ platform, accountId, destinationId, signal }): Promise<DriverContext> => {
     const app = await repos.secrets.scoped(`app:${platform}`).getJson<Record<string, string>>('values');
@@ -291,6 +361,7 @@ export async function main(): Promise<void> {
       await services.orchestrators.shutdown();
       await earlySave;
       await services.pushes.stopAll();
+      await guestRoutesOf(services)?.stopAll();
       await services.browser.shutdown();
       await services.media.stop();
       await services.tls.stop();

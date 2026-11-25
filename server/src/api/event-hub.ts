@@ -34,6 +34,8 @@ import { alertEventData } from './alert-map.js';
 import { apiMessageFromUser, chatMessageData, moderationEvent } from './chat-map.js';
 import { appsForProfile, publicApp } from './hub.js';
 import { IssueTracker, type IssueHolds } from './issues.js';
+import { guestFeedsOf } from './guest-feeds.js';
+import type { GuestFeedList } from '../../../shared/guest-feeds.js';
 import { deepEqual } from './json.js';
 import { obsStoreFor } from './obs.js';
 import { apiProfile } from './profiles.js';
@@ -93,6 +95,8 @@ export interface EventHubDeps {
   obsAppForgotten?(profileId: string, appId: string, resolution: 'stale' | 'removed'): void;
   /** Issue hold times (tests). Default: ISSUE_HOLDS. */
   issueHolds?: Partial<IssueHolds>;
+  /** A profile's guest feed list (docs/API.md §18), for guest.feeds.changed. Default: none sent. */
+  guestFeeds?(profileId: string): GuestFeedList | null;
   log: Pick<Logger, 'warn'>;
   now?: () => number;
   ulid?: UlidGenerator;
@@ -297,6 +301,21 @@ export class EventHub {
         this.guard(() => this.publish('show.changed', coreSource(c.profileId), { profileId: c.profileId, revision: c.revision, parentRevision: c.parentRevision, byAppId: c.byAppId })),
       ),
       bus.on('library-changed', (c) => this.guard(() => this.publish('library.changed', coreSource(c.profileId), {}))),
+      // Guest feeds (§18): state per slot (GuestFeeds already throttles bitrate-only changes to 2 s).
+      bus.on('guest-feed', (g) =>
+        this.guard(() => {
+          this.issues.guestFeed(g.profileId, g.feed, g.expectedOffline);
+          this.publish('guest.feed.status', coreSource(g.profileId), g.feed);
+        }),
+      ),
+      bus.on('guest-feeds-changed', (c) =>
+        this.guard(() => {
+          for (const slot of c.removed) this.issues.guestRemoved(c.profileId, slot, true);
+          for (const slot of c.rekeyed) this.issues.guestRemoved(c.profileId, slot, false);
+          const list = this.deps.guestFeeds?.(c.profileId) ?? null;
+          if (list) this.publish('guest.feeds.changed', coreSource(c.profileId), list);
+        }),
+      ),
       bus.on('music-request', (r) =>
         this.guard(() => {
           const dest = this.safeDestination(r.destinationId);
@@ -890,6 +909,7 @@ export function eventHubDeps(services: AppServices): EventHubDeps {
     },
     profiles: () => services.repos.profiles.list(),
     summaries: () => services.orchestrators.summaries(),
+    guestFeeds: (profileId) => guestFeedsOf(services)?.list(profileId) ?? null,
     apps: () => services.apps.list(),
     obsAppForgotten: (profileId, appId, resolution) => {
       const store = obsStoreFor(services);

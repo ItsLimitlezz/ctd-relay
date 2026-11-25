@@ -22,25 +22,26 @@ export interface Preview {
   at: number;
 }
 
-export interface PreviewDeps {
+/** `K` names one stream of a profile: a Feed, or a guest slot id (guest feeds, docs/API.md §18). */
+export interface PreviewDeps<K extends string = Feed> {
   /** Is the feed online (OBS sending it)? */
-  online(profileId: string, feed: Feed): boolean;
+  online(profileId: string, feed: K): boolean;
   /** One JPEG frame of the feed (rejects on failure). */
-  grab(profileId: string, feed: Feed): Promise<Buffer>;
+  grab(profileId: string, feed: K): Promise<Buffer>;
   now?: () => number;
 }
 
-export class PreviewService {
+export class PreviewService<K extends string = Feed> {
   private readonly cache = new Map<string, Preview>();
   private readonly inflight = new Map<string, Promise<Preview>>();
   private readonly now: () => number;
 
-  constructor(private readonly deps: PreviewDeps) {
+  constructor(private readonly deps: PreviewDeps<K>) {
     this.now = deps.now ?? Date.now;
   }
 
   /** The feed's preview, fresh within PREVIEW_MAX_AGE_MS, or null when the feed is offline. */
-  async get(profileId: string, feed: Feed): Promise<Preview | null> {
+  async get(profileId: string, feed: K): Promise<Preview | null> {
     const key = `${profileId}:${feed}`;
     if (!this.deps.online(profileId, feed)) {
       this.cache.delete(key);

@@ -97,6 +97,10 @@ export function parseServerMessage(raw: unknown): WsServerMessage | null {
         : null;
     case 'profiles':
       return Array.isArray(d.profiles) ? (d as WsServerMessage) : null;
+    case 'guest-feed':
+      return typeof d.profileId === 'string' && isObject(d.guestFeed) && typeof d.guestFeed.slot === 'string' ? (d as WsServerMessage) : null;
+    case 'guest-feeds-changed':
+      return typeof d.profileId === 'string' ? (d as WsServerMessage) : null;
     case 'pairings':
       return Array.isArray(d.pairings) ? (d as WsServerMessage) : null;
     case 'apps':

@@ -48,7 +48,7 @@ describe('auth', () => {
       name: 'ctd-multi-stream',
       version: '9.9.9',
       build: { commit: null, date: null },
-      apiRevision: '1.16',
+      apiRevision: '1.17',
       apiVersion: 1,
       token: { name: 'test', scopes: ['chat:read', 'status:read'], profileId: null },
     });
@@ -162,6 +162,20 @@ describe('GET /openapi.json', () => {
       '/profiles/{id}/previews/{feed}',
       '/profiles/{id}/feeds/{feed}/live.m3u8',
       '/profiles/{id}/feeds/{feed}/live/{file}',
+      '/profiles/{id}/guest-feeds',
+      '/profiles/{id}/guest-feeds/{slot}/preview',
+      '/profiles/{id}/guest-feeds/{slot}/live.m3u8',
+      '/profiles/{id}/guest-feeds/{slot}/live/{file}',
+      '/profiles/{id}/guest-routes',
+      '/profiles/{id}/guest-feeds/{slot}/routes',
+      '/profiles/{id}/guest-feeds/{slot}/routes/{route}',
+      '/profiles/{id}/guest-feeds/{slot}/routes/{route}/start',
+      '/profiles/{id}/guest-feeds/{slot}/routes/{route}/stop',
+      '/profiles/{id}/pull-links',
+      '/profiles/{id}/guest-feeds/{slot}/pull',
+      '/profiles/{id}/guest-feeds/{slot}/pull/rotate',
+      '/profiles/{id}/feeds/{feed}/pull',
+      '/profiles/{id}/feeds/{feed}/pull/rotate',
       '/obs/socket',
       '/apps',
       '/apps/{appId}',
@@ -377,7 +391,7 @@ describe('alert.*', () => {
     const doc = (await get('/api/v1/openapi.json')).json();
     expect(doc.components.schemas.Envelope.properties.type.enum).toEqual(expect.arrayContaining(['alert.superchat', 'alert.subscription', 'alert.tip']));
     expect(doc.components.schemas.Alert.properties.kind.enum).toHaveLength(9);
-    expect(doc.info.version).toMatch(/^1\.16 /);
+    expect(doc.info.version).toMatch(/^1\.17 /);
   });
 });
 

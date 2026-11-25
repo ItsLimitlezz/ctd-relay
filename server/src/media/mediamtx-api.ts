@@ -2,6 +2,7 @@
 // https://github.com/bluenviron/mediamtx/blob/v1.21.2/api/openapi.yaml
 
 import type { MtxPath, MtxPathList } from './feed-state.js';
+import type { RtmpConn } from './pull-links.js';
 
 export type FetchFn = typeof fetch;
 
@@ -29,6 +30,10 @@ export interface MediaMtxApi {
   kickPublisher(pathName: string): Promise<boolean>;
   /** The IP address publishing to `pathName` (OBS's machine), or null when nobody is. */
   publisherAddress(pathName: string): Promise<string | null>;
+  /** Every RTMP connection (pull links count their readers from it). Optional: test doubles may omit it. */
+  listRtmpConns?(signal?: AbortSignal): Promise<RtmpConn[]>;
+  /** Disconnect one RTMP connection by id. */
+  kickRtmpConn?(id: string): Promise<boolean>;
 }
 
 /** "10.20.30.40:61234" / "[::ffff:10.20.30.40]:61234" / "[fe80::1]:5" -> the IP alone. */
@@ -74,6 +79,16 @@ export function createMediaMtxApi(port: number, fetchImpl: FetchFn = fetch): Med
       const route = source?.type ? KICK_ROUTES[source.type] : undefined;
       if (!source?.id || !route) return false;
       const res = await call('POST', `${route}/kick/${encodeURIComponent(source.id)}`);
+      await res.body?.cancel().catch(() => {});
+      return true;
+    },
+    async listRtmpConns(signal) {
+      const res = await call('GET', 'rtmpconns/list?itemsPerPage=1000', signal);
+      const body = (await res.json()) as { items?: unknown };
+      return Array.isArray(body.items) ? (body.items as RtmpConn[]).filter((c) => typeof c?.id === 'string') : [];
+    },
+    async kickRtmpConn(id) {
+      const res = await call('POST', `rtmpconns/kick/${encodeURIComponent(id)}`);
       await res.body?.cancel().catch(() => {});
       return true;
     },

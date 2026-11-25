@@ -96,8 +96,8 @@ describe('issues (v1.16)', () => {
     expect(await poll(reader, start, 'issue.*')).toHaveLength(1);
   });
 
-  it('the OpenAPI document describes them at revision 1.16', () => {
-    expect(API_REVISION).toBe('1.16');
+  it('the OpenAPI document describes them (since revision 1.16)', () => {
+    expect(Number(API_REVISION.split('.')[1])).toBeGreaterThanOrEqual(16);
     const doc = openApiDocument('9.9.9') as { components: { schemas: Record<string, { required?: string[]; properties?: Record<string, unknown> }> } };
     const { Issue, IssueRaised, IssueCleared, Status, Envelope: Env } = doc.components.schemas;
     expect(Issue!.required).toEqual(['id', 'kind', 'rule', 'severity', 'title', 'message', 'subject', 'onProgram', 'scene', 'firstSeen', 'updatedAt']);
