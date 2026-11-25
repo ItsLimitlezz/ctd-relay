@@ -7,6 +7,7 @@
 // - Role legend in comments: [public] no auth, [user] any logged-in user, [admin] admin only.
 
 import type { GuestFeed } from './guest-feeds.js';
+import type { SrtStatus } from './srt.js';
 import type {
   Account,
   ApiScope,
@@ -309,7 +310,19 @@ export interface IngestInfo {
    * Default profile: `landscape?key=…` (unchanged from before profiles). Other profiles:
    * `<slug>/landscape?key=…` — each profile has its own keys, so two OBS can stream at once.
    */
-  feeds: { feed: Feed; streamKey: string; fullUrl: string }[];
+  feeds: {
+    feed: Feed;
+    streamKey: string;
+    fullUrl: string;
+    /**
+     * 0.2.90 / API 1.17: the same feed over SRT, for OBS Settings → Stream → Service "Custom…" →
+     * Server (stream key empty): `srt://<host>:<port>?streamid=publish:<path>:key=<k>&latency=<µs>`.
+     * Null when SRT is off (see `srt`).
+     */
+    srtUrl?: string | null;
+  }[];
+  /** 0.2.90 / API 1.17: whether SRT works here (docs/SRT.md). */
+  srt?: SrtStatus;
 }
 /** POST /api/ingest/rotate [admin] body { feed } -> IngestInfo */
 export interface RotateIngestKeyRequest {

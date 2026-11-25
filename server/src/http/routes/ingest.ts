@@ -8,6 +8,8 @@ import { DEFAULT_PROFILE_ID, FEEDS } from '../../../../shared/types.js';
 import type { AppServices } from '../../services.js';
 import { audit, requireAdmin, type RouteOptions } from '../guards.js';
 import { HttpError, installErrorHandler } from '../validation.js';
+import { srtStatusOf } from '../../media/srt-status.js';
+import { srtPublishUrlFromStreamKey } from '../../../../shared/srt.js';
 
 const profileIdSchema = z.string().min(1).max(128);
 const RotateSchema = z.object({ feed: z.enum(FEEDS), profileId: profileIdSchema.optional() });
@@ -45,14 +47,17 @@ export function requireProfileId(services: AppServices, profileId: string): stri
  */
 export async function ingestInfoFor(services: AppServices, profileId: string, requestHostname: string): Promise<IngestInfo> {
   const { media, config } = services;
-  const serverUrl = `rtmp://${ingestHost(services.appSettings().ingestHost, requestHostname)}:${config.rtmpPort}/${media.appName}`;
+  const host = ingestHost(services.appSettings().ingestHost, requestHostname);
+  const serverUrl = `rtmp://${host}:${config.rtmpPort}/${media.appName}`;
+  const srt = srtStatusOf(media);
   const feeds = await Promise.all(
     FEEDS.map(async (feed) => {
       const streamKey = await media.streamKeyField(profileId, feed);
-      return { feed, streamKey, fullUrl: `${serverUrl}/${streamKey}` };
+      const srtUrl = srt.enabled && srt.port ? srtPublishUrlFromStreamKey(host, srt.port, media.appName, streamKey) : null;
+      return { feed, streamKey, fullUrl: `${serverUrl}/${streamKey}`, srtUrl };
     }),
   );
-  return { profileId, serverUrl, feeds };
+  return { profileId, serverUrl, feeds, srt };
 }
 
 /** IngestInfo for a request (`?profile=`, default: the default profile). */

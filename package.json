@@ -22,6 +22,7 @@
     "smoke": "tsx scripts/smoke-test.ts",
     "e2e:preview": "tsx scripts/preview-e2e.ts",
     "e2e:guests": "tsx scripts/guest-feeds-e2e.ts",
+    "e2e:srt": "tsx scripts/srt-e2e.ts",
     "cli": "tsx server/src/cli.ts"
   },
   "dependencies": {

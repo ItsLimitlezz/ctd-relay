@@ -290,6 +290,11 @@ export function GuestHelp() {
           Key <code>&lt;slot&gt;?key=&lt;key&gt;</code>. Output: x264 or hardware H.264, CBR, 2500–6000 kbps, keyframe interval 2 s, AAC 160 kbps.
         </li>
         <li>
+          <strong>OBS over SRT (lower delay):</strong> Settings → Stream → Service <em>Custom…</em>, Server = the <em>SRT</em> address from the ingest
+          details (<code>srt://&lt;relay host&gt;:&lt;SRT port&gt;?streamid=publish:guest/&lt;slot&gt;:key=&lt;key&gt;&amp;latency=150000</code>), Stream
+          Key empty. Over the internet use <code>latency=800000</code>; the server's SRT UDP port must be forwarded.
+        </li>
+        <li>
           <strong>Larix Broadcaster (phone):</strong> Settings → Connections → New: paste the <em>Full URL</em>{' '}
           <code>rtmp://&lt;relay host&gt;:&lt;RTMP port&gt;/guest/&lt;slot&gt;?key=&lt;key&gt;</code>. Video codec H.264, audio AAC.
         </li>

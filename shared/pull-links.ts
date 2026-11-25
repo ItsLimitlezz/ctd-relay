@@ -2,6 +2,7 @@
 // pastes into an OBS Media Source or VLC to watch a guest feed (or a profile's own Landscape /
 // Vertical feed) without a server to push to. Off by default; each feed has its own read key.
 
+import type { SrtStatus } from './srt.js';
 import type { Feed } from './types.js';
 
 /** Default of the server's cap on concurrent pull readers per feed (env PULL_LINK_MAX_READERS). */
@@ -30,4 +31,11 @@ export interface PullLinkInfo extends PullLinkState {
   url: string | null;
   /** The same as `url` without the query (handy to show which feed it is). */
   serverUrl: string;
+  /**
+   * API 1.17: the pull link over SRT (lower delay), `srt://<host>:<port>?streamid=read:<path>:key=<read key>&latency=<µs>`.
+   * OBS Media Source: untick Local File, paste into Input, Input Format `mpegts`. Null while off or when SRT is off.
+   */
+  srtUrl?: string | null;
+  /** API 1.17: whether SRT works here (docs/SRT.md). */
+  srt?: SrtStatus;
 }

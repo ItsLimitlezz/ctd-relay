@@ -32,6 +32,9 @@ services:
       # RTMP from OBS (LAN only, never port-forward). If 1935 is already used on the NAS ("address already
       # in use"), use e.g. "1936:1936" here and add RTMP_PORT: "1936" under environment.
       - "1935:1935"
+      # SRT (docs/SRT.md): low-delay ingest and pull links, UDP. Forward it on the router only if a
+      # sender or reader is outside your LAN. Remove this line (or set SRT_PORT: "0") to go without SRT.
+      - "8890:8890/udp"
     environment:
       # Port the router forwards to 30443 (used in links and redirects).
       PUBLIC_PORT: "443"

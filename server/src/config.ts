@@ -8,6 +8,7 @@ import {
   DEFAULT_GUEST_FEEDS_MAX,
 } from '../../shared/guest-feeds.js';
 import { DEFAULT_PULL_LINK_MAX_READERS } from '../../shared/pull-links.js';
+import { DEFAULT_SRT_PORT } from '../../shared/srt.js';
 import type { TlsMode } from '../../shared/types.js';
 
 const bool = z
@@ -28,6 +29,8 @@ const EnvSchema = z.object({
   HTTP_PORT: z.coerce.number().int().default(8080),
   /** RTMP ingest port for OBS (keep this LAN-only). */
   RTMP_PORT: z.coerce.number().int().default(1935),
+  /** SRT ingest + pull port (UDP; docs/SRT.md). 0 turns SRT off. */
+  SRT_PORT: z.coerce.number().int().min(0).max(65535).default(DEFAULT_SRT_PORT),
   /** MediaMTX control API port (bound to 127.0.0.1). */
   MEDIAMTX_API_PORT: z.coerce.number().int().default(9997),
   /** MediaMTX Low-Latency HLS port for the live preview (bound to 127.0.0.1; Relay proxies it). */
@@ -93,6 +96,8 @@ export interface AppConfig {
   webPort: number;
   httpPort: number;
   rtmpPort: number;
+  /** SRT UDP port (docs/SRT.md); 0 = off. Missing in hand-built test configs (= off). */
+  srtPort?: number;
   mediamtxApiPort: number;
   /** MediaMTX LL-HLS port (127.0.0.1), for the live preview. Missing in hand-built test configs (= off). */
   mediamtxHlsPort?: number;
@@ -146,6 +151,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env, version = '0.0.
     webPort: e.WEB_PORT,
     httpPort: e.HTTP_PORT,
     rtmpPort: e.RTMP_PORT,
+    srtPort: e.SRT_PORT,
     mediamtxApiPort: e.MEDIAMTX_API_PORT,
     mediamtxHlsPort: e.MEDIAMTX_HLS_PORT,
     livePreviewMaxViewers: e.LIVE_PREVIEW_MAX_VIEWERS,

@@ -18,10 +18,11 @@ const KICK_ROUTES: Record<string, string> = {
   webRTCSession: 'webrtc/sessions',
 };
 
-/** Source type -> connection lookup prefix (RTMP only: that's how OBS publishes). */
+/** Source type -> connection lookup prefix (how OBS publishes: RTMP or SRT). */
 const CONN_ROUTES: Record<string, string> = {
   rtmpConn: 'rtmp/conns',
   rtmpsConn: 'rtmps/conns',
+  srtConn: 'srt/conns',
 };
 
 export interface MediaMtxApi {
@@ -34,6 +35,10 @@ export interface MediaMtxApi {
   listRtmpConns?(signal?: AbortSignal): Promise<RtmpConn[]>;
   /** Disconnect one RTMP connection by id. */
   kickRtmpConn?(id: string): Promise<boolean>;
+  /** Every SRT connection (docs/SRT.md; same fields as RTMP's: id, state, path, query, created). */
+  listSrtConns?(signal?: AbortSignal): Promise<RtmpConn[]>;
+  /** Disconnect one SRT connection by id. */
+  kickSrtConn?(id: string): Promise<boolean>;
 }
 
 /** "10.20.30.40:61234" / "[::ffff:10.20.30.40]:61234" / "[fe80::1]:5" -> the IP alone. */
@@ -89,6 +94,16 @@ export function createMediaMtxApi(port: number, fetchImpl: FetchFn = fetch): Med
     },
     async kickRtmpConn(id) {
       const res = await call('POST', `rtmpconns/kick/${encodeURIComponent(id)}`);
+      await res.body?.cancel().catch(() => {});
+      return true;
+    },
+    async listSrtConns(signal) {
+      const res = await call('GET', 'srtconns/list?itemsPerPage=1000', signal);
+      const body = (await res.json()) as { items?: unknown };
+      return Array.isArray(body.items) ? (body.items as RtmpConn[]).filter((c) => typeof c?.id === 'string') : [];
+    },
+    async kickSrtConn(id) {
+      const res = await call('POST', `srtconns/kick/${encodeURIComponent(id)}`);
       await res.body?.cancel().catch(() => {});
       return true;
     },

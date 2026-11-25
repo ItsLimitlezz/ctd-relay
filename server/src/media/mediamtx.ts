@@ -8,16 +8,18 @@
 // so adding or removing a profile never restarts MediaMTX (and never drops another profile's OBS).
 
 import type { ChildProcess } from 'node:child_process';
+import dgram from 'node:dgram';
 import { constants as fsConstants } from 'node:fs';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import type { Logger } from 'pino';
+import { srtStatusOff, srtStatusOn, type SrtStatus } from '../../../shared/srt.js';
 import { DEFAULT_PROFILE_ID, FEEDS, type Feed, type FeedState } from '../../../shared/types.js';
 import type { AppConfig } from '../config.js';
 import type { EventBus } from '../events.js';
 import { profileSecretScope, type MediaMtxAuthRequest, type MediaServer, type Repos } from '../services.js';
 import { startAuthServer, type AuthServer } from './auth-server.js';
-import type { PullLinks } from './pull-links.js';
+import type { PullLinks, RtmpConn } from './pull-links.js';
 import {
   authorizeMediaRequest,
   FEED_KEY_NAMES,
@@ -58,6 +60,23 @@ export interface MediaServerDeps {
    */
   probe?: ((readUrl: string) => Promise<FeedMeasurements>) | null;
   probeDelayMs?: number;
+  /** Can the SRT UDP port be bound (docs/SRT.md)? Default: a real bind test. */
+  udpPortFree?: (port: number) => Promise<boolean>;
+}
+
+/** SRT connection ids carry this prefix in the merged RTMP + SRT list pull links count from. */
+const SRT_CONN_PREFIX = 'srt:';
+
+/** Bind the UDP port for a moment: MediaMTX exits if its SRT port is taken, which would take RTMP down too. */
+export function udpPortFree(port: number): Promise<boolean> {
+  return new Promise((resolve) => {
+    const sock = dgram.createSocket('udp4');
+    sock.once('error', () => {
+      sock.close();
+      resolve(false);
+    });
+    sock.bind(port, () => sock.close(() => resolve(true)));
+  });
 }
 
 export interface MediaServerOptions {
@@ -136,6 +155,10 @@ export function createMediaServer({ config, bus, log, repos, guests, routeAuth, 
   // Guest feeds are read back the same way (their own viewer cap).
   const hlsWanted = (config.livePreviewMaxViewers ?? DEFAULT_LIVE_MAX_VIEWERS) > 0 || (guests !== undefined && guests.limits.maxViewers > 0);
   const hlsPort = config.mediamtxHlsPort && hlsWanted ? config.mediamtxHlsPort : null;
+  // SRT (docs/SRT.md): one UDP port; checked at start so a taken port turns SRT off, never RTMP.
+  const srtWanted = (config.srtPort ?? 0) > 0 ? config.srtPort! : null;
+  const isUdpPortFree = deps.udpPortFree ?? udpPortFree;
+  let srt: SrtStatus = srtWanted ? srtStatusOff('The media server is not running yet.') : srtStatusOff('SRT is turned off on this server (SRT_PORT=0).');
   const notFound = `MediaMTX not found at ${bin}; run \`npm run setup-tools\` (or set MEDIAMTX_BIN). Feeds stay offline.`;
   /** The internal reader password lives in the legacy 'ingest' scope (shared by every profile). */
   const readerScope = repos.secrets.scoped(profileSecretScope(DEFAULT_PROFILE_ID, 'ingest'));
@@ -400,7 +423,7 @@ export function createMediaServer({ config, bus, log, repos, guests, routeAuth, 
           // Pull link readers: their own try, so a failure here never marks the feeds offline.
           try {
             const fetchedAt = now();
-            const conns = await api.listRtmpConns(pollAbort.signal);
+            const conns = await listReaderConns(pollAbort.signal);
             if (running && proc) await pull.apply(conns, fetchedAt);
           } catch (err) {
             log.debug({ err: err instanceof Error ? err.message : String(err) }, 'Could not count pull link readers');
@@ -533,17 +556,31 @@ export function createMediaServer({ config, bus, log, repos, guests, routeAuth, 
     },
   });
 
+  /** RTMP + SRT connections (SRT ids prefixed): pull link readers may use either protocol. */
+  async function listReaderConns(signal?: AbortSignal): Promise<RtmpConn[]> {
+    const rtmp = api.listRtmpConns ? await api.listRtmpConns(signal) : [];
+    if (!srt.enabled || !api.listSrtConns) return rtmp;
+    const srtConns = await api.listSrtConns(signal);
+    return [...rtmp, ...srtConns.map((c) => ({ ...c, id: `${SRT_CONN_PREFIX}${c.id}` }))];
+  }
+
   pull?.attachMedia({
     async listConns() {
-      return proc && api.listRtmpConns ? api.listRtmpConns() : [];
+      return proc ? listReaderConns() : [];
     },
     async kickConn(id) {
-      return proc && api.kickRtmpConn ? api.kickRtmpConn(id) : false;
+      if (!proc) return false;
+      if (id.startsWith(SRT_CONN_PREFIX)) return api.kickSrtConn ? api.kickSrtConn(id.slice(SRT_CONN_PREFIX.length)) : false;
+      return api.kickRtmpConn ? api.kickRtmpConn(id) : false;
     },
   });
 
   const server: MediaServer = {
     appName: APP_NAME,
+
+    srtStatus() {
+      return srt;
+    },
 
     async publisherAddress(profileId) {
       const entry = findProfile(profileId);
@@ -570,9 +607,21 @@ export function createMediaServer({ config, bus, log, repos, guests, routeAuth, 
         await guests?.load();
         auth ??= await startAuthServer({ authorize: (req) => server.authorize(req), log });
         await fs.mkdir(workDir, { recursive: true });
+        if (srtWanted) {
+          srt = (await isUdpPortFree(srtWanted).catch(() => false))
+            ? srtStatusOn(srtWanted)
+            : srtStatusOff(`UDP port ${srtWanted} is already in use on this machine, so SRT is off (RTMP works as usual). Free the port or set SRT_PORT to another one, then restart.`);
+          if (!srt.enabled) log.warn({ srtPort: srtWanted }, 'SRT port is in use; SRT stays off');
+        }
         await fs.writeFile(
           configPath,
-          buildMediaMtxConfig({ rtmpPort: config.rtmpPort, apiPort: config.mediamtxApiPort, authPort: auth.port, hlsPort }),
+          buildMediaMtxConfig({
+            rtmpPort: config.rtmpPort,
+            apiPort: config.mediamtxApiPort,
+            authPort: auth.port,
+            hlsPort,
+            srtPort: srt.enabled ? srt.port : null,
+          }),
           { mode: 0o600 },
         );
       } catch (err) {

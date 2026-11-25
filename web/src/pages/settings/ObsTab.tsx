@@ -10,6 +10,7 @@ import { CopyField } from '../../components/CopyField';
 import { EmptyState } from '../../components/EmptyState';
 import { ProfileTag } from '../../components/ProfileBadge';
 import { Spinner } from '../../components/Spinner';
+import { SrtLatencyNote, SrtUnavailable } from '../../components/SrtInfo';
 import { toast } from '../../components/Toast';
 import { errorMessage } from '../../state/errors';
 import { useApi } from '../../state/hooks';
@@ -169,6 +170,23 @@ export function IngestCard({ info, profile, profileCount, rotating, onRotate }: 
             </div>
           </div>
         ))}
+        <div className="stack-sm srt-ingest" role="group" aria-label="Low delay: SRT">
+          <strong>Low delay: SRT (optional)</strong>
+          {info.srt?.enabled ? (
+            <>
+              <p className="small muted">
+                Instead of RTMP, OBS can send over SRT for less delay: Settings → Stream → Service <em>Custom…</em> → Server = the SRT address
+                below, and leave <em>Stream Key</em> empty (the key is inside the address).
+              </p>
+              {info.feeds.map((f) =>
+                f.srtUrl ? <CopyField key={f.feed} label={`SRT server (${FEED_LABEL[f.feed].toLowerCase()})`} value={f.srtUrl} secret /> : null,
+              )}
+              <SrtLatencyNote srt={info.srt} />
+            </>
+          ) : (
+            <SrtUnavailable srt={info.srt} />
+          )}
+        </div>
         <p className="muted small">
           Using the CTD OBS plugin? Connect it in Settings → API and pick this profile in the plugin: it fills in the server and
           keys (main output and Aitum Vertical) for you.

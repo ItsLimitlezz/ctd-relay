@@ -18,6 +18,7 @@
 import type { Logger } from 'pino';
 import { FEEDS, type Feed } from '../../../shared/types.js';
 import type { PullLinkInfo, PullLinkState, ProfilePullLinks } from '../../../shared/pull-links.js';
+import { srtStatusOff, srtUrl, type SrtStatus } from '../../../shared/srt.js';
 import type { SecretsRepo } from '../services.js';
 import { generateKey, isValidKey, queryParam, safeEqual } from './authorize.js';
 import { feedPath, guestPath, parseFeedPath, parseGuestPath } from './paths.js';
@@ -148,10 +149,12 @@ export class PullLinks {
   }
 
   /** The admin's view, with the link itself (host = what OBS/VLC connect to). */
-  info(target: PullTarget, host: string, rtmpPort: number): PullLinkInfo {
-    const serverUrl = `rtmp://${host}:${rtmpPort}/${this.pathOf(target)}`;
+  info(target: PullTarget, host: string, rtmpPort: number, srt: SrtStatus = srtStatusOff('SRT is not available on this server.')): PullLinkInfo {
+    const path = this.pathOf(target);
+    const serverUrl = `rtmp://${host}:${rtmpPort}/${path}`;
     const key = this.keys.get(targetId(target)) ?? null;
-    return { ...this.state(target), serverUrl, url: key ? `${serverUrl}?key=${key}` : null };
+    const srtLink = key && srt.enabled && srt.port ? srtUrl(host, srt.port, 'read', path, key) : null;
+    return { ...this.state(target), serverUrl, url: key ? `${serverUrl}?key=${key}` : null, srtUrl: srtLink, srt };
   }
 
   // ---- managing (admin) ---------------------------------------------------

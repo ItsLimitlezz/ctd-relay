@@ -12,6 +12,7 @@ import { describeTarget, profilePullLinks, PullBody, pullHost, pullLinksOf, pull
 import { PullLinkError, type PullLinks, type PullTarget } from '../../media/pull-links.js';
 import { audit, requireAdmin, requireUser, sendError, type RouteOptions } from '../guards.js';
 import { HttpError } from '../validation.js';
+import { srtStatusOf } from '../../media/srt-status.js';
 
 const PROFILE_ID_MAX = 128;
 
@@ -43,7 +44,7 @@ const pullLinkRoutes: FastifyPluginAsync<RouteOptions> = async (app, { services 
     throw new HttpError(404, 'Feed: landscape or vertical.', 'not_found');
   };
 
-  const info = (req: FastifyRequest, t: PullTarget) => pull().info(t, pullHost(services, req), services.config.rtmpPort);
+  const info = (req: FastifyRequest, t: PullTarget) => pull().info(t, pullHost(services, req), services.config.rtmpPort, srtStatusOf(services.media));
 
   app.get('/api/profiles/:id/pull-links', { preHandler: requireUser }, async (req, reply) => {
     const id = profileId(req);

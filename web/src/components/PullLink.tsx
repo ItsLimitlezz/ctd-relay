@@ -8,7 +8,9 @@ import { Button } from './Button';
 import { ConfirmButton } from './ConfirmButton';
 import { usePoll } from './GuestRoutes';
 import { toast } from './Toast';
+import { SrtLatencyNote, SrtUnavailable } from './SrtInfo';
 import { Toggle } from './Toggle';
+import { maskSrtUrl } from '@shared/srt';
 import { copyText } from './utils';
 
 /** How often the reader count is refreshed while the panel is on screen. */
@@ -26,6 +28,16 @@ export function pullStepsText(label: string, url: string): string {
     url,
     'OBS: Sources → + (Add) → Media Source → untick "Local File" → paste the link into "Input".',
     'VLC: Media → Open Network Stream → paste the link.',
+  ].join('\n');
+}
+
+/** The SRT pull link with the OBS Media Source steps (lower delay than RTMP). */
+export function srtPullStepsText(label: string, url: string): string {
+  return [
+    `SRT pull link for ${label} (lower delay; keep it private: anyone with it can watch):`,
+    url,
+    'OBS: Sources → + (Add) → Media Source → untick "Local File" → paste the link into "Input" → set "Input Format" to mpegts.',
+    'latency= is in microseconds: 150000 (150 ms) suits a LAN; over the internet use 800000.',
   ].join('\n');
 }
 
@@ -128,6 +140,32 @@ export function PullLinkPanel({ profileId, target, label, isAdmin }: { profileId
             <li>Untick “Local File”.</li>
             <li>Paste the link into “Input”. (VLC: Media → Open Network Stream.)</li>
           </ol>
+          <div className="stack-sm pull-link-srt" role="group" aria-label={`SRT pull link for ${label}`}>
+            <strong className="small">Lower delay: SRT pull link</strong>
+            {info.srtUrl ? (
+              <>
+                <code className="small pull-link-url" title="The key is hidden here; Copy SRT link copies the whole link.">
+                  {maskSrtUrl(info.srtUrl)}
+                </code>
+                <div className="row">
+                  <Button size="sm" variant="primary" onClick={() => void copy(info.srtUrl!, 'SRT link')} loading={busy === 'copy-SRT link'}>
+                    Copy SRT link
+                  </Button>
+                  <Button size="sm" onClick={() => void copy(srtPullStepsText(label, info.srtUrl!), 'SRT link and steps')} loading={busy === 'copy-SRT link and steps'}>
+                    Copy with steps
+                  </Button>
+                </div>
+                <ol className="small pull-link-steps">
+                  <li>In OBS: Sources → + (Add) → Media Source, untick “Local File”.</li>
+                  <li>Paste the SRT link into “Input”.</li>
+                  <li>Set “Input Format” to <code>mpegts</code>.</li>
+                </ol>
+                <SrtLatencyNote srt={info.srt} />
+              </>
+            ) : (
+              <SrtUnavailable srt={info.srt} />
+            )}
+          </div>
           <span className="small text-warn">Anyone with this link can watch. Keep it private; rotate the key or switch it off to cut everyone off.</span>
         </>
       )}

@@ -20,6 +20,7 @@ import type { AppServices } from '../../services.js';
 import { audit, requireAdmin, requireUser, sendError, type RouteOptions } from '../guards.js';
 import { ingestHost } from './ingest.js';
 import { HttpError } from '../validation.js';
+import { srtStatusOf } from '../../media/srt-status.js';
 
 const PROFILE_ID_MAX = 128;
 const NameBody = z.object({ name: z.string().max(200) });
@@ -54,7 +55,7 @@ const guestFeedRoutes: FastifyPluginAsync<RouteOptions> = async (app, { services
   };
 
   const ingestFor = async (req: FastifyRequest, profile: string, slot: string) =>
-    guestIngestInfo(ingestHost(services.appSettings().ingestHost, req.hostname), services.config.rtmpPort, profile, slot, await guests().ingestKey(profile, slot));
+    guestIngestInfo(ingestHost(services.appSettings().ingestHost, req.hostname), services.config.rtmpPort, profile, slot, await guests().ingestKey(profile, slot), srtStatusOf(services.media));
 
   app.get(base, { preHandler: requireUser }, async (req, reply) => {
     const id = profileId(req);

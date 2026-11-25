@@ -120,7 +120,8 @@ ENV CTD_BUILD_COMMIT=${CTD_BUILD_COMMIT} \
 USER 568:568
 
 # 8443 web UI (HTTPS unless TLS_MODE=off) · 8080 Let's Encrypt HTTP-01 + redirect · 1935 RTMP (LAN only)
-EXPOSE 8443 8080 1935
+# · 8890/udp SRT (low-delay ingest + pull links, docs/SRT.md; SRT_PORT, 0 = off)
+EXPOSE 8443 8080 1935 8890/udp
 VOLUME ["/data"]
 
 HEALTHCHECK --interval=30s --timeout=10s --start-period=90s --retries=3 \

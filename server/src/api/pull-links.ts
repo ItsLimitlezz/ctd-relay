@@ -14,6 +14,7 @@ import type { AppServices } from '../services.js';
 import { guestFeedsOf } from './guest-feeds.js';
 import { params, sendProblem, type ProblemCode } from './http.js';
 import type { V1Context } from './v1.js';
+import { srtStatusOf } from '../media/srt-status.js';
 
 const bound = new WeakMap<object, PullLinks>();
 
@@ -122,7 +123,7 @@ export function registerPullLinkApiRoutes(app: FastifyInstance, ctx: V1Context):
       const c = prelude(req, reply);
       if (!c) return reply;
       try {
-        return reply.header('cache-control', 'no-store').send(c.pull.info(c.target, pullHost(services, req), services.config.rtmpPort));
+        return reply.header('cache-control', 'no-store').send(c.pull.info(c.target, pullHost(services, req), services.config.rtmpPort, srtStatusOf(services.media)));
       } catch (err) {
         return fail(reply, err);
       }
@@ -135,7 +136,7 @@ export function registerPullLinkApiRoutes(app: FastifyInstance, ctx: V1Context):
         const { enabled } = PullBody.parse(req.body ?? {});
         await c.pull.setEnabled(c.target, enabled);
         audit(req, c.token, enabled ? 'pull.enable' : 'pull.disable', describeTarget(c.target));
-        return reply.header('cache-control', 'no-store').send(c.pull.info(c.target, pullHost(services, req), services.config.rtmpPort));
+        return reply.header('cache-control', 'no-store').send(c.pull.info(c.target, pullHost(services, req), services.config.rtmpPort, srtStatusOf(services.media)));
       } catch (err) {
         return fail(reply, err);
       }
@@ -159,7 +160,7 @@ export function registerPullLinkApiRoutes(app: FastifyInstance, ctx: V1Context):
       try {
         await c.pull.rotate(c.target);
         audit(req, c.token, 'pull.rotate', describeTarget(c.target));
-        return reply.header('cache-control', 'no-store').send(c.pull.info(c.target, pullHost(services, req), services.config.rtmpPort));
+        return reply.header('cache-control', 'no-store').send(c.pull.info(c.target, pullHost(services, req), services.config.rtmpPort, srtStatusOf(services.media)));
       } catch (err) {
         return fail(reply, err);
       }
