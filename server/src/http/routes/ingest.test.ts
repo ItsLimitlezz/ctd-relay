@@ -105,11 +105,18 @@ describe('ingest routes', () => {
   it('with SRT on, each feed also has its SRT server address (OBS Server field, key in the streamid)', async () => {
     const { app } = await build({ srtPort: 8890 });
     const info = (await app.inject({ method: 'GET', url: '/api/ingest?profile=club', headers: { host: 'nas.lan' } })).json<IngestInfo>();
-    expect(info.srt).toMatchObject({ enabled: true, port: 8890, latencyMs: 150, internetLatencyMs: 800, reason: null });
+    expect(info.srt).toMatchObject({ enabled: true, port: 8890, latencyMs: 500, lanLatencyMs: 150, reason: null });
     expect(info.feeds.map((f) => f.srtUrl)).toEqual([
-      'srt://nas.lan:8890?streamid=publish:live/dprtmnt/landscape:key=ClubLand00000000000000000&latency=150000',
-      'srt://nas.lan:8890?streamid=publish:live/dprtmnt/vertical:key=ClubVert00000000000000000&latency=150000',
+      'srt://nas.lan:8890?streamid=publish:live/dprtmnt/landscape:key=ClubLand00000000000000000&latency=500000',
+      'srt://nas.lan:8890?streamid=publish:live/dprtmnt/vertical:key=ClubVert00000000000000000&latency=500000',
     ]);
+  });
+
+  it('SRT addresses use the same host as the RTMP server (Ingest host setting, else the host the browser used)', async () => {
+    const { app } = await build({ srtPort: 8890, ingestHostSetting: 'relay.example.com' });
+    const info = (await app.inject({ method: 'GET', url: '/api/ingest', headers: { host: '192.168.1.20' } })).json<IngestInfo>();
+    expect(info.serverUrl).toBe('rtmp://relay.example.com:1936/live');
+    expect(info.feeds[0]!.srtUrl).toMatch(/^srt:\/\/relay\.example\.com:8890\?/);
   });
 
   it('answers 404 unknown_profile for an unknown profile', async () => {

@@ -291,8 +291,9 @@ export function GuestHelp() {
         </li>
         <li>
           <strong>OBS over SRT (lower delay):</strong> Settings → Stream → Service <em>Custom…</em>, Server = the <em>SRT</em> address from the ingest
-          details (<code>srt://&lt;relay host&gt;:&lt;SRT port&gt;?streamid=publish:guest/&lt;slot&gt;:key=&lt;key&gt;&amp;latency=150000</code>), Stream
-          Key empty. Over the internet use <code>latency=800000</code>; the server's SRT UDP port must be forwarded.
+          details (<code>srt://&lt;relay host&gt;:&lt;SRT port&gt;?streamid=publish:guest/&lt;slot&gt;:key=&lt;key&gt;&amp;latency=500000</code>), Stream
+          Key empty. <code>latency=500000</code> (500 ms) suits the internet and can go lower on a good link; the server's SRT UDP port must be
+          forwarded.
         </li>
         <li>
           <strong>Larix Broadcaster (phone):</strong> Settings → Connections → New: paste the <em>Full URL</em>{' '}

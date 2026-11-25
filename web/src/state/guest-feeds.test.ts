@@ -54,13 +54,14 @@ describe('guest feeds (web)', () => {
       serverUrl: 'rtmp://relay.example.com:1935/guest',
       streamKey: 'q7m2x9k4tb?key=abc',
       fullUrl: 'rtmp://relay.example.com:1935/guest/q7m2x9k4tb?key=abc',
-      srtUrl: 'srt://relay.example.com:8890?streamid=publish:guest/q7m2x9k4tb:key=abc&latency=150000',
-      srt: { enabled: true, port: 8890, latencyMs: 150, internetLatencyMs: 800, reason: null },
+      srtUrl: 'srt://relay.example.com:8890?streamid=publish:guest/q7m2x9k4tb:key=abc&latency=500000',
+      srt: { enabled: true, port: 8890, latencyMs: 500, lanLatencyMs: 150, reason: null },
     };
     const text = ingestText('Cam', info)!;
-    expect(text).toContain('srt://relay.example.com:8890?streamid=publish:guest/q7m2x9k4tb:key=abc&latency=150000');
+    expect(text).toContain('srt://relay.example.com:8890?streamid=publish:guest/q7m2x9k4tb:key=abc&latency=500000');
     expect(text).toContain('Stream Key empty');
-    expect(text).toContain('latency=800000');
+    expect(text).toContain('latency=150000'); // LAN alternative
+    expect(text).toContain('can go lower');
   });
 
   it('applies a guest-feed socket message to the list (unknown slots wait for a refetch)', () => {

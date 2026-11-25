@@ -37,7 +37,7 @@ export function srtPullStepsText(label: string, url: string): string {
     `SRT pull link for ${label} (lower delay; keep it private: anyone with it can watch):`,
     url,
     'OBS: Sources → + (Add) → Media Source → untick "Local File" → paste the link into "Input" → set "Input Format" to mpegts.',
-    'latency= is in microseconds: 150000 (150 ms) suits a LAN; over the internet use 800000.',
+    'latency= is in microseconds: 500000 (500 ms) suits the internet and can go lower on a good link (e.g. 300000); on the same LAN as Relay 150000 is enough.',
   ].join('\n');
 }
 

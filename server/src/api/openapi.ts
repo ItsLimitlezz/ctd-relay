@@ -1131,13 +1131,13 @@ export function openApiDocument(version: string): Record<string, unknown> {
         },
         SrtStatus: {
           type: 'object',
-          required: ['enabled', 'port', 'latencyMs', 'internetLatencyMs', 'reason'],
+          required: ['enabled', 'port', 'latencyMs', 'lanLatencyMs', 'reason'],
           description: 'v1.17: whether SRT works on this server (docs/SRT.md). Never contains a key.',
           properties: {
             enabled: { type: 'boolean' },
             port: { oneOf: [{ type: 'integer' }, { type: 'null' }], description: 'SRT UDP port (SRT_PORT), null when off' },
-            latencyMs: { type: 'integer', description: 'Latency built into the links (LAN), in ms; the URL carries it in microseconds' },
-            internetLatencyMs: { type: 'integer', description: 'Suggested latency over the internet, in ms' },
+            latencyMs: { type: 'integer', description: 'Latency built into the links (the internet value; can go lower on a good link), in ms; the URL carries it in microseconds' },
+            lanLatencyMs: { type: 'integer', description: 'Latency enough on a LAN, in ms' },
             reason: { oneOf: [{ type: 'string' }, { type: 'null' }], description: 'Why SRT is off, in plain words; null when on' },
           },
         },

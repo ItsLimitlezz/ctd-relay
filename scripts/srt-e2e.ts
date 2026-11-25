@@ -16,7 +16,7 @@ import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import pino from 'pino';
-import { SRT_LATENCY_LAN_MS, srtLatencyParam, srtPublishUrlFromStreamKey, srtUrl, withSrtLatency } from '../shared/srt.js';
+import { SRT_LATENCY_DEFAULT_MS, srtLatencyParam, srtPublishUrlFromStreamKey, srtUrl, withSrtLatency } from '../shared/srt.js';
 import { DEFAULT_PROFILE_ID, type FeedState } from '../shared/types.js';
 import { grabWithFfmpeg } from '../server/src/api/previews.js';
 import { loadConfig } from '../server/src/config.js';
@@ -238,7 +238,7 @@ async function run(): Promise<void> {
   const rtmp = `rtmp://${host}:${rtmpPort}`;
   const srt = (mode: 'publish' | 'read', p: string, key: string) => srtUrl(host, srtPort, mode, p, key);
   // SRT_E2E_LATENCY_MS: try another latency in the measured links (default: the one Relay hands out).
-  const latencyMs = Number(process.env.SRT_E2E_LATENCY_MS ?? SRT_LATENCY_LAN_MS);
+  const latencyMs = Number(process.env.SRT_E2E_LATENCY_MS ?? SRT_LATENCY_DEFAULT_MS);
   const isOnline = (f: FeedState) => f.profileId === DEFAULT_PROFILE_ID && f.feed === 'landscape' && f.online && !!f.video;
   const measureSec = Number(process.env.SRT_E2E_MEASURE_SEC ?? 8);
   const results: string[] = [];

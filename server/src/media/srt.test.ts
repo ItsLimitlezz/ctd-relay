@@ -12,6 +12,7 @@ import pino from 'pino';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
   DEFAULT_SRT_PORT,
+  SRT_LATENCY_DEFAULT_MS,
   maskSrtUrl,
   SRT_LATENCY_INTERNET_MS,
   SRT_LATENCY_LAN_MS,
@@ -69,32 +70,35 @@ describe('MediaMTX config with SRT', () => {
 });
 
 describe('SRT links', () => {
-  it('latency= is in microseconds (FFmpeg libsrt / OBS)', () => {
+  it('latency= is in microseconds (FFmpeg libsrt / OBS); links carry the internet value, LAN is the alternative', () => {
     expect(srtLatencyParam(150)).toBe('latency=150000');
+    expect(SRT_LATENCY_DEFAULT_MS).toBe(SRT_LATENCY_INTERNET_MS);
+    expect(SRT_LATENCY_INTERNET_MS).toBeGreaterThanOrEqual(400);
+    expect(SRT_LATENCY_INTERNET_MS).toBeLessThanOrEqual(800);
     expect(SRT_LATENCY_LAN_MS).toBeGreaterThanOrEqual(120);
     expect(SRT_LATENCY_LAN_MS).toBeLessThanOrEqual(200);
-    expect(SRT_LATENCY_INTERNET_MS).toBeGreaterThan(SRT_LATENCY_LAN_MS);
+    expect(srtStatusOn(8890)).toMatchObject({ latencyMs: SRT_LATENCY_INTERNET_MS, lanLatencyMs: SRT_LATENCY_LAN_MS });
   });
   it('builds publish/read streamids with the key as a query', () => {
-    expect(srtUrl('relay.example.com', 8890, 'read', 'guest/abc', 'K')).toBe('srt://relay.example.com:8890?streamid=read:guest/abc:key=K&latency=150000');
+    expect(srtUrl('relay.example.com', 8890, 'read', 'guest/abc', 'K')).toBe('srt://relay.example.com:8890?streamid=read:guest/abc:key=K&latency=500000');
   });
   it('turns an OBS stream key field into the SRT server address', () => {
     expect(srtPublishUrlFromStreamKey('relay.example.com', 8890, 'live', `landscape?key=${LAND}`)).toBe(
-      `srt://relay.example.com:8890?streamid=publish:live/landscape:key=${LAND}&latency=150000`,
+      `srt://relay.example.com:8890?streamid=publish:live/landscape:key=${LAND}&latency=500000`,
     );
-    expect(srtPublishUrlFromStreamKey('h', 1, 'live', 'club/vertical?key=V')).toBe('srt://h:1?streamid=publish:live/club/vertical:key=V&latency=150000');
-    expect(srtPublishUrlFromStreamKey('h', 1, 'guest', `${SLOT}?key=G`)).toBe(`srt://h:1?streamid=publish:guest/${SLOT}:key=G&latency=150000`);
+    expect(srtPublishUrlFromStreamKey('h', 1, 'live', 'club/vertical?key=V')).toBe('srt://h:1?streamid=publish:live/club/vertical:key=V&latency=500000');
+    expect(srtPublishUrlFromStreamKey('h', 1, 'guest', `${SLOT}?key=G`)).toBe(`srt://h:1?streamid=publish:guest/${SLOT}:key=G&latency=500000`);
     expect(srtPublishUrlFromStreamKey('h', 1, 'live', 'landscape')).toBeNull();
   });
   it('swaps the latency and masks the key', () => {
     const url = srtUrl('h', 1, 'read', 'live/landscape', 'SECRETKEY');
-    expect(withSrtLatency(url, SRT_LATENCY_INTERNET_MS)).toBe('srt://h:1?streamid=read:live/landscape:key=SECRETKEY&latency=800000');
+    expect(withSrtLatency(url, SRT_LATENCY_LAN_MS)).toBe('srt://h:1?streamid=read:live/landscape:key=SECRETKEY&latency=150000');
     expect(maskSrtUrl(url)).not.toContain('SECRETKEY');
-    expect(maskSrtUrl(url)).toContain('latency=150000');
+    expect(maskSrtUrl(url)).toContain('latency=500000');
   });
   it('guest ingest details carry the SRT address only while SRT is on and the key is valid', () => {
     const on = guestIngestInfo('relay.example.com', 1935, 'default', SLOT, GUEST, srtStatusOn(8890));
-    expect(on.srtUrl).toBe(`srt://relay.example.com:8890?streamid=publish:guest/${SLOT}:key=${GUEST}&latency=150000`);
+    expect(on.srtUrl).toBe(`srt://relay.example.com:8890?streamid=publish:guest/${SLOT}:key=${GUEST}&latency=500000`);
     expect(on.srt?.enabled).toBe(true);
     expect(guestIngestInfo('h', 1935, 'default', SLOT, null, srtStatusOn(8890)).srtUrl).toBeNull();
     const off = guestIngestInfo('h', 1935, 'default', SLOT, GUEST, srtStatusOff('off'));
@@ -194,7 +198,7 @@ describe('pull links over SRT', () => {
     const key = pull.readKey('live/landscape')!;
     const info = pull.info(target, 'relay.example.com', 1935, srtStatusOn(8890));
     expect(info.url).toBe(`rtmp://relay.example.com:1935/live/landscape?key=${key}`);
-    expect(info.srtUrl).toBe(`srt://relay.example.com:8890?streamid=read:live/landscape:key=${key}&latency=150000`);
+    expect(info.srtUrl).toBe(`srt://relay.example.com:8890?streamid=read:live/landscape:key=${key}&latency=500000`);
     expect(info.srt?.enabled).toBe(true);
     const off = pull.info(target, 'relay.example.com', 1935, srtStatusOff('SRT is turned off on this server (SRT_PORT=0).'));
     expect(off.srtUrl).toBeNull();

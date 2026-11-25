@@ -315,21 +315,22 @@ describe('components (static render)', () => {
 
 describe('SRT pull link (docs/SRT.md)', () => {
   it('the copied steps say: untick Local File, paste into Input, Input Format mpegts', () => {
-    const text = srtPullStepsText('Guest A', 'srt://relay.example.com:8890?streamid=read:guest/q7m2x9k4tb:key=k&latency=150000');
-    expect(text).toContain('srt://relay.example.com:8890?streamid=read:guest/q7m2x9k4tb:key=k&latency=150000');
+    const text = srtPullStepsText('Guest A', 'srt://relay.example.com:8890?streamid=read:guest/q7m2x9k4tb:key=k&latency=500000');
+    expect(text).toContain('srt://relay.example.com:8890?streamid=read:guest/q7m2x9k4tb:key=k&latency=500000');
     expect(text).toContain('untick "Local File"');
     expect(text).toContain('"Input"');
     expect(text).toContain('mpegts');
-    expect(text).toContain('800000');
+    expect(text).toContain('150000'); // the LAN alternative
     expect(readersText({ readers: 0, maxReaders: 2 })).toBe('Nobody watching');
   });
 
   it('explains latency (microseconds, LAN vs internet) and says plainly when SRT is off', () => {
-    const srt = { enabled: true, port: 8890, latencyMs: 150, internetLatencyMs: 800, reason: null };
+    const srt = { enabled: true, port: 8890, latencyMs: 500, lanLatencyMs: 150, reason: null };
     const note = renderToStaticMarkup(<SrtLatencyNote srt={srt} />);
-    expect(note).toContain('latency=150000');
-    expect(note).toContain('150 ms');
-    expect(note).toContain('latency=800000');
+    expect(note).toContain('latency=500000');
+    expect(note).toContain('500 ms');
+    expect(note).toContain('lower it');
+    expect(note).toContain('latency=150000'); // LAN alternative
     expect(note).toContain('8890');
     const off = renderToStaticMarkup(<SrtUnavailable srt={{ ...srt, enabled: false, port: null, reason: 'UDP port 8890 is already in use on this machine.' }} />);
     expect(off).toContain('available on this server');

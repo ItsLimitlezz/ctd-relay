@@ -8,16 +8,19 @@
 export const DEFAULT_SRT_PORT = 8890;
 
 /**
- * SRT receive latency in the links Relay hands out, in milliseconds. SRT holds every packet this
- * long so lost ones can be resent; the two ends use the larger of their two values. 150 ms suits a
- * LAN (a few ms round trip); over the internet use about 4 × the round trip, e.g. 800 ms.
+ * SRT receive latency, in milliseconds. SRT holds every packet this long so lost ones can be resent;
+ * the two ends use the larger of their two values. Rule of thumb: about 4 × the round trip.
+ * The links Relay hands out carry the internet value (senders and players are often on another
+ * network, through a forwarded UDP port); on a good link it can go lower, and on a LAN 150 ms is enough.
  */
+export const SRT_LATENCY_INTERNET_MS = 500;
 export const SRT_LATENCY_LAN_MS = 150;
-export const SRT_LATENCY_INTERNET_MS = 800;
+/** What the links carry. */
+export const SRT_LATENCY_DEFAULT_MS = SRT_LATENCY_INTERNET_MS;
 
 /**
  * FFmpeg's libsrt and OBS read `latency=` in the URL in **microseconds** (FFmpeg docs → Protocols →
- * srt → latency), so 150 ms is `latency=150000`.
+ * srt → latency), so 500 ms is `latency=500000`.
  */
 export function srtLatencyParam(ms: number): string {
   return `latency=${Math.round(ms * 1000)}`;
@@ -29,20 +32,20 @@ export interface SrtStatus {
   enabled: boolean;
   /** UDP port inside the container (what to map/forward), or null when SRT is off. */
   port: number | null;
-  /** Latency (ms) built into the links: LAN default. */
+  /** Latency (ms) built into the links: the internet value (lower it on a good link). */
   latencyMs: number;
-  /** Suggested latency (ms) when sender or reader is on the internet. */
-  internetLatencyMs: number;
+  /** Latency (ms) enough when sender and Relay (or Relay and player) share a LAN. */
+  lanLatencyMs: number;
   /** Why SRT is off (plain words), null when it's on. */
   reason: string | null;
 }
 
 export function srtStatusOff(reason: string): SrtStatus {
-  return { enabled: false, port: null, latencyMs: SRT_LATENCY_LAN_MS, internetLatencyMs: SRT_LATENCY_INTERNET_MS, reason };
+  return { enabled: false, port: null, latencyMs: SRT_LATENCY_DEFAULT_MS, lanLatencyMs: SRT_LATENCY_LAN_MS, reason };
 }
 
 export function srtStatusOn(port: number): SrtStatus {
-  return { enabled: true, port, latencyMs: SRT_LATENCY_LAN_MS, internetLatencyMs: SRT_LATENCY_INTERNET_MS, reason: null };
+  return { enabled: true, port, latencyMs: SRT_LATENCY_DEFAULT_MS, lanLatencyMs: SRT_LATENCY_LAN_MS, reason: null };
 }
 
 /**
@@ -50,7 +53,7 @@ export function srtStatusOn(port: number): SrtStatus {
  * (`live/landscape`, `live/<slug>/vertical`, `guest/<slot>`). Keys are URL-safe, so nothing needs
  * escaping; the `=` inside the streamid value is fine for FFmpeg/OBS (they split on `&`).
  */
-export function srtUrl(host: string, port: number, mode: 'publish' | 'read', path: string, key: string, latencyMs = SRT_LATENCY_LAN_MS): string {
+export function srtUrl(host: string, port: number, mode: 'publish' | 'read', path: string, key: string, latencyMs = SRT_LATENCY_DEFAULT_MS): string {
   return `srt://${host}:${port}?streamid=${mode}:${path}:key=${key}&${srtLatencyParam(latencyMs)}`;
 }
 
@@ -58,7 +61,7 @@ export function srtUrl(host: string, port: number, mode: 'publish' | 'read', pat
  * The SRT publish URL for an RTMP app + OBS "Stream Key" field (`landscape?key=…`,
  * `<slug>/landscape?key=…`, `<slot>?key=…`). Null when the field has no key.
  */
-export function srtPublishUrlFromStreamKey(host: string, port: number, app: string, streamKeyField: string, latencyMs = SRT_LATENCY_LAN_MS): string | null {
+export function srtPublishUrlFromStreamKey(host: string, port: number, app: string, streamKeyField: string, latencyMs = SRT_LATENCY_DEFAULT_MS): string | null {
   const q = streamKeyField.indexOf('?');
   if (q < 0) return null;
   const key = new URLSearchParams(streamKeyField.slice(q + 1)).get('key');

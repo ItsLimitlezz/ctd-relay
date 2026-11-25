@@ -753,10 +753,12 @@ secrets**: grant `ingest:read` only to apps that configure OBS (responses carry
 Each profile needs its own OBS output: two OBS (or two outputs) can stream two profiles at once.
 
 v1.17 (additive): each feed also has `srtUrl`, the same feed over SRT
-(`srt://<host>:<srtPort>?streamid=publish:<path>:key=<key>&latency=150000`, the OBS Server field with
+(`srt://<host>:<srtPort>?streamid=publish:<path>:key=<key>&latency=500000`, the OBS Server field with
 the Stream Key left empty; `null` when SRT is off). The top level gains
-`srt: { enabled, port, latencyMs, internetLatencyMs, reason }`, which never carries a key; `reason`
-says in plain words why SRT is off. `latency=` is in microseconds. See docs/SRT.md.
+`srt: { enabled, port, latencyMs, lanLatencyMs, reason }`, which never carries a key; `reason`
+says in plain words why SRT is off. `latency=` is in microseconds. The links carry `latencyMs`, the
+internet value (500 ms); it can go lower on a good link, and `lanLatencyMs` (150 ms) is enough on a LAN.
+The SRT address uses the same host as `serverUrl`. See docs/SRT.md.
 
 ### 9.2 Connected apps (the hub)
 
@@ -2209,7 +2211,7 @@ docs/GUEST-FEEDS.md → Pull link.
 from MediaMTX's connection list once a second; Relay's own readers are not counted.
 
 **SRT (additive):** the admin objects also carry `srtUrl`, the same pull link over SRT
-(`srt://<host>:<srtPort>?streamid=read:<path>:key=<read key>&latency=150000`; null while off or when
+(`srt://<host>:<srtPort>?streamid=read:<path>:key=<read key>&latency=500000`; null while off or when
 SRT is off), and `srt` (the SRT status, as in `/ingest`). For an OBS Media Source: untick Local File,
 paste the link into Input, set Input Format to `mpegts`. The same read key, cap, rotate and revoke
 apply, and SRT readers count against the same `maxReaders`. See docs/SRT.md.

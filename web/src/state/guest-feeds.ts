@@ -1,6 +1,6 @@
 // Guest feeds in the web UI (docs/GUEST-FEEDS.md): pure helpers for the Guest feeds card.
 
-import { SRT_LATENCY_INTERNET_MS, SRT_LATENCY_LAN_MS, srtLatencyParam } from '@shared/srt';
+import { SRT_LATENCY_DEFAULT_MS, SRT_LATENCY_LAN_MS, srtLatencyParam } from '@shared/srt';
 import { codecLabel } from '@shared/feed-codec';
 import { formatKbps, guestOrientation, type GuestFeed, type GuestFeedList, type GuestIngestInfo } from '@shared/guest-feeds';
 import type { FeedState } from '@shared/types';
@@ -59,7 +59,7 @@ export function ingestText(name: string, info: GuestIngestInfo): string | null {
   if (info.srtUrl) {
     lines.push(
       `Lower delay, SRT (OBS: Settings → Stream → Service "Custom…" → Server = this, Stream Key empty): ${info.srtUrl}`,
-      `(latency= is in microseconds: ${srtLatencyParam(info.srt?.latencyMs ?? SRT_LATENCY_LAN_MS)} suits a LAN; over the internet use ${srtLatencyParam(info.srt?.internetLatencyMs ?? SRT_LATENCY_INTERNET_MS)}.)`,
+      `(latency= is in microseconds: ${srtLatencyParam(info.srt?.latencyMs ?? SRT_LATENCY_DEFAULT_MS)} suits the internet and can go lower on a good link; on the same LAN as Relay ${srtLatencyParam(info.srt?.lanLatencyMs ?? SRT_LATENCY_LAN_MS)} is enough.)`,
     );
   }
   lines.push('Video: H.264, Audio: AAC, keyframe every 2 s, CBR.');

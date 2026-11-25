@@ -195,21 +195,21 @@ describe('OBS setup per profile (static render)', () => {
   it('shows the SRT server per feed (masked) with the OBS steps, or says plainly that SRT is off', () => {
     const srtOn: IngestInfo = {
       ...info('default', ''),
-      feeds: info('default', '').feeds.map((f) => ({ ...f, srtUrl: `srt://10.20.30.40:8890?streamid=publish:live/${f.feed}:key=abc&latency=150000` })),
-      srt: { enabled: true, port: 8890, latencyMs: 150, internetLatencyMs: 800, reason: null },
+      feeds: info('default', '').feeds.map((f) => ({ ...f, srtUrl: `srt://10.20.30.40:8890?streamid=publish:live/${f.feed}:key=abc&latency=500000` })),
+      srt: { enabled: true, port: 8890, latencyMs: 500, lanLatencyMs: 150, reason: null },
     };
     const on = withProfiles({}, <IngestCard info={srtOn} profile={null} profileCount={1} rotating={null} onRotate={asyncNoop} />);
     expect(on).toContain('Low delay: SRT');
     expect(on).toContain('SRT server (landscape)');
     expect(on).toContain('SRT server (vertical)');
     expect(on).toContain('Custom…');
-    expect(on).toContain('latency=150000');
-    expect(on).toContain('latency=800000');
+    expect(on).toContain('latency=500000');
+    expect(on).toContain('latency=150000'); // LAN alternative
     expect(on).not.toContain('key=abc'); // masked like the stream keys
     const off = withProfiles(
       {},
       <IngestCard
-        info={{ ...info('default', ''), srt: { enabled: false, port: null, latencyMs: 150, internetLatencyMs: 800, reason: 'SRT is turned off on this server (SRT_PORT=0).' } }}
+        info={{ ...info('default', ''), srt: { enabled: false, port: null, latencyMs: 500, lanLatencyMs: 150, reason: 'SRT is turned off on this server (SRT_PORT=0).' } }}
         profile={null}
         profileCount={1}
         rotating={null}
