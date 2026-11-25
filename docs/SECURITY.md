@@ -119,6 +119,7 @@ So:
 - Give people who only run streams the **operator** role.
 - Keep the image **up to date**.
 - Forward only the web port (and port 80 for Let's Encrypt). Never forward 1935, and never expose the TrueNAS admin UI.
+- **Guest feeds** (docs/GUEST-FEEDS.md, 0.2.90) need a remote guest to reach the RTMP port. Use a VPN into your network for that; forwarding the RTMP port for guests is an owner decision this release doesn't make. Each slot has its own random key (rotate or revoke it in the web UI; the guest is disconnected at once), keys are encrypted at rest and never logged, and nothing can read a guest feed over RTMP except Relay itself.
 - Protect backups of the data folder like passwords.
 
 ### If you suspect a compromise

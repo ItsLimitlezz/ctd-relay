@@ -2,6 +2,25 @@
 
 Versions follow the hub's CONVENTIONS.md → Versioning. Each release that ships to a TrueNAS install has a runbook in `docs/RELEASE-*.md` (backup, update, verify, rollback).
 
+## 0.2.90 (unreleased)
+
+**Guest feeds (Relay F1 / CTD OBS F1).** A remote camera operator or guest sends video to Relay over RTMP; CTD OBS pulls it in as a source (CTD Relay Feed) over LL-HLS behind Relay's auth. Guest feeds are **never restreamed** to destinations. API revision **1.17** (additive; the read uses the existing `feeds:watch` scope). Database: one new table on its own track (`guest_feeds`, `guest_feeds_meta`); schema stays **v4**, reports **r1**, so 0.2.80 still opens `app.db` after a rollback. Runbook: [docs/RELEASE-v0.2.90.md](docs/RELEASE-v0.2.90.md). Guide: [docs/GUEST-FEEDS.md](docs/GUEST-FEEDS.md).
+
+### Added
+- **Guest feed slots per profile** (default 4, `GUEST_FEEDS_MAX`): a name and an own ingest key each. Guests publish to `rtmp://<relay host>:<RTMP port>/guest` with stream key `<slot>?key=<key>`, on the same MediaMTX, port and key check as OBS's feeds. Keys are encrypted (secrets scope `guest:<profileId>`), never logged, and can be rotated (the guest is disconnected, the old key stops at once) or revoked from the web UI.
+- **Web UI: Guest feeds card** on the dashboard, under the feed cards: add, rename and remove slots, **Copy ingest details**, rotate/revoke keys (admins); state, codec, resolution, bitrate, a thumbnail and **Watch** (everyone signed in). A **How a guest sends video** help covers OBS, Larix and other RTMP apps.
+- **External API 1.17** (docs/API.md §18): `GET /profiles/{id}/guest-feeds` and `…/guest-feeds/{slot}/preview` (`status:read`); `…/guest-feeds/{slot}/live.m3u8` and `…/live/{file}` (`feeds:watch`): the 0.2.60 live preview machinery (LL-HLS on demand, passthrough, proxied, a viewer cap, an idle stop). Events `guest.feed.status` and `guest.feeds.changed`; issue kinds `guest.feed.offline` and `guest.feed.codec` (subject `guest.feed`) on the 0.2.80 alert contract. Problem code `unknown_guest_feed`.
+- **Limits for a weak CPU-only server:** no transcoding or probing of guest feeds; muxing only while watched; `GUEST_FEED_MAX_VIEWERS` (default 2) players per guest feed; a bitrate warning above `GUEST_FEED_WARN_KBPS` (8000); a guest above `GUEST_FEED_MAX_KBPS` (20000) for 10 s is disconnected. H.264 + AAC only (the codec guard, `problem`).
+- `npm run e2e:guests`: guest feeds with the real MediaMTX/FFmpeg, and the starvation measurement (docs/GUEST-FEEDS.md → What we measured).
+
+### Changed
+- `LivePreviewService` and `PreviewService` take any stream key (a feed or a guest slot); the feed routes behave as before.
+- MediaMTX's LL-HLS server also starts when `LIVE_PREVIEW_MAX_VIEWERS=0` but guest feeds can be watched.
+
+### Not in this release
+- An SRT read path (lower latency) needs a UDP port: out of scope, room left in the contract (API.md §18.7).
+- RTMPS/SRT ingest for guests; forwarding the RTMP port for guests is an owner decision (docs/SECURITY.md, docs/GUEST-FEEDS.md: use a VPN meanwhile).
+
 ## 0.2.80 (2026-11-24)
 
 **Alerts and transcoding.** One alert contract for the suite, `issue.raised` / `issue.cleared` (Relay F2), that CTD Live and the CTD OBS plugin build on; and per-destination transcoding (Relay F3, #1), CPU-first and **off by default**, with a CPU guard. Includes everything in 0.2.70 (overlay summaries). API revision **1.16** (additive, no new scope). No database change: schema **v4**, reports **r1** (a destination's transcoding profile is one settings row, `transcode.profile.<id>`), so 0.2.70 still opens `app.db` after a rollback. Runbook: [docs/RELEASE-v0.2.80.md](docs/RELEASE-v0.2.80.md).

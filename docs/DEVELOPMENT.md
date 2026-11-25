@@ -81,6 +81,7 @@ npx vitest list --filesOnly             # which files each project collects
 npm run build                           # dist/server + dist/web
 npm run smoke                           # end-to-end media relay test with the real binaries in ./tools
 npm run e2e:preview                     # feed previews in the real web UI (Chromium), real Relay + binaries
+npm run e2e:guests                      # guest feeds with the real MediaMTX/FFmpeg + the load measurement (--quick skips it)
 npx tsx scripts/preview-stress.ts       # live preview resource safety (~15 min): restream with 4 players, cap, killed tab, frozen network, 100 cycles
 npx tsx scripts/transcode-cpu.ts        # transcoding CPU cost (~4 min): copy vs libx264 720p30/720p60/1080p30/1080p60 through MediaMTX, next to the CPU guard's estimate
 ```

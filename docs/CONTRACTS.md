@@ -71,6 +71,7 @@ Rules that keep the three in step:
 ## Storage conventions
 
 - **Settings** (`repos.settings`, JSON): `'app'` → `Partial<AppSettings>`; `'session.title'` → string; `'session.autoGoLive'` → boolean (default `true`); `'session.testMode'` → boolean (default `false`, changeable only while offline); `'tls.acme'` → `{ identifier, failures, nextAttemptAt, lastError }` (Let's Encrypt backoff, survives restarts); `'assets.limits'` → `Partial<BlobLimits>` (v1.9: overrides the blob size limits, quota and revision count; read on every upload; defaults < `ASSETS_QUOTA_BYTES` < this setting); `'instagram.chatPack'` → `{ override, updatedAt, updatedBy }` (the operator's override of the Instagram chat reader's selector pack, `platforms/instagram/chat-pack.ts`; loaded at start-up and validated again, an invalid one is ignored); `'reports'` → `ReportSettings` (`shared/reports.ts`: `{ recording, audience, retentionDays }`, defaults on / on / 365 days, `retentionDays: 0` = keep all; docs/REPORTS.md). `'transcode'` → `{ enabled: boolean, maxWorkers: number }` (default `{ enabled: false, maxWorkers: 2 }`): the server-wide transcoding switch, read every time a push starts (docs/TRANSCODING.md §0). `'transcode.profile.<destinationId>'` → `TranscodeProfile` (one row per destination with a transcoding profile, written only by `destinations-repo.ts`; a settings row rather than a column so the schema stays v4 and 0.2.70 still opens the database).
+- **Guest feed slots** (`guest_feeds` in app.db, v1.17) have their own migration track in `server/src/db/guest-feeds-repo.ts`, versioned in `guest_feeds_meta`, like the report tables: the main schema stays v4 and 0.2.80 still opens the database. `profile_id` cascades on profile delete.
 - **Report tables** (`report_*`, `audience_*` in app.db) have their own migration track in `server/src/reports/schema.ts`, versioned in `reports_meta`, not in `PRAGMA user_version`, so older versions can still open the database. Append-only like the main migrations.
 - **Secrets** (`repos.secrets.scoped(scope)`, AES-256-GCM encrypted):
 
@@ -85,6 +86,7 @@ Rules that keep the three in step:
 | `ingest` | `landscape`, `vertical`, `internalReader` | OBS stream keys, internal read password |
 | `chat` | `overlayToken` | overlay token |
 | `show:<showProfileId>` | `rev:<n>` | JSON `[{source,key,value}]`: the third-party secrets of revision `n` of a show profile (v1.9) |
+| `guest:<profileId>` | `<slot id>` | A guest feed slot's ingest key (v1.17, docs/GUEST-FEEDS.md); absent while the key is revoked |
 
 Deleting an account must delete scopes `account:<id>` and `browser:<id>`; deleting a destination deletes `destination:<id>`.
 
@@ -118,6 +120,7 @@ the value they stored** — it's the CSRF defense for this endpoint.
 - OBS publishes to `rtmp://<host>:1935/live/landscape?key=<k>` and `.../live/vertical?key=<k>` (server `rtmp://<host>:1935/live`, stream key `landscape?key=<k>`).
 - MediaMTX (`authMethod: http`) calls a loopback-only HTTP endpoint run by the media module itself. It allows `publish` only with the right key and `read` only from loopback with the internal reader password.
 - FFmpeg reads `media.readUrl(feed)` and pushes `-c copy` to the platform.
+- **Guest feeds** (docs/GUEST-FEEDS.md): guests publish to `rtmp://<host>:1935/guest/<slot>?key=<k>` on the same MediaMTX (path regex `~^guest/[a-z0-9]{10}$`). The auth hook (`authorize.ts`) allows `publish` only with that slot's key and `read` only by Relay itself (loopback, internal reader). A guest path is never a feed path (`parseFeedPath` → null), so no push plan, destination or `feed` event can name one: guest feeds are **never restreamed**. Relay reads them back only for LL-HLS (`media.guestHlsSource`) and thumbnails (`media.guestReadUrl`).
 
 ## Driver rules
 

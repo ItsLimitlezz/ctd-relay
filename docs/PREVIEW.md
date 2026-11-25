@@ -5,6 +5,10 @@ live player with sound. Apps (CTD Live Studio, CTD Live mobile, the CTD OBS Prod
 through the external API ([API.md §10](API.md#10-obs-events-and-feed-previews-v14)): the still frames
 with `status:read`, the live player only with its own scope, `feeds:watch`.
 
+Guest feeds (0.2.90, [GUEST-FEEDS.md](GUEST-FEEDS.md)) reuse this machinery for remote guests' video:
+the same thumbnails and LL-HLS player, keyed by slot, with their own viewer cap
+(`GUEST_FEED_MAX_VIEWERS`, default 2). MediaMTX's HLS server runs when either cap is above 0.
+
 ## What you see
 
 - **Dashboard → Landscape feed / Vertical feed:** a thumbnail in the feed's own shape (16:9, 9:16),
