@@ -160,6 +160,11 @@ export class GuestFeeds {
     return this.slots.has(slotId);
   }
 
+  /** The profile a slot belongs to, or null. */
+  profileOf(slotId: string): string | null {
+    return this.slots.get(slotId)?.row.profileId ?? null;
+  }
+
   nameOf(slotId: string): string | null {
     return this.slots.get(slotId)?.row.name ?? null;
   }

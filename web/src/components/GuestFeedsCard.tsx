@@ -10,7 +10,9 @@ import { Button } from './Button';
 import { Card } from './Card';
 import { ConfirmButton } from './ConfirmButton';
 import { FeedThumbnail } from './FeedThumbnail';
+import { GuestRoutesPanel } from './GuestRoutes';
 import { LivePlayerModal } from './LivePlayer';
+import { PullLinkPanel } from './PullLink';
 import { Spinner } from './Spinner';
 import { TextInput } from './TextInput';
 import { toast } from './Toast';
@@ -40,11 +42,11 @@ export function GuestFeedsCard({ profileId, isAdmin }: { profileId: string; isAd
 
   return (
     <Card
-      title="Guest feeds"
-      subtitle="Video a remote guest sends to Relay, for CTD OBS to use as a source (CTD Relay Feed). Never sent to your platforms."
+      title="Extra feeds"
+      subtitle="Extra video sent to Relay (a remote guest, a second camera, another computer), for CTD OBS to use as a source (CTD Relay Feed). Not sent to your platforms unless you route it into a profile's input."
       actions={
         <Button size="sm" variant="ghost" onClick={() => setShowHelp((v) => !v)} aria-expanded={showHelp}>
-          {showHelp ? 'Hide help' : 'How a guest sends video'}
+          {showHelp ? 'Hide help' : 'How to send video to an extra feed'}
         </Button>
       }
     >
@@ -53,7 +55,7 @@ export function GuestFeedsCard({ profileId, isAdmin }: { profileId: string; isAd
         {!data ? (
           list.error ? (
             <p className="muted">
-              Couldn't load the guest feeds: {list.error}{' '}
+              Couldn't load the extra feeds: {list.error}{' '}
               <Button size="sm" onClick={list.reload}>
                 Try again
               </Button>
@@ -129,7 +131,7 @@ function GuestRow({
         toast.warn('This slot has no key. Rotate it to make a new one.');
         return;
       }
-      if (await copyText(text)) toast.success('Ingest details copied. Send them only to this guest: the key works like a password.');
+      if (await copyText(text)) toast.success('Ingest details copied. Send them only to whoever sends this feed: the key works like a password.');
       else toast.error("Couldn't copy here. Use HTTPS, or a browser that allows copying.");
     });
 
@@ -155,7 +157,7 @@ function GuestRow({
       <div className="guest-feed-body">
         {renaming ? (
           <form className="row" onSubmit={saveName}>
-            <TextInput value={name} maxLength={GUEST_NAME_MAX} onValueChange={setName} aria-label="Guest feed name" autoFocus />
+            <TextInput value={name} maxLength={GUEST_NAME_MAX} onValueChange={setName} aria-label="Extra feed name" autoFocus />
             <Button size="sm" type="submit" variant="primary" loading={busy === 'rename'}>
               Save
             </Button>
@@ -190,12 +192,12 @@ function GuestRow({
             <ConfirmButton
               size="sm"
               variant="ghost"
-              confirmLabel={g.online ? 'Disconnects the guest. Sure?' : 'New key?'}
+              confirmLabel={g.online ? 'Disconnects the sender. Sure?' : 'New key?'}
               loading={busy === 'rotate'}
               onConfirm={() =>
                 run('rotate', async () => {
                   await api.rotateGuestKey(profileId, g.slot);
-                  toast.warn(`New key for ${g.name}. Copy the ingest details again and send them to the guest.`);
+                  toast.warn(`New key for ${g.name}. Copy the ingest details again and send them to whoever sends this feed.`);
                   onChanged();
                 })
               }
@@ -235,6 +237,8 @@ function GuestRow({
             </ConfirmButton>
           </div>
         )}
+        <PullLinkPanel profileId={profileId} target={{ slot: g.slot }} label={`extra feed "${g.name}"`} isAdmin={isAdmin} />
+        <GuestRoutesPanel profileId={profileId} slot={g.slot} guestName={g.name} isAdmin={isAdmin} />
       </div>
     </li>
   );
@@ -247,12 +251,12 @@ function AddGuest({ profileId, list, onAdded }: { profileId: string; list: Guest
 
   const add = async (e: FormEvent) => {
     e.preventDefault();
-    const clean = name.trim() || `Guest ${list.guestFeeds.length + 1}`;
+    const clean = name.trim() || `Feed ${list.guestFeeds.length + 1}`;
     setBusy(true);
     try {
       await api.addGuestFeed(profileId, clean);
       setName('');
-      toast.success(`${clean} added. Copy its ingest details and send them to your guest.`);
+      toast.success(`${clean} added. Copy its ingest details and send them to whoever sends it.`);
       onAdded();
     } catch (err) {
       toast.error(errorMessage(err));
@@ -264,7 +268,7 @@ function AddGuest({ profileId, list, onAdded }: { profileId: string; list: Guest
   if (full) return <p className="small muted">{list.maxSlots} guest feeds is the most per profile on this server.</p>;
   return (
     <form className="row" onSubmit={add}>
-      <TextInput value={name} onValueChange={setName} maxLength={GUEST_NAME_MAX} placeholder={`Guest ${list.guestFeeds.length + 1}`} aria-label="New guest feed name" />
+      <TextInput value={name} onValueChange={setName} maxLength={GUEST_NAME_MAX} placeholder={`Feed ${list.guestFeeds.length + 1}`} aria-label="New extra feed name" />
       <Button type="submit" variant="primary" size="sm" loading={busy}>
         Add guest feed
       </Button>
@@ -272,13 +276,13 @@ function AddGuest({ profileId, list, onAdded }: { profileId: string; list: Guest
   );
 }
 
-/** "How a guest sends video": OBS, Larix, other apps. Placeholders only, never a real address. */
+/** "How to send video to an extra feed": OBS, Larix, other apps. Placeholders only, never a real address. */
 export function GuestHelp() {
   return (
     <div className="alert guest-help">
       <p>
-        <strong>How a guest sends video.</strong> Add a slot, press <em>Copy ingest details</em> and send them to the guest (privately: the key works
-        like a password). They need H.264 video and AAC audio, a keyframe every 2 s, and a steady upload of about 1.5× their bitrate.
+        <strong>How to send video to an extra feed.</strong> Add a slot, press <em>Copy ingest details</em> and use them in the sending app, or send
+        them to your guest (privately: the key works like a password). It needs H.264 video and AAC audio, a keyframe every 2 s, and a steady upload of about 1.5× its bitrate.
       </p>
       <ul>
         <li>
@@ -295,9 +299,9 @@ export function GuestHelp() {
         </li>
       </ul>
       <p className="small muted">
-        The guest needs to reach Relay's RTMP port from the internet: through a VPN to your network (safest), or a port you forward on purpose (see
-        the guest feeds guide). Rotate or revoke a key any time; the guest is disconnected at once. CTD OBS adds a guest feed with the <em>CTD Relay
-        Feed</em> source.
+        A sender outside your network connects through a VPN into it (WireGuard, Tailscale or your router's VPN). Never forward Relay's RTMP port to
+        the internet: it is shared with OBS's own feeds. Rotate or revoke a key any time; the sender is disconnected at once. CTD OBS adds an extra
+        feed with the <em>CTD Relay Feed</em> source.
       </p>
     </div>
   );

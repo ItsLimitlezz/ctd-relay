@@ -33,6 +33,21 @@ export interface IngestAuthState {
   guestKey?(slot: string): string | null;
   /** Does the guest slot exist (it may be read back by Relay)? */
   guestExists?(slot: string): boolean;
+  /**
+   * Guest feed routing (docs/GUEST-FEEDS.md → Routing): the one-time publish key of the route that
+   * holds this feed path right now (Relay's own FFmpeg republishing a guest feed into a profile), or
+   * null. Accepted from loopback only.
+   */
+  routeKey?(route: IngestRoute): string | null;
+  /** OBS (its own key) was let in on a feed path: a route holding that input must stand down. */
+  obsPublished?(route: IngestRoute): void;
+  /**
+   * Pull links (docs/GUEST-FEEDS.md → Pull link): the read key of a guest or feed path, or null when
+   * its pull link is off. A read key only ever reads; it never publishes.
+   */
+  pullKey?(path: string): string | null;
+  /** A read with the right pull key: is there room under the per-feed reader cap (reserves it)? */
+  pullAdmit?(path: string): boolean;
 }
 
 /** 24-char URL-safe random key (144 bits). */
@@ -88,8 +103,9 @@ export function singleProfileAuth(keys: IngestSecrets | null): IngestAuthState |
  * - publish: only to a known profile's feed path (`live/<feed>` for the default profile,
  *   `live/<slug>/<feed>` for the others) with `?key=` equal to that profile's key for that feed
  *   (any source IP — OBS is on the LAN). A key never works on another profile's path.
- * - read: only a known profile's feed paths, only from loopback, as user 'internal' with the internal
- *   reader password (shared by every profile; FFmpeg is the only reader).
+ * - read: only a known profile's feed paths, from loopback as user 'internal' with the internal
+ *   reader password (shared by every profile), or, when the feed's pull link is on, from anywhere
+ *   with `?key=` equal to its read key (under the reader cap).
  * - everything else (playback, api, metrics, pprof, unknown): deny.
  */
 export function authorizeMediaRequest(req: MediaMtxAuthRequest, auth: IngestAuthState | null): boolean {
@@ -104,10 +120,18 @@ export function authorizeMediaRequest(req: MediaMtxAuthRequest, auth: IngestAuth
       const expected = auth.publishKey(route);
       if (!expected) return false;
       const key = queryParam(req.query ?? '', 'key');
-      return key !== null && key.length > 0 && safeEqual(key, expected);
+      if (key === null || key.length === 0) return false;
+      if (safeEqual(key, expected)) {
+        auth.obsPublished?.(route);
+        return true;
+      }
+      // A guest feed routed into this input: Relay's own FFmpeg, from loopback, with the route's key.
+      const routeKey = auth.routeKey?.(route) ?? null;
+      return routeKey !== null && routeKey.length > 0 && isLoopbackIp(req.ip ?? '') && safeEqual(key, routeKey);
     }
     case 'read':
-      return auth.publishKey(route) !== null && isInternalReader(req, auth); // a known profile
+      if (auth.publishKey(route) === null) return false; // a known profile
+      return isInternalReader(req, auth) || isPullReader(req, auth);
     default:
       return false;
   }
@@ -131,8 +155,9 @@ function isInternalReader(req: MediaMtxAuthRequest, auth: IngestAuthState): bool
  * Guest paths (`guest/<slot>`):
  * - publish: an existing slot whose key isn't revoked, with `?key=` equal to that slot's key (any
  *   source IP: guests are on the internet). A slot's key never works on another slot or a feed path.
- * - read: only Relay itself (loopback, internal reader password), only an existing slot. Nothing
- *   else ever reads a guest path: no push is built from one (parseFeedPath doesn't accept it).
+ * - read: only an existing slot, by Relay itself (loopback, internal reader password) or, when the
+ *   slot's pull link is on, by anyone with its read key (under the reader cap). No push is ever built
+ *   from a guest path (parseFeedPath doesn't accept it).
  */
 function authorizeGuest(req: MediaMtxAuthRequest, auth: IngestAuthState, slot: string): boolean {
   switch (req.action) {
@@ -143,8 +168,22 @@ function authorizeGuest(req: MediaMtxAuthRequest, auth: IngestAuthState, slot: s
       return key !== null && key.length > 0 && safeEqual(key, expected);
     }
     case 'read':
-      return (auth.guestExists?.(slot) ?? false) && isInternalReader(req, auth);
+      if (!(auth.guestExists?.(slot) ?? false)) return false;
+      return isInternalReader(req, auth) || isPullReader(req, auth);
     default:
       return false;
   }
+}
+
+/**
+ * A pull link reader (OBS Media Source, VLC): any source IP, `?key=` equal to the path's read key
+ * (never its ingest key), and room under the reader cap. Checked only for `read`.
+ */
+function isPullReader(req: MediaMtxAuthRequest, auth: IngestAuthState): boolean {
+  const path = req.path ?? '';
+  const expected = auth.pullKey?.(path) ?? null;
+  if (!expected) return false;
+  const key = queryParam(req.query ?? '', 'key');
+  if (key === null || key.length === 0 || !safeEqual(key, expected)) return false;
+  return auth.pullAdmit?.(path) ?? false;
 }

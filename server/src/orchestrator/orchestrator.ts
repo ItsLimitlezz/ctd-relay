@@ -43,6 +43,7 @@ import {
   type RunnerHost,
   type StatePatch,
 } from './destination-runner.js';
+import { guestRoutesOf } from '../media/guest-routes.js';
 import { requiredFeedsOf } from './feeds.js';
 import { TEST_MODE_CHANNEL_TITLE, TEST_MODE_SETTING, testModeLockedError } from './test-mode.js';
 
@@ -202,7 +203,17 @@ export class SessionOrchestrator implements Orchestrator {
       bus.on('feed', (f) => this.onFeed(f)),
       bus.on('push', (ev) => this.runners.get(ev.id)?.pushEvent(ev)),
     );
-    if (this.autoGoLive && this.anyFeedOnline()) await this.start('auto');
+    if (this.autoGoLive && this.anyObsFeedOnline()) await this.start('auto');
+  }
+
+  /**
+   * A feed online that OBS sends (not a guest feed routed into this profile): a route never starts
+   * a profile's Go live (docs/GUEST-FEEDS.md → Routing).
+   */
+  private anyObsFeedOnline(): boolean {
+    const routes = guestRoutesOf(this.services);
+    for (const [feed, state] of this.feeds) if (state.online && !routes?.isRouted(this.profileId, feed)) return true;
+    return false;
   }
 
   state(): SessionState {
@@ -527,7 +538,7 @@ export class SessionOrchestrator implements Orchestrator {
   }
 
   private maybeAutoStart(): void {
-    if (!this.autoGoLive || this.status !== 'offline' || this.shuttingDown || !this.anyFeedOnline()) return;
+    if (!this.autoGoLive || this.status !== 'offline' || this.shuttingDown || !this.anyObsFeedOnline()) return;
     this.start('auto').catch((err: unknown) => this.log.error({ error: errorMessage(err) }, 'auto go-live failed'));
   }
 

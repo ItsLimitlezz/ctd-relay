@@ -22,6 +22,8 @@ import type { ApiEventType, Envelope } from './types.js';
 import { parseUlid } from './ulid.js';
 import { registerHubRoutes } from './v1-hub.js';
 import { registerGuestFeedApiRoutes } from './guest-feeds.js';
+import { registerGuestRouteApiRoutes } from './v1-guest-routes.js';
+import { registerPullLinkApiRoutes } from './pull-links.js';
 import { musicFor } from '../music/music-service.js';
 import { transcodeCapabilitiesFor } from '../media/transcode-capabilities.js';
 import { registerObsSocketRoute } from './v1-obs-socket.js';
@@ -511,6 +513,8 @@ const v1Plugin: FastifyPluginAsync<V1Options> = async (app, opts) => {
   registerObsSocketRoute(app, ctx);
   registerShowRoutes(app, ctx);
   registerGuestFeedApiRoutes(app, ctx);
+  registerGuestRouteApiRoutes(app, ctx);
+  registerPullLinkApiRoutes(app, ctx);
   registerPlatformRoutes(app, ctx);
   registerReportApiRoutes(app, ctx);
 };

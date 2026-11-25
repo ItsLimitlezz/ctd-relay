@@ -26,6 +26,22 @@ export const GUEST_FEED_MIGRATIONS: readonly string[] = [
   );
   CREATE INDEX guest_feeds_profile ON guest_feeds(profile_id, created_at);
   `,
+  // g2: routes (docs/GUEST-FEEDS.md → Routing). Only adds a table: 0.2.80 still opens the file.
+  `
+  CREATE TABLE guest_routes (
+    id                TEXT PRIMARY KEY,            -- [a-z0-9]{10}
+    slot              TEXT NOT NULL REFERENCES guest_feeds(id) ON DELETE CASCADE,
+    kind              TEXT NOT NULL,               -- 'rtmp' | 'profile'
+    name              TEXT NOT NULL,
+    url               TEXT,                        -- rtmp: the server URL (the key is in the secrets)
+    target_profile_id TEXT REFERENCES profiles(id) ON DELETE CASCADE, -- profile: the target
+    target_feed       TEXT,                        -- profile: 'landscape' | 'vertical'
+    auto              INTEGER NOT NULL DEFAULT 0,
+    created_at        TEXT NOT NULL,
+    updated_at        TEXT NOT NULL
+  );
+  CREATE INDEX guest_routes_slot ON guest_routes(slot, created_at);
+  `,
 ];
 
 export function guestFeedSchemaVersion(db: Db): number {

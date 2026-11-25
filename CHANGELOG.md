@@ -2,24 +2,33 @@
 
 Versions follow the hub's CONVENTIONS.md → Versioning. Each release that ships to a TrueNAS install has a runbook in `docs/RELEASE-*.md` (backup, update, verify, rollback).
 
-## 0.2.90 (unreleased)
+## 0.2.90 (2026-11-25)
 
-**Guest feeds (Relay F1 / CTD OBS F1).** A remote camera operator or guest sends video to Relay over RTMP; CTD OBS pulls it in as a source (CTD Relay Feed) over LL-HLS behind Relay's auth. Guest feeds are **never restreamed** to destinations. API revision **1.17** (additive; the read uses the existing `feeds:watch` scope). Database: one new table on its own track (`guest_feeds`, `guest_feeds_meta`); schema stays **v4**, reports **r1**, so 0.2.80 still opens `app.db` after a rollback. Runbook: [docs/RELEASE-v0.2.90.md](docs/RELEASE-v0.2.90.md). Guide: [docs/GUEST-FEEDS.md](docs/GUEST-FEEDS.md).
+**Guest feeds (Relay F1 / CTD OBS F1)**, shown in the web UI as **Extra feeds**, with routing and Pull links. A remote camera operator or guest sends video to Relay over RTMP; CTD OBS pulls it in as a source (CTD Relay Feed) over LL-HLS behind Relay's auth. Guest feeds are **never restreamed** to destinations. API revision **1.17** (additive; the read uses the existing `feeds:watch` scope). Database: two new tables on their own track (`guest_feeds`, `guest_routes`, `guest_feeds_meta`); schema stays **v4**, reports **r1**, so 0.2.80 still opens `app.db` after a rollback. Runbook: [docs/RELEASE-v0.2.90.md](docs/RELEASE-v0.2.90.md). Guide: [docs/GUEST-FEEDS.md](docs/GUEST-FEEDS.md).
 
 ### Added
 - **Guest feed slots per profile** (default 4, `GUEST_FEEDS_MAX`): a name and an own ingest key each. Guests publish to `rtmp://<relay host>:<RTMP port>/guest` with stream key `<slot>?key=<key>`, on the same MediaMTX, port and key check as OBS's feeds. Keys are encrypted (secrets scope `guest:<profileId>`), never logged, and can be rotated (the guest is disconnected, the old key stops at once) or revoked from the web UI.
-- **Web UI: Guest feeds card** on the dashboard, under the feed cards: add, rename and remove slots, **Copy ingest details**, rotate/revoke keys (admins); state, codec, resolution, bitrate, a thumbnail and **Watch** (everyone signed in). A **How a guest sends video** help covers OBS, Larix and other RTMP apps.
+- **Web UI: Extra feeds card** (the guest feeds; labelled so it also fits your own extra inputs, like a second camera) on the dashboard, under the feed cards: add, rename and remove slots, **Copy ingest details**, rotate/revoke keys (admins); state, codec, resolution, bitrate, a thumbnail and **Watch** (everyone signed in). A **How to send video to an extra feed** help covers OBS, Larix and other RTMP apps.
 - **External API 1.17** (docs/API.md §18): `GET /profiles/{id}/guest-feeds` and `…/guest-feeds/{slot}/preview` (`status:read`); `…/guest-feeds/{slot}/live.m3u8` and `…/live/{file}` (`feeds:watch`): the 0.2.60 live preview machinery (LL-HLS on demand, passthrough, proxied, a viewer cap, an idle stop). Events `guest.feed.status` and `guest.feeds.changed`; issue kinds `guest.feed.offline` and `guest.feed.codec` (subject `guest.feed`) on the 0.2.80 alert contract. Problem code `unknown_guest_feed`.
 - **Limits for a weak CPU-only server:** no transcoding or probing of guest feeds; muxing only while watched; `GUEST_FEED_MAX_VIEWERS` (default 2) players per guest feed; a bitrate warning above `GUEST_FEED_WARN_KBPS` (8000); a guest above `GUEST_FEED_MAX_KBPS` (20000) for 10 s is disconnected. H.264 + AAC only (the codec guard, `problem`).
 - `npm run e2e:guests`: guest feeds with the real MediaMTX/FFmpeg, and the starvation measurement (docs/GUEST-FEEDS.md → What we measured).
+- **Guest feed routing** (docs/GUEST-FEEDS.md → Routing, docs/API.md §18.8): **Send this feed to…** on the Extra feeds card. A guest feed can go, passthrough only (`-c copy`, never transcoded), to up to 3 **custom RTMP/RTMPS servers** (URL + stream key; keys encrypted in secrets scope `guest-route:<id>`, write-only, never logged) or into a **profile's Landscape or Vertical feed** (its own or another's), where it works exactly like a feed from OBS (feed card with "Source: extra feed <name>", codec guard, Go live, test mode, destinations, reports, alerts). Started by hand or **when the feed is online**; stopped when the guest stops. Guards: OBS's own feed always wins (routing into an input OBS is sending is refused; OBS coming back stops the route), one route per input, no manual start/stop of a profile route while that profile is live, a route never starts Go live, custom servers can't be loopback, link-local or this Relay (LAN hosts allowed unless the owner turns them off). External API (additive): `GET /profiles/{id}/guest-routes`, `…/guest-feeds/{slot}/routes` (`status:read`); `POST`/`PATCH`/`DELETE`/`start`/`stop` (`system:admin`); problem codes `unknown_route`, `invalid_target`, `input_busy`, `session_live`, `route_active`, `exists`. Database: table `guest_routes` (g2 on the guest feeds' own track; schema stays v4).
+
+- **Pull link** (docs/GUEST-FEEDS.md → Pull link): a guest feed, or a profile's own Landscape or Vertical feed, can have an RTMP address with its **own read key** to paste into an OBS Media Source or VLC (no extra server). Off until an admin turns it on; the read key only reads (it never publishes, and an ingest key never reads), is encrypted (secrets scope `pull`), and rotating it or turning the link off disconnects its readers. At most `PULL_LINK_MAX_READERS` players per feed (default 2; `0` turns pull links off). Passthrough, never transcoded.
 
 ### Changed
 - `LivePreviewService` and `PreviewService` take any stream key (a feed or a guest slot); the feed routes behave as before.
 - MediaMTX's LL-HLS server also starts when `LIVE_PREVIEW_MAX_VIEWERS=0` but guest feeds can be watched.
 
+### Changed (VP check)
+- An **automatic** profile route ("when the feed is online") no longer takes the input of a live profile that OBS was feeding. Before, if a live profile's OBS feed dropped for a moment and the guest came online, the route could take that input and the guest would reach the live destinations; now it waits (state *Blocked*, "… is live"). A route that was itself the input's source still resumes when its guest comes back, like OBS reconnecting.
+- The web UI says **Extra feeds** instead of Guest feeds (card title, help, Watch label, "Source: extra feed …" on a feed card, Pull link label). The RTMP address (`/guest/<slot>`), the API (`/guest-feeds`, `guest.feed.*` events) and the database are unchanged.
+
 ### Not in this release
+- **SRT** ingest and SRT pull links (ctd-relay#37): not finished or measured yet (delay numbers, tests, docs); planned for the next release. It needs one UDP port mapped on the app.
+- The Pull link shows about 4 s of delay in a second OBS (RTMP read + OBS Media Source buffering); parked, to be measured hop by hop before anything changes.
 - An SRT read path (lower latency) needs a UDP port: out of scope, room left in the contract (API.md §18.7).
-- RTMPS/SRT ingest for guests; forwarding the RTMP port for guests is an owner decision (docs/SECURITY.md, docs/GUEST-FEEDS.md: use a VPN meanwhile).
+- RTMPS/SRT ingest for guests. Guests outside the network connect through a VPN; the RTMP port is never forwarded (docs/SECURITY.md, docs/GUEST-FEEDS.md).
 
 ## 0.2.80 (2026-11-24)
 

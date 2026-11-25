@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { DatabaseSync } from 'node:sqlite';
 import { MIGRATIONS, migrate, openDatabase, schemaVersion } from './database.js';
+import { createGuestRoutesRepo } from './guest-routes-repo.js';
 import { createGuestFeedsRepo, guestFeedSchemaVersion, GUEST_FEED_MIGRATIONS, migrateGuestFeeds, newSlotId } from './guest-feeds-repo.js';
 
 describe('guest feed table (own migration track)', () => {
@@ -12,7 +13,7 @@ describe('guest feed table (own migration track)', () => {
     expect(schemaVersion(db)).toBe(before);
     expect(guestFeedSchemaVersion(db)).toBe(GUEST_FEED_MIGRATIONS.length);
     const tables = db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name LIKE 'guest_%' ORDER BY name").all().map((r) => r.name);
-    expect(tables).toEqual(['guest_feeds', 'guest_feeds_meta']);
+    expect(tables).toEqual(['guest_feeds', 'guest_feeds_meta', 'guest_routes']);
     db.close();
   });
 
@@ -33,12 +34,29 @@ describe('guest feed table (own migration track)', () => {
     db.close();
   });
 
+  it('downgrade with routes: 0.2.80 deletes a profile and its slots, their routes and the routes into it go too', () => {
+    const db = openDatabase(':memory:');
+    const slots = createGuestFeedsRepo(db);
+    const routes = createGuestRoutesRepo(db);
+    db.prepare("INSERT INTO profiles (id, name, slug, color, created_at, updated_at) VALUES ('p2', 'Club', 'club', NULL, 'x', 'x')").run();
+    const a = slots.create('default', 'Cam A');
+    const b = slots.create('p2', 'Cam B');
+    routes.create({ slot: a.id, kind: 'rtmp', name: 'out', url: 'rtmp://live.example.com/app', targetProfileId: null, targetFeed: null, auto: false });
+    routes.create({ slot: a.id, kind: 'profile', name: 'into club', url: null, targetProfileId: 'p2', targetFeed: 'landscape', auto: true });
+    routes.create({ slot: b.id, kind: 'profile', name: 'from club', url: null, targetProfileId: 'default', targetFeed: 'vertical', auto: false });
+    expect(() => migrate(db, MIGRATIONS)).not.toThrow();
+    expect(schemaVersion(db)).toBe(MIGRATIONS.length);
+    db.prepare("DELETE FROM profiles WHERE id = 'p2'").run();
+    expect(routes.all().map((r) => r.name)).toEqual(['out']);
+    db.close();
+  });
+
   it('re-running is a no-op and a newer track is refused', () => {
     const db = new DatabaseSync(':memory:');
     db.exec('CREATE TABLE profiles (id TEXT PRIMARY KEY)');
     migrateGuestFeeds(db);
     migrateGuestFeeds(db);
-    expect(guestFeedSchemaVersion(db)).toBe(1);
+    expect(guestFeedSchemaVersion(db)).toBe(GUEST_FEED_MIGRATIONS.length);
     expect(() => migrateGuestFeeds(db, [])).toThrow(/newer than this app supports/);
     db.close();
   });

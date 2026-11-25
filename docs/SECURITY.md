@@ -119,7 +119,8 @@ So:
 - Give people who only run streams the **operator** role.
 - Keep the image **up to date**.
 - Forward only the web port (and port 80 for Let's Encrypt). Never forward 1935, and never expose the TrueNAS admin UI.
-- **Guest feeds** (docs/GUEST-FEEDS.md, 0.2.90) need a remote guest to reach the RTMP port. Use a VPN into your network for that; forwarding the RTMP port for guests is an owner decision this release doesn't make. Each slot has its own random key (rotate or revoke it in the web UI; the guest is disconnected at once), keys are encrypted at rest and never logged, and nothing can read a guest feed over RTMP except Relay itself.
+- **Guest feeds** (docs/GUEST-FEEDS.md, 0.2.90) need a remote guest to reach the RTMP port. Use a VPN into your network for that; never forward the RTMP port for guests either (it is shared with OBS's feeds). Each slot has its own random key (rotate or revoke it in the web UI; the guest is disconnected at once), keys are encrypted at rest and never logged, and nothing can read a guest feed over RTMP except Relay itself and, when an admin turns on its **Pull link**, a reader holding that link's own read key (docs/GUEST-FEEDS.md → Pull link).
+- **Guest feed routes** (docs/GUEST-FEEDS.md → Routing): admins only (`system:admin` in the API). A custom server must be `rtmp://`/`rtmps://`, never loopback, link-local, unspecified/multicast or this Relay's own RTMP port; LAN hosts are allowed unless the owner turns them off (`allowLan`). Their stream keys are encrypted (scope `guest-route:<id>`), write-only, never logged and scrubbed from error messages. A route into a profile republishes on loopback with a one-time in-memory key the auth hook accepts from loopback only; OBS's own key always takes the input back.
 - Protect backups of the data folder like passwords.
 
 ### If you suspect a compromise

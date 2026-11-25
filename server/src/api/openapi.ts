@@ -413,6 +413,8 @@ export function openApiDocument(version: string): Record<string, unknown> {
           },
         },
       },
+      ...guestRoutePaths(),
+      ...pullLinkPaths(),
       '/obs/socket': {
         get: {
           summary: 'OBS socket relay: obs-websocket 5 to OBS on the LAN, from anywhere (WebSocket, v1.6)',
@@ -1402,8 +1404,109 @@ const guestFeedSchemas = {
   },
 };
 
+const routeState = { enum: ['idle', 'starting', 'running', 'retrying', 'blocked', 'failed'] };
+const guestRouteSchemas = {
+  GuestRoute: {
+    type: 'object',
+    required: ['id', 'slot', 'profileId', 'name', 'target', 'auto', 'active', 'state', 'message', 'since', 'bitrateKbps'],
+    properties: {
+      id: { type: 'string', pattern: '^[a-z0-9]{10}$' },
+      slot: { type: 'string', pattern: '^[a-z0-9]{10}$' },
+      profileId: { ...str, description: 'The profile that owns the guest feed' },
+      name: str,
+      target: {
+        oneOf: [
+          {
+            type: 'object',
+            required: ['kind', 'host', 'hasKey'],
+            properties: { kind: { const: 'rtmp' }, host: { ...str, description: 'scheme://host[:port] only' }, hasKey: bool },
+          },
+          {
+            type: 'object',
+            required: ['kind', 'profileId', 'profileName', 'feed'],
+            properties: { kind: { const: 'profile' }, profileId: str, profileName: nullable(str), feed: { enum: ['landscape', 'vertical'] } },
+          },
+        ],
+      },
+      auto: { ...bool, description: 'Starts by itself whenever the guest sends' },
+      active: bool,
+      state: routeState,
+      message: nullable(str),
+      since: nullable({ type: 'string', format: 'date-time' }),
+      bitrateKbps: nullable({ type: 'number' }),
+    },
+  },
+  GuestRouteList: {
+    type: 'object',
+    required: ['profileId', 'slot', 'routes'],
+    properties: { profileId: str, slot: str, routes: { type: 'array', items: ref('GuestRoute') } },
+  },
+  ProfileGuestRoutes: {
+    type: 'object',
+    required: ['profileId', 'outbound', 'inbound'],
+    properties: {
+      profileId: str,
+      outbound: { type: 'array', items: ref('GuestRoute') },
+      inbound: { type: 'array', items: { allOf: [ref('GuestRoute'), { type: 'object', properties: { guestName: nullable(str) } }] } },
+    },
+  },
+  CreateGuestRoute: {
+    oneOf: [
+      {
+        type: 'object',
+        required: ['kind', 'url'],
+        properties: { kind: { const: 'rtmp' }, name: str, url: str, streamKey: nullable(str), auto: bool },
+      },
+      {
+        type: 'object',
+        required: ['kind', 'profileId', 'feed'],
+        properties: { kind: { const: 'profile' }, name: str, profileId: str, feed: { enum: ['landscape', 'vertical'] }, auto: bool },
+      },
+    ],
+  },
+};
+
+/** v1.17: pull links (docs/API.md §18.9). */
+const pullState = {
+  type: 'object',
+  required: ['enabled', 'readers', 'maxReaders'],
+  properties: {
+    enabled: { type: 'boolean' },
+    readers: { type: 'integer', description: "Players reading through the pull link now (Relay's own readers aren't counted)" },
+    maxReaders: { type: 'integer', description: 'Concurrent readers per feed (PULL_LINK_MAX_READERS, default 2); 0 = pull links off' },
+  },
+};
+const pullLinkSchemas = {
+  PullLinkState: pullState,
+  PullLinkInfo: {
+    type: 'object',
+    required: ['enabled', 'readers', 'maxReaders', 'url', 'serverUrl'],
+    properties: {
+      ...pullState.properties,
+      url: { oneOf: [{ type: 'string' }, { type: 'null' }], description: 'rtmp://<host>:<port>/<path>?key=<read key>: paste into an OBS Media Source (Input) or VLC. Null while off. A secret.' },
+      serverUrl: { type: 'string', description: 'The same without the key' },
+    },
+  },
+  ProfilePullLinks: {
+    type: 'object',
+    required: ['profileId', 'maxReaders', 'guestFeeds', 'feeds'],
+    properties: {
+      profileId: { type: 'string' },
+      maxReaders: { type: 'integer' },
+      guestFeeds: { type: 'object', additionalProperties: { $ref: '#/components/schemas/PullLinkState' }, description: 'By slot id' },
+      feeds: {
+        type: 'object',
+        required: ['landscape', 'vertical'],
+        properties: { landscape: { $ref: '#/components/schemas/PullLinkState' }, vertical: { $ref: '#/components/schemas/PullLinkState' } },
+      },
+    },
+  },
+};
+
 const issueSchemas = {
   ...guestFeedSchemas,
+  ...pullLinkSchemas,
+  ...guestRouteSchemas,
   Issue: { type: 'object', required: issueRequired, properties: issueProperties },
   IssueRaised: {
     type: 'object',
@@ -1470,4 +1573,170 @@ function transcodeCapabilitiesSchema(): object {
       error: nullable({ type: 'string' }),
     },
   };
+}
+
+
+// ---- v1.17 (additive): guest feed routing (docs/API.md §18.8) ----
+
+const routePath = { name: 'route', in: 'path', required: true, schema: { type: 'string', pattern: '^[a-z0-9]{10}$' } };
+
+function guestRoutePaths(): Record<string, unknown> {
+  const adminErrors = {
+    '401': errors['401'],
+    '403': problemResponse('Token without `system:admin` (`missing_scope`) or limited to one profile (`profile_forbidden`)'),
+    '404': problemResponse('No such profile (`unknown_profile`), guest feed (`unknown_guest_feed`) or route (`unknown_route`)'),
+    '429': errors['429'],
+  };
+  const routeOk = { description: 'The route (never a key, never a custom server path)', content: json(ref('GuestRoute')) };
+  const routes = '/profiles/{id}/guest-feeds/{slot}/routes';
+  const one = `${routes}/{route}`;
+  return {
+    '/profiles/{id}/guest-routes': {
+      get: {
+        summary: "Routes of a profile's guest feeds, and guest feeds routed into its inputs (v1.17)",
+        operationId: 'getProfileGuestRoutes',
+        tags: ['profiles'],
+        description: 'Needs `status:read`. See docs/API.md §18.8.',
+        parameters: [idPath],
+        responses: { '200': { description: 'Outbound and inbound routes', content: json(ref('ProfileGuestRoutes')) }, ...errors, ...profileErrors },
+      },
+    },
+    [routes]: {
+      get: {
+        summary: "A guest feed's routes and their state (v1.17)",
+        operationId: 'getGuestRoutes',
+        tags: ['profiles'],
+        description: 'Needs `status:read`. No keys; custom servers show scheme and host only.',
+        parameters: [idPath, slotPath],
+        responses: { '200': { description: 'The routes', content: json(ref('GuestRouteList')) }, ...errors, ...profileErrors },
+      },
+      post: {
+        summary: 'Add a route: a custom RTMP(S) server or a profile input (v1.17)',
+        operationId: 'createGuestRoute',
+        tags: ['profiles'],
+        description:
+          'Needs `system:admin` (a token for every profile). Passthrough only. Custom servers: rtmp:// or rtmps://, not loopback, link-local or this Relay; LAN hosts unless the owner turned them off. At most 3 custom servers and 3 profile inputs per guest feed. The stream key is write-only.',
+        parameters: [idPath, slotPath],
+        requestBody: { required: true, content: json(ref('CreateGuestRoute')) },
+        responses: {
+          '201': routeOk,
+          '400': problemResponse('Invalid body (`invalid`) or a refused server URL (`invalid_target`)'),
+          '409': problemResponse('Too many routes (`limit`) or this input already routed from this guest (`exists`)'),
+          ...adminErrors,
+        },
+      },
+    },
+    [one]: {
+      patch: {
+        summary: 'Rename a route, switch "when the feed is online", or change its server/key (v1.17)',
+        operationId: 'updateGuestRoute',
+        tags: ['profiles'],
+        description: 'Needs `system:admin`. `streamKey`: omitted = keep, empty or null = clear. The server and key change only while the route is stopped.',
+        parameters: [idPath, slotPath, routePath],
+        requestBody: {
+          required: true,
+          content: json({ type: 'object', properties: { name: str, url: str, streamKey: nullable(str), auto: bool }, additionalProperties: false }),
+        },
+        responses: { '200': routeOk, '400': problemResponse('`invalid` or `invalid_target`'), '409': problemResponse('Stop the route first (`route_active`)'), ...adminErrors },
+      },
+      delete: {
+        summary: 'Remove a route (v1.17)',
+        operationId: 'deleteGuestRoute',
+        tags: ['profiles'],
+        description: 'Needs `system:admin`. Refused while the target profile is live (`session_live`).',
+        parameters: [idPath, slotPath, routePath],
+        responses: { '204': { description: 'Removed' }, '409': problemResponse('The target profile is live (`session_live`)'), ...adminErrors },
+      },
+    },
+    [`${one}/start`]: {
+      post: {
+        summary: 'Start a route (v1.17)',
+        operationId: 'startGuestRoute',
+        tags: ['profiles'],
+        description:
+          "Needs `system:admin`. Only while the guest sends. A profile input is refused while OBS's own feed is on it or another route holds it (`input_busy`), and while that profile is live (`session_live`). A route never starts a profile's Go live.",
+        parameters: [idPath, slotPath, routePath],
+        responses: {
+          '200': routeOk,
+          '400': problemResponse('The server URL is refused now (`invalid_target`)'),
+          '409': problemResponse('`feed_offline`, `input_busy`, `session_live` or `invalid_target`'),
+          ...adminErrors,
+        },
+      },
+    },
+    [`${one}/stop`]: {
+      post: {
+        summary: 'Stop a route (v1.17)',
+        operationId: 'stopGuestRoute',
+        tags: ['profiles'],
+        description: 'Needs `system:admin`. Refused for a profile input while that profile is live (`session_live`).',
+        parameters: [idPath, slotPath, routePath],
+        responses: { '200': routeOk, '409': problemResponse('The target profile is live (`session_live`)'), ...adminErrors },
+      },
+    },
+  };
+}
+
+
+// ---- v1.17 (additive): pull links (docs/API.md §18.9) ----
+
+function pullLinkPaths(): Record<string, unknown> {
+  const adminErrors = {
+    '401': errors['401'],
+    '403': problemResponse('Token without `system:admin` (`missing_scope`) or limited to one profile (`profile_forbidden`)'),
+    '404': problemResponse('No such profile (`unknown_profile`), guest feed (`unknown_guest_feed`) or feed (`not_found`)'),
+    '429': errors['429'],
+    '503': problemResponse('Pull links are not available on this server (`unavailable`)'),
+  };
+  const ok = { description: 'The pull link, with the link itself (admin only; a secret)', content: json(ref('PullLinkInfo')) };
+  const feedPathParam = { name: 'feed', in: 'path', required: true, schema: { enum: ['landscape', 'vertical'] } };
+  const out: Record<string, unknown> = {
+    '/profiles/{id}/pull-links': {
+      get: {
+        summary: "Pull links of a profile's guest feeds and own feeds: on/off and readers (v1.17)",
+        operationId: 'getPullLinks',
+        tags: ['profiles'],
+        description: 'Needs `status:read`. Never a key or a link. See docs/API.md §18.9.',
+        parameters: [idPath],
+        responses: { '200': { description: 'The state', content: json(ref('ProfilePullLinks')) }, ...errors, ...profileErrors },
+      },
+    },
+  };
+  for (const [kind, base, params] of [
+    ['guest feed', '/profiles/{id}/guest-feeds/{slot}/pull', [idPath, slotPath]],
+    ['feed', '/profiles/{id}/feeds/{feed}/pull', [idPath, feedPathParam]],
+  ] as const) {
+    const op = kind === 'feed' ? 'FeedPullLink' : 'GuestPullLink';
+    out[base] = {
+      get: { summary: `A ${kind}'s pull link (v1.17)`, operationId: `get${op}`, tags: ['profiles'], description: 'Needs `system:admin`.', parameters: params, responses: { '200': ok, ...adminErrors } },
+      put: {
+        summary: `Turn a ${kind}'s pull link on or off (v1.17)`,
+        operationId: `set${op}`,
+        tags: ['profiles'],
+        description: 'Needs `system:admin`. On: a new read key (separate from the ingest key). Off: no key; current readers are disconnected.',
+        parameters: params,
+        requestBody: { required: true, content: json({ type: 'object', required: ['enabled'], properties: { enabled: bool }, additionalProperties: false }) },
+        responses: { '200': ok, '400': problemResponse('Invalid body (`invalid`)'), '409': problemResponse('Pull links are off on this server (`limit`)'), ...adminErrors },
+      },
+      delete: {
+        summary: `Revoke a ${kind}'s pull link (= off) (v1.17)`,
+        operationId: `revoke${op}`,
+        tags: ['profiles'],
+        description: 'Needs `system:admin`. Current readers are disconnected.',
+        parameters: params,
+        responses: { '204': { description: 'Revoked' }, ...adminErrors },
+      },
+    };
+    out[`${base}/rotate`] = {
+      post: {
+        summary: `A new read key for a ${kind}'s pull link (v1.17)`,
+        operationId: `rotate${op}`,
+        tags: ['profiles'],
+        description: 'Needs `system:admin`. Turns the link on; the old link stops working and its readers are disconnected.',
+        parameters: params,
+        responses: { '200': ok, '409': problemResponse('Pull links are off on this server (`limit`)'), ...adminErrors },
+      },
+    };
+  }
+  return out;
 }
