@@ -45,6 +45,22 @@ export function nextThumbDelay(mode: ThumbMode, status: number): number | null {
 }
 
 /** The problem to show instead of a player (HEVC/AV1 video), else null. */
+/**
+ * Another stream than a profile's own feeds, shown with the same thumbnail and player: a guest feed
+ * (docs/API.md §18). Its URLs, how to name it, and its own codec verdict (guestFeedProblem).
+ */
+export interface StreamSource {
+  previewUrl: string;
+  liveUrl: string;
+  /** e.g. 'Guest feed "Remote cam 1"'. */
+  label: string;
+  problem: FeedProblem | null;
+  /** Shown in the player while it is offline. */
+  offlineText: string;
+  /** Under the player. */
+  note: string;
+}
+
 export function blockingProblem(state: Pick<FeedState, 'feed' | 'online' | 'video' | 'audio'> | null | undefined): FeedProblem | null {
   const p = state?.online ? feedProblem(state) : null;
   return p?.blocking ? p : null;

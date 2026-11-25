@@ -6,6 +6,7 @@
 //   header `x-csrf-token` with the token returned by /api/auth/me or /api/auth/login.
 // - Role legend in comments: [public] no auth, [user] any logged-in user, [admin] admin only.
 
+import type { GuestFeed } from './guest-feeds.js';
 import type {
   Account,
   ApiScope,
@@ -794,6 +795,10 @@ export type WsServerMessage =
   | { type: 'chat-moderation'; moderation: ChatModeration }
   | { type: 'account'; account: Account }
   | { type: 'destinations-changed' }
-  | { type: 'notice'; level: 'info' | 'warn' | 'error'; message: string };
+  | { type: 'notice'; level: 'info' | 'warn' | 'error'; message: string }
+  /** A guest feed's state changed (docs/API.md §18; sent to sockets on that profile). */
+  | { type: 'guest-feed'; profileId: string; guestFeed: GuestFeed }
+  /** Guest feed slots added, renamed, removed, keys rotated or revoked: refetch the list. */
+  | { type: 'guest-feeds-changed'; profileId: string };
 
 export type { ConnectMethod };

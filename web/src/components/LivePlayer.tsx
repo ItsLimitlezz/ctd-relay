@@ -12,6 +12,7 @@ import {
   playerError,
   saveVolume,
   type PlayerError,
+  type StreamSource,
 } from '../state/feed-preview';
 import { usePageVisible } from '../state/hooks';
 import { Button } from './Button';
@@ -31,13 +32,15 @@ export interface LivePlayerModalProps {
   state?: FeedState | undefined;
   /** Shown in the title, e.g. the profile name. */
   context?: string;
+  /** Another stream (a guest feed): its URLs, name and codec verdict. */
+  source?: StreamSource;
 }
 
 /** "Watch": the feed live (LL-HLS through Relay, ~1–3 s behind), muted until you turn the sound on. */
-export function LivePlayerModal({ open, onClose, profileId, feed, state, context }: LivePlayerModalProps) {
+export function LivePlayerModal({ open, onClose, profileId, feed, state, context, source }: LivePlayerModalProps) {
   return (
-    <Modal open={open} onClose={onClose} size="lg" title={`${FEED_LABEL[feed]} feed · live${context ? ` · ${context}` : ''}`}>
-      <LivePlayer profileId={profileId} feed={feed} state={state} />
+    <Modal open={open} onClose={onClose} size="lg" title={`${source?.label ?? `${FEED_LABEL[feed]} feed`} · live${context ? ` · ${context}` : ''}`}>
+      <LivePlayer profileId={profileId} feed={feed} state={state} {...(source ? { source } : {})} />
     </Modal>
   );
 }
@@ -58,7 +61,7 @@ function httpStatus(data: { response?: { code?: number } | undefined; networkDet
   return typeof details?.status === 'number' && details.status > 0 ? details.status : undefined;
 }
 
-export function LivePlayer({ profileId, feed, state }: { profileId: string; feed: Feed; state?: FeedState | undefined }) {
+export function LivePlayer({ profileId, feed, state, source }: { profileId: string; feed: Feed; state?: FeedState | undefined; source?: StreamSource }) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const meterRef = useRef<HTMLSpanElement>(null);
   const audioRef = useRef<AudioGraph | null>(null);
@@ -78,7 +81,8 @@ export function LivePlayer({ profileId, feed, state }: { profileId: string; feed
   const [delay, setDelay] = useState<number | null>(null);
   const visible = usePageVisible();
 
-  const problem = blockingProblem(state);
+  const liveUrl = source?.liveUrl ?? feedLiveUrl(profileId, feed);
+  const problem = source ? (source.problem?.blocking && state?.online ? source.problem : null) : blockingProblem(state);
   const offline = state !== undefined && !state.online;
   // A hidden tab nobody listens to stops pulling the stream (its viewer slot frees after 15 s).
   const suspended = !visible && muted;
@@ -103,7 +107,7 @@ export function LivePlayer({ profileId, feed, state }: { profileId: string; feed
     let hls: HlsType | null = null;
     let retryTimer: ReturnType<typeof setTimeout> | undefined;
     let delayTimer: ReturnType<typeof setInterval> | undefined;
-    const url = feedLiveUrl(profileId, feed);
+    const url = liveUrl;
     setPhase(attemptsRef.current > 0 ? 'reconnecting' : 'connecting');
 
     const retry = (e: PlayerError) => {
@@ -225,7 +229,7 @@ export function LivePlayer({ profileId, feed, state }: { profileId: string; feed
       video.removeAttribute('src');
       video.load();
     };
-  }, [profileId, feed, halted, suspended, generation]);
+  }, [liveUrl, halted, suspended, generation]);
 
   // Sound: element volume until the meter's audio graph exists, then the graph's gain (so the meter
   // still moves while muted).
@@ -307,13 +311,13 @@ export function LivePlayer({ profileId, feed, state }: { profileId: string; feed
     setGeneration((g) => g + 1);
   };
 
-  const shownError: PlayerError | null = problem ? { kind: 'codec', message: problem.message } : offline ? { kind: 'offline', message: 'The feed is offline. The player starts when OBS sends it.' } : error;
+  const shownError: PlayerError | null = problem ? { kind: 'codec', message: problem.message } : offline ? { kind: 'offline', message: source?.offlineText ?? 'The feed is offline. The player starts when OBS sends it.' } : error;
   const delayText = phase === 'playing' ? formatDelay(delay) : null;
 
   return (
     <div className="live-player">
       <div className={cx('live-frame', `is-${feed}`)}>
-        <video ref={videoRef} muted playsInline autoPlay disablePictureInPicture aria-label={`${FEED_LABEL[feed]} feed, live`} hidden={shownError !== null} />
+        <video ref={videoRef} muted playsInline autoPlay disablePictureInPicture aria-label={`${source?.label ?? `${FEED_LABEL[feed]} feed`}, live`} hidden={shownError !== null} />
         {shownError ? (
           <div className={cx('live-overlay', shownError.kind === 'codec' ? 'is-danger' : undefined)} role="alert">
             <p>{shownError.message}</p>
@@ -372,7 +376,7 @@ export function LivePlayer({ profileId, feed, state }: { profileId: string; feed
         </span>
       </div>
       <p className="faint small live-note">
-        What OBS sends to Relay, straight from the feed (not re-encoded). Muted until you turn the sound on. Closing this stops it.
+        {source?.note ?? 'What OBS sends to Relay, straight from the feed (not re-encoded). Muted until you turn the sound on. Closing this stops it.'}
       </p>
     </div>
   );

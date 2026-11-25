@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { codecLabel } from '@shared/feed-codec';
 import type { Feed, FeedState } from '@shared/types';
 import { feedPreviewUrl } from '../api';
-import { blockingProblem, nextThumbDelay, thumbMode } from '../state/feed-preview';
+import { blockingProblem, nextThumbDelay, thumbMode, type StreamSource } from '../state/feed-preview';
 import { usePageVisible } from '../state/hooks';
 import { LandscapeIcon, PlayIcon, VerticalIcon } from './icons';
 import { Spinner } from './Spinner';
@@ -19,6 +19,8 @@ export interface FeedThumbnailProps {
   onWatch?: () => void;
   /** Smaller frame (Profiles page rows). */
   compact?: boolean;
+  /** Another stream (a guest feed) in this feed's frame: its URLs, name and codec verdict. */
+  source?: StreamSource;
 }
 
 /**
@@ -26,15 +28,16 @@ export interface FeedThumbnailProps {
  * while the page is on screen and the feed is online. Offline: a placeholder; HEVC/AV1: the codec
  * warning (Relay can't take a frame of it, and the live player can't play it).
  */
-export function FeedThumbnail({ profileId, feed, state, onWatch, compact = false }: FeedThumbnailProps) {
+export function FeedThumbnail({ profileId, feed, state, onWatch, compact = false, source }: FeedThumbnailProps) {
   const visible = usePageVisible();
-  const mode = thumbMode(state, visible);
+  const guestBlocked = source?.problem?.blocking && state?.online;
+  const mode = guestBlocked ? 'codec' : thumbMode(source ? (state ? { ...state, video: null } : state) : state, visible);
   const [src, setSrc] = useState<string | null>(null);
   const [offline, setOffline] = useState(false);
   /** The last grab failed (503: e.g. an HEVC feed, which Relay can't take a frame of). */
   const [failed, setFailed] = useState(false);
   const srcRef = useRef<string | null>(null);
-  const url = feedPreviewUrl(profileId, feed);
+  const url = source?.previewUrl ?? feedPreviewUrl(profileId, feed);
 
   const show = (next: string | null) => {
     if (srcRef.current) URL.revokeObjectURL(srcRef.current);
@@ -85,10 +88,10 @@ export function FeedThumbnail({ profileId, feed, state, onWatch, compact = false
 
   useEffect(() => () => show(null), []);
 
-  const problem = blockingProblem(state);
+  const problem = source ? (source.problem?.blocking && state?.online ? source.problem : null) : blockingProblem(state);
   const isOffline = mode === 'offline' || (mode === 'probe' && offline);
   const Icon = feed === 'landscape' ? LandscapeIcon : VerticalIcon;
-  const label = `${FEED_LABEL[feed]} feed`;
+  const label = source?.label ?? `${FEED_LABEL[feed]} feed`;
 
   let body;
   if (problem) {

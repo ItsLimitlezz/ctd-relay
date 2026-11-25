@@ -21,6 +21,7 @@ import { ChatLog } from '../components/ChatLog';
 import { ConfirmButton } from '../components/ConfirmButton';
 import { EmptyState } from '../components/EmptyState';
 import { FeedThumbnail } from '../components/FeedThumbnail';
+import { GuestFeedsCard } from '../components/GuestFeedsCard';
 import { Field } from '../components/Field';
 import {
   elapsedSeconds,
@@ -121,6 +122,7 @@ export default function DashboardPage() {
         {testMode && <TestModeBanner plan={plan} running={running} loadError={dests.data ? null : dests.error} />}
         <StatusCard session={session} />
         <FeedsRow feeds={session?.feeds ?? null} />
+        <GuestFeedsCard profileId={profileId} isAdmin={isAdmin} />
         <TitleCard session={session} destinations={dests.data ?? []} />
         <DestinationsSection
           destinations={dests.data}

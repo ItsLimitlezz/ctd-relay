@@ -3,6 +3,7 @@
 // Profile-scoped calls take an optional `profileId` and send it as `?profile=` (the server's
 // default profile when omitted); creates carry it in the body (`profileId`).
 
+import type { CreateGuestFeedResponse, GuestFeed, GuestFeedList, GuestIngestInfo } from '@shared/guest-feeds';
 import type {
   ApiError,
   ApiTokensResponse,
@@ -254,6 +255,14 @@ export const api = {
   updateProfile: (id: string, body: UpdateProfileRequest) => patch<Profile>(`/api/profiles/${encodeURIComponent(id)}`, body),
   /** 400 'default_profile' for the default profile, 409 'session_live' while its session runs. */
   deleteProfile: (id: string) => del<object>(`/api/profiles/${encodeURIComponent(id)}`),
+  // Guest feeds (docs/GUEST-FEEDS.md): list [user]; everything else [admin].
+  guestFeeds: (profileId: string) => get<GuestFeedList>(guestBase(profileId)),
+  addGuestFeed: (profileId: string, name: string) => post<CreateGuestFeedResponse>(guestBase(profileId), { name }),
+  renameGuestFeed: (profileId: string, slot: string, name: string) => patch<GuestFeed>(`${guestBase(profileId)}/${slot}`, { name }),
+  removeGuestFeed: (profileId: string, slot: string) => del<object>(`${guestBase(profileId)}/${slot}`),
+  guestIngest: (profileId: string, slot: string) => get<GuestIngestInfo>(`${guestBase(profileId)}/${slot}/ingest`),
+  rotateGuestKey: (profileId: string, slot: string) => post<GuestIngestInfo>(`${guestBase(profileId)}/${slot}/rotate`),
+  revokeGuestKey: (profileId: string, slot: string) => post<GuestFeed>(`${guestBase(profileId)}/${slot}/revoke`),
 
   // accounts (list per profile; create carries body.profileId)
   accounts: (profileId?: string) => get<Account[]>(withProfileQuery('/api/accounts', profileId)),
@@ -392,6 +401,17 @@ export function feedPreviewUrl(profileId: string, feed: Feed): string {
 }
 export function feedLiveUrl(profileId: string, feed: Feed): string {
   return `/api/profiles/${encodeURIComponent(profileId)}/feeds/${feed}/live.m3u8`;
+}
+
+function guestBase(profileId: string): string {
+  return `/api/profiles/${encodeURIComponent(profileId)}/guest-feeds`;
+}
+/** A guest feed's thumbnail and live playlist (same-origin, session cookie; docs/API.md §18). */
+export function guestPreviewUrl(profileId: string, slot: string): string {
+  return `${guestBase(profileId)}/${encodeURIComponent(slot)}/preview.jpg`;
+}
+export function guestLiveUrl(profileId: string, slot: string): string {
+  return `${guestBase(profileId)}/${encodeURIComponent(slot)}/live.m3u8`;
 }
 
 /** Build a ws:// or wss:// URL for a same-origin path. */

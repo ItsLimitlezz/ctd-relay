@@ -83,6 +83,8 @@ export class WsHub {
         this.scheduleProfiles(true);
       }),
       bus.on('feed', (feed) => this.toProfile(profileOf(feed), { type: 'feed', feed })),
+      bus.on('guest-feed', (g) => this.toProfile(g.profileId, { type: 'guest-feed', profileId: g.profileId, guestFeed: g.feed })),
+      bus.on('guest-feeds-changed', (c) => this.toProfile(c.profileId, { type: 'guest-feeds-changed', profileId: c.profileId })),
       bus.on('destination', (state) => {
         this.toProfile(profileOf(state), { type: 'destination', state });
         if (this.phases.get(state.destinationId) !== state.phase) {

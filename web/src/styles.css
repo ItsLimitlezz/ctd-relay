@@ -2735,3 +2735,40 @@ img {
   font-size: 0.8rem;
   white-space: pre-wrap;
 }
+
+/* Guest feeds card (docs/GUEST-FEEDS.md) */
+.guest-feeds {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.guest-feed {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  flex-wrap: wrap;
+}
+.guest-feed-body {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+  flex: 1 1 220px;
+}
+.guest-feed-actions {
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.guest-help ul {
+  margin: 6px 0;
+  padding-left: 18px;
+}
+.guest-help code {
+  word-break: break-all;
+}
+.text-warn {
+  color: var(--warn, #b7791f);
+}
