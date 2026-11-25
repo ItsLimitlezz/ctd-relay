@@ -38,7 +38,7 @@ const STATE_LABEL: Record<GuestRouteState, { label: string; tone: Tone }> = {
 };
 
 export function routeStatus(r: GuestRoute): { label: string; tone: Tone } {
-  if (r.state === 'idle' && r.auto) return { label: 'Waits for the guest', tone: 'neutral' };
+  if (r.state === 'idle' && r.auto) return { label: 'Waits for the feed', tone: 'neutral' };
   return STATE_LABEL[r.state];
 }
 
@@ -179,7 +179,7 @@ function AddRoute({ profileId, slot, onDone }: { profileId: string; slot: string
         <>
           <TextInput value={url} onValueChange={setUrl} placeholder="rtmps://live.example.com/app" aria-label="Server URL" mono required />
           <TextInput value={key} onValueChange={setKey} type="password" autoComplete="off" placeholder="Stream key (optional)" aria-label="Stream key" mono />
-          <span className="small muted">Passthrough: the guest's video is copied as it is, never re-encoded. The key is stored encrypted and never shown again.</span>
+          <span className="small muted">Passthrough: the feed's video is copied as it is, never re-encoded. The key is stored encrypted and never shown again.</span>
         </>
       ) : (
         <>

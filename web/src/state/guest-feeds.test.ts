@@ -26,7 +26,7 @@ describe('guest feeds (web)', () => {
     const src = guestSource('default', g());
     expect(src.previewUrl).toBe('/api/profiles/default/guest-feeds/q7m2x9k4tb/preview.jpg');
     expect(src.liveUrl).toBe('/api/profiles/default/guest-feeds/q7m2x9k4tb/live.m3u8');
-    expect(src.label).toBe('Guest feed "Remote cam 1"');
+    expect(src.label).toBe('Extra feed "Remote cam 1"');
   });
 
   it('status, media line and warnings', () => {

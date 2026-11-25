@@ -154,10 +154,10 @@ describe.skipIf(!!process.env.CI_NO_BROWSER)('pull link UI (Chromium)', () => {
 
   it('switch on, copy the link, see readers, rotate (disconnects them), switch off', async () => {
     await page.goto(base);
-    const panel = page.getByRole('group', { name: 'Pull link for guest feed "MacBook"' });
+    const panel = page.getByRole('group', { name: 'Pull link for extra feed "MacBook"' });
     await panel.waitFor();
     await panel.getByText('Pull link (OBS, VLC)').waitFor();
-    const toggle = panel.getByRole('switch', { name: 'Pull link for guest feed "MacBook"' });
+    const toggle = panel.getByRole('switch', { name: 'Pull link for extra feed "MacBook"' });
     expect(await toggle.getAttribute('aria-checked')).toBe('false');
 
     await toggle.click();

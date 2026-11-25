@@ -487,7 +487,7 @@ export function FeedCard({
       </div>
       {source && (
         <p className="small feed-source" data-testid={`feed-source-${feed}`}>
-          <Badge tone="accent">Source: guest feed {source}</Badge>
+          <Badge tone="accent">Source: extra feed {source}</Badge>
         </p>
       )}
       {profileId && !loading && state && (
