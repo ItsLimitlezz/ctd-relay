@@ -56,6 +56,7 @@ export type ApiEventType =
   | 'library.changed'
   | 'guest.feed.status'
   | 'guest.feeds.changed'
+  | 'feed.timing'
   | 'system.reset';
 
 /** Scope each event type needs. system.reset is a control frame every stream may get. */
@@ -99,10 +100,17 @@ export const EVENT_SCOPES: Record<ApiEventType, ApiScope | null> = {
   'library.changed': 'show:read',
   'guest.feed.status': 'status:read',
   'guest.feeds.changed': 'status:read',
+  'feed.timing': 'status:read',
   'system.reset': null,
 };
 
 export const EVENT_TYPES = Object.keys(EVENT_SCOPES) as ApiEventType[];
+
+/**
+ * Event types a stream gets only when its `types` names them exactly (not by default, not through a
+ * glob): feed.timing (docs/API.md §19) starts FFmpeg readers, so only an app that asks for it does.
+ */
+export const OPT_IN_EVENT_TYPES: ReadonlySet<ApiEventType> = new Set<ApiEventType>(['feed.timing']);
 
 export interface EnvelopeSource {
   connector: typeof CONNECTOR;

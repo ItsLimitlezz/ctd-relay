@@ -1,7 +1,7 @@
 // `types=` filters (comma-separated globs) and scope checks for event streams.
 
 import type { ApiScope } from '../../../shared/types.js';
-import { EVENT_SCOPES, EVENT_TYPES, type ApiEventType } from './types.js';
+import { EVENT_SCOPES, EVENT_TYPES, OPT_IN_EVENT_TYPES, type ApiEventType } from './types.js';
 
 const GLOB_RE = /^[a-z*]+(?:\.[a-z*]+)*$/;
 const MAX_GLOBS = 20;
@@ -54,10 +54,11 @@ export function scopeTypes(scopes: readonly ApiScope[]): Set<ApiEventType> {
  */
 export function resolveTypes(raw: unknown, scopes: readonly ApiScope[]): TypeFilter {
   const allowed = scopeTypes(scopes);
-  if (raw === undefined || raw === '') return { ok: true, types: allowed };
+  const byDefault = new Set([...allowed].filter((t) => !OPT_IN_EVENT_TYPES.has(t)));
+  if (raw === undefined || raw === '') return { ok: true, types: byDefault };
   if (typeof raw !== 'string') return { ok: false, status: 400, code: 'invalid', detail: 'types must be given once, as a comma-separated list' };
   const globs = raw.split(',').map((g) => g.trim()).filter((g) => g.length > 0);
-  if (globs.length === 0) return { ok: true, types: allowed };
+  if (globs.length === 0) return { ok: true, types: byDefault };
   if (globs.length > MAX_GLOBS) return { ok: false, status: 400, code: 'invalid', detail: `types: at most ${MAX_GLOBS} entries` };
   for (const g of globs) {
     if (g.length > MAX_GLOB_LENGTH || !GLOB_RE.test(g)) {
@@ -65,7 +66,7 @@ export function resolveTypes(raw: unknown, scopes: readonly ApiScope[]): TypeFil
     }
   }
   const patterns = globs.map((g) => g.replace(/\*+/g, '*'));
-  const requested = EVENT_TYPES.filter((t) => t !== 'system.reset' && patterns.some((p) => globMatch(p, t)));
+  const requested = EVENT_TYPES.filter((t) => t !== 'system.reset' && patterns.some((p) => (OPT_IN_EVENT_TYPES.has(t) ? p === t : globMatch(p, t))));
   if (requested.length === 0) return { ok: false, status: 400, code: 'invalid', detail: 'types matches no event type' };
   const granted = requested.filter((t) => allowed.has(t));
   if (granted.length === 0) {
