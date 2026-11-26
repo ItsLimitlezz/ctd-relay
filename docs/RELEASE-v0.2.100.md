@@ -1,4 +1,4 @@
-# Release runbook: CTD Relay 0.2.100 (SRT, Pull link delay)
+# Release runbook: CTD Relay 0.2.100 (SRT, stream issues, scope upgrades, feed timing)
 
 Updates a TrueNAS install from **0.2.90** (`:0.2.90`, schema v4, reports r1, guest feed track g2,
 API 1.17) to **0.2.100**. Follows [INSTALL-TRUENAS.md](INSTALL-TRUENAS.md) → Backups / Updating, like
@@ -17,6 +17,9 @@ Version: **`0.2.90` → `0.2.100`** (tag `v0.2.100`). Never a Major bump.
 | SRT | MediaMTX listens for SRT on **one UDP port** (`SRT_PORT`, default 8890) for ingest and pull links, with the same keys as RTMP ([SRT.md](SRT.md)). | Nothing changes for RTMP. SRT works only once the UDP port is mapped on the app (and forwarded on the router for a sender or player outside the LAN). Without the mapping, Relay shows the SRT addresses but nothing outside reaches them. |
 | External API | Revision **1.17 → 1.18** (additive): `srtUrl` + `srt` on ingest details, guest ingest details and Pull link admin objects. | Nothing to pair again. The footer shows **API 1.18**. |
 | Stream issues | An issues strip on the dashboard and Profiles, badges on feed and destination cards, a 7-day history (Reports → Issues), issues in the Stream Report and its export. | Shows only when something is wrong. New table `issue_history` on its own track. |
+| Scope upgrades | A paired app can ask for more permissions on its existing token; an admin approves or denies in **Settings → API** (banner on every page). [API.md §9.3.1](API.md) | Nothing until an app asks. Never automatic; `system:admin` is never granted this way. |
+| Show profiles | Audit fixes: a secret `value` inside a manifest is dropped (on save and read, also for older revisions); malformed bodies answer `400` instead of `500`; deleting a profile tells library mirrors. | Saves from the CTD OBS plugin keep working. |
+| Feed timing | `GET /api/v1/profiles/{id}/timing` and the opt-in `feed.timing` event for CTD OBS ([API.md §19](API.md)). Copy readers (no decode), only while an app asks, at most `FEED_TIMING_MAX` (8) feeds; about 3 % of one core per measured feed. | Nothing runs until an app asks for timing. `FEED_TIMING_MAX: "0"` turns it off. |
 | Docs | [PULL-LINK.md](PULL-LINK.md): the measured Pull link delay and the best OBS settings. | None. |
 
 **Database:** one new table, `issue_history`, on its own track (`issue_history_meta` → 1). The main
@@ -66,7 +69,9 @@ Do it when you're not live: the update restarts the container and ends any sessi
    seconds the dashboard shows an issues strip row ("feed offline", Landscape feed, open N s) and a
    badge on the Landscape card. Start the output again: both clear. **Reports → Issues** lists it with
    how it ended.
-7. Optional: the clock test in [PULL-LINK.md](PULL-LINK.md) → "Find where the rest of the delay is",
+7. **Scope upgrades and feed timing** need a client to exercise them (CTD OBS once it supports them); the
+   unit and integration tests cover them. Check only that **Settings → API** shows no stray banner.
+8. Optional: the clock test in [PULL-LINK.md](PULL-LINK.md) → "Find where the rest of the delay is",
    to see where the remaining Pull link delay is.
 
 ## 4. Rollback
