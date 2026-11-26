@@ -7,7 +7,7 @@ import type {
   ObsRelayTestResult,
   UpdateObsRelayRequest,
 } from '@shared/api';
-import type { ApiScope, ApiTokenInfo, ConnectedApp, PairingRequest, ProfileSummary } from '@shared/types';
+import type { ApiScope, ApiTokenInfo, ConnectedApp, PairingRequest, ProfileSummary, ScopeUpgradeRequest } from '@shared/types';
 import { API_SCOPES, DEFAULT_PROFILE_ID } from '@shared/types';
 import { api } from '../../api';
 import { Badge } from '../../components/Badge';
@@ -39,6 +39,8 @@ import {
   pairingDefaults,
   pairingExpiresText,
   pendingPairings,
+  pendingScopeUpgrades,
+  scopeUpgradeAppName,
   profileFromSelect,
   profileSelectOptions,
   profileToSelect,
@@ -50,7 +52,7 @@ import {
   sortApps,
   withSelectedOption,
 } from '../../state/hub';
-import { useConnectedApps, useLiveActions, usePairings } from '../../state/live';
+import { useConnectedApps, useLiveActions, usePairings, useScopeUpgrades } from '../../state/live';
 import { useProfileContext } from '../../state/profile';
 import { findProfile, profileLabel } from '../../state/profiles';
 import {
@@ -69,6 +71,7 @@ import {
   tokenModalReducer,
   validateTokenForm,
 } from './settings-helpers';
+import { ScopeUpgradesCard } from './ScopeUpgradesCard';
 
 export const API_DOCS_URL = 'https://github.com/ItsLimitlezz/ctd-relay/blob/main/docs/API.md';
 
@@ -85,19 +88,28 @@ export function ApiTab() {
   const { profiles, profileId: currentId } = useProfileContext();
   const pairings = usePairings();
   const apps = useConnectedApps();
-  const { loadPairings, loadApps } = useLiveActions();
+  const upgrades = useScopeUpgrades();
+  const { loadPairings, loadScopeUpgrades, loadApps } = useLiveActions();
   const [pairingsError, setPairingsError] = useState<string | null>(null);
+  const [upgradesError, setUpgradesError] = useState<string | null>(null);
   const [appsError, setAppsError] = useState<string | null>(null);
   const [modal, dispatchModal] = useReducer(tokenModalReducer<CreateApiTokenResponse>, undefined, tokenModalInitial<CreateApiTokenResponse>);
   const [dock, setDock] = useState<CreateApiTokenResponse | null>(null);
   const [dockBusy, setDockBusy] = useState(false);
   const [dockProfile, setDockProfile] = useState<string>(currentId);
-  const focusPair = useQuery().get('pair');
+  const query = useQuery();
+  const focusPair = query.get('pair');
+  const focusUpgrade = query.get('upgrade');
 
   const reloadPairings = () =>
     loadPairings().then(
       () => setPairingsError(null),
       (err: unknown) => setPairingsError(errorMessage(err)),
+    );
+  const reloadUpgrades = () =>
+    loadScopeUpgrades().then(
+      () => setUpgradesError(null),
+      (err: unknown) => setUpgradesError(errorMessage(err)),
     );
   const reloadApps = () =>
     loadApps().then(
@@ -108,8 +120,9 @@ export function ApiTab() {
   // Fresh lists on open; the live socket keeps them current afterwards.
   useEffect(() => {
     void reloadPairings();
+    void reloadUpgrades();
     void reloadApps();
-  }, [loadPairings, loadApps]);
+  }, [loadPairings, loadScopeUpgrades, loadApps]);
 
   const addToken = (t: ApiTokenInfo) =>
     res.setData((d) => (d ? { ...d, tokens: [...d.tokens.filter((x) => x.id !== t.id), t] } : d));
@@ -160,6 +173,32 @@ export function ApiTab() {
     }
   };
 
+  // Scope upgrades: all or nothing; the same token gains exactly the listed scopes.
+  const approveUpgrade = async (u: ScopeUpgradeRequest) => {
+    try {
+      const { token } = await api.approveScopeUpgrade(u.id);
+      res.setData((d) => (d ? { ...d, tokens: d.tokens.map((x) => (x.id === token.id ? token : x)) } : d));
+      toast.success(`${scopeUpgradeAppName(u)} has the new permissions. It keeps using the same token.`);
+      if (focusUpgrade === u.id) setQuery({ upgrade: null });
+    } catch (err) {
+      toast.error(errorMessage(err));
+    } finally {
+      void reloadUpgrades();
+    }
+  };
+
+  const denyUpgrade = async (u: ScopeUpgradeRequest) => {
+    try {
+      await api.denyScopeUpgrade(u.id);
+      toast.info(`Denied. ${scopeUpgradeAppName(u)} keeps the permissions it had.`);
+      if (focusUpgrade === u.id) setQuery({ upgrade: null });
+    } catch (err) {
+      toast.error(errorMessage(err));
+    } finally {
+      void reloadUpgrades();
+    }
+  };
+
   const removeApp = async (a: ConnectedApp) => {
     try {
       await api.removeApp(a.id);
@@ -186,6 +225,17 @@ export function ApiTab() {
         onRetry={() => void reloadPairings()}
         onApprove={approve}
         onDeny={deny}
+      />
+      <ScopeUpgradesCard
+        pending={pendingScopeUpgrades(upgrades, now)}
+        loaded={upgrades !== null}
+        profiles={profiles}
+        now={now}
+        focusId={focusUpgrade}
+        error={upgradesError}
+        onRetry={() => void reloadUpgrades()}
+        onApprove={approveUpgrade}
+        onDeny={denyUpgrade}
       />
       <PhoneConnectCard profiles={profiles} defaultProfileId={currentId} onConnected={res.reload} />
       <ObsRelayCard />

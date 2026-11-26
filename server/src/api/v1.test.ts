@@ -188,6 +188,8 @@ describe('GET /openapi.json', () => {
       '/connect/claim',
       '/pairing',
       '/pairing/{pairingId}/token',
+      '/pairing/upgrade',
+      '/pairing/upgrade/{upgradeId}',
       '/profiles/{id}/show',
       '/profiles/{id}/show/revisions',
       '/profiles/{id}/show/revisions/{rev}',

@@ -12,6 +12,7 @@ import { Button } from './Button';
 import { elapsedSeconds, formatDuration } from './format';
 import { CloseIcon, FlaskIcon, MenuIcon } from './icons';
 import { PairingBanner } from './PairingBanner';
+import { ScopeUpgradeBanner } from './ScopeUpgradeBanner';
 import { LiveProfilesIndicator, ProfileSwitcher } from './ProfileSwitcher';
 import { StatusDot } from './StatusDot';
 import { cx, type Tone } from './utils';
@@ -84,6 +85,7 @@ export function AppShell({ children }: { children: ReactNode }) {
       </header>
       <main className="main" id="main">
         <PairingBanner />
+        <ScopeUpgradeBanner />
         {children}
       </main>
       <AppFooter />

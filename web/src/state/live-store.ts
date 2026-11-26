@@ -3,7 +3,7 @@
 
 import type { WsServerMessage } from '@shared/api';
 import type { ApiIssue } from '@shared/issues';
-import type { Account, ChatMessage, ChatModeration, ConnectedApp, PairingRequest, SessionState } from '@shared/types';
+import type { Account, ChatMessage, ChatModeration, ConnectedApp, PairingRequest, ScopeUpgradeRequest, SessionState } from '@shared/types';
 
 export const CHAT_LIMIT = 500;
 /**
@@ -50,6 +50,9 @@ export interface LiveState {
   pairings: PairingRequest[] | null;
   /** Bumped on every pushed 'pairings' list, so an older REST answer never replaces a newer push. */
   pairingsSeq: number;
+  /** Pending scope upgrades (admins; every profile): same rules as `pairings`. */
+  scopeUpgrades: ScopeUpgradeRequest[] | null;
+  scopeUpgradesSeq: number;
   /** Connected apps (every profile). null until loaded over REST or pushed. Kept when the profile changes. */
   apps: ConnectedApp[] | null;
   /** Bumped on every pushed 'apps' list. */
@@ -73,6 +76,8 @@ export const initialLiveState: LiveState = {
   destinationsVersion: 0,
   pairings: null,
   pairingsSeq: 0,
+  scopeUpgrades: null,
+  scopeUpgradesSeq: 0,
   apps: null,
   appsSeq: 0,
   issues: [],
@@ -113,6 +118,8 @@ export function parseServerMessage(raw: unknown): WsServerMessage | null {
       return typeof d.profileId === 'string' && isObject(d.issue) && typeof d.issue.id === 'string' ? (d as WsServerMessage) : null;
     case 'pairings':
       return Array.isArray(d.pairings) ? (d as WsServerMessage) : null;
+    case 'scope-upgrades':
+      return Array.isArray(d.upgrades) ? (d as WsServerMessage) : null;
     case 'apps':
       return Array.isArray(d.apps) ? (d as WsServerMessage) : null;
     case 'session':
@@ -334,6 +341,8 @@ export function reduceLive(state: LiveState, msg: WsServerMessage): LiveState {
       return state;
     case 'pairings':
       return { ...state, pairings: msg.pairings, pairingsSeq: state.pairingsSeq + 1 };
+    case 'scope-upgrades':
+      return { ...state, scopeUpgrades: msg.upgrades, scopeUpgradesSeq: state.scopeUpgradesSeq + 1 };
     case 'apps':
       return { ...state, apps: msg.apps, appsSeq: state.appsSeq + 1 };
     case 'hello': {
@@ -459,7 +468,16 @@ export class LiveStore {
   startProfile(profileId: string): void {
     const s = this.state;
     if (s.profileId === profileId && s.connections === 0 && s.session === null) return;
-    this.set({ ...initialLiveState, profileId, pairings: s.pairings, pairingsSeq: s.pairingsSeq, apps: s.apps, appsSeq: s.appsSeq });
+    this.set({
+      ...initialLiveState,
+      profileId,
+      pairings: s.pairings,
+      pairingsSeq: s.pairingsSeq,
+      scopeUpgrades: s.scopeUpgrades,
+      scopeUpgradesSeq: s.scopeUpgradesSeq,
+      apps: s.apps,
+      appsSeq: s.appsSeq,
+    });
   }
 
   /**
@@ -496,6 +514,13 @@ export class LiveStore {
     const seq = this.state.pairingsSeq;
     const list = await fetch();
     if (this.state.pairingsSeq === seq) this.set({ ...this.state, pairings: list });
+  }
+
+  /** Load pending scope upgrades over REST (same rule as loadPairings). */
+  async loadScopeUpgrades(fetch: () => Promise<ScopeUpgradeRequest[]>): Promise<void> {
+    const seq = this.state.scopeUpgradesSeq;
+    const list = await fetch();
+    if (this.state.scopeUpgradesSeq === seq) this.set({ ...this.state, scopeUpgrades: list });
   }
 
   /** Load connected apps over REST (same rule as loadPairings). */

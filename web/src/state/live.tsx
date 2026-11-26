@@ -1,12 +1,12 @@
 // Live store React bindings: one WebSocket to /api/ws?profile=<current profile> while logged in
 // (switching profile reconnects it). Hooks: useSession, useChat, useLiveStatus, useLiveSocketReady, useLiveConnections,
-// useAccountUpdates, useAccountsVersion, useDestinationsVersion, usePairings, useOpenIssues, useConnectedApps,
+// useAccountUpdates, useAccountsVersion, useDestinationsVersion, usePairings, useScopeUpgrades, useOpenIssues, useConnectedApps,
 // useLiveEvent, useLiveActions.
 
 import { createContext, useContext, useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from 'react';
 import type { WsServerMessage } from '@shared/api';
 import type { ApiIssue } from '@shared/issues';
-import type { Account, ChatMessage, ConnectedApp, PairingRequest, ProfileSummary, SessionState } from '@shared/types';
+import type { Account, ChatMessage, ConnectedApp, PairingRequest, ProfileSummary, ScopeUpgradeRequest, SessionState } from '@shared/types';
 import { api, wsUrl } from '../api';
 import { alertForNotice, installAlerts } from './alerts';
 import { useAuth } from './auth';
@@ -71,7 +71,10 @@ export function LiveProvider({ children }: { children: ReactNode }) {
           lastProfiles = Array.isArray(msg.profiles) ? msg.profiles : null;
           if (Array.isArray(msg.profiles)) latest.current.apply(msg.profiles);
           // Pending app pairings aren't in the hello: admins load them on every (re)connect.
-          if (latest.current.isAdmin) void store.loadPairings(api.pairings).catch(() => undefined);
+          if (latest.current.isAdmin) {
+            void store.loadPairings(api.pairings).catch(() => undefined);
+            void store.loadScopeUpgrades(api.scopeUpgrades).catch(() => undefined);
+          }
         } else if (msg.type === 'profiles') {
           const now = Date.now();
           for (const a of profileAlerts(lastProfiles, msg.profiles, profileId)) {
@@ -173,6 +176,8 @@ export const useAccountsVersion = (): number => useLiveState((s) => s.accountsVe
 export const useDestinationsVersion = (): number => useLiveState((s) => s.destinationsVersion);
 /** Pending app pairings (admins), every profile; null until loaded. */
 export const usePairings = (): PairingRequest[] | null => useLiveState((s) => s.pairings);
+/** Pending scope upgrades (admins), every profile; null until loaded. */
+export const useScopeUpgrades = (): ScopeUpgradeRequest[] | null => useLiveState((s) => s.scopeUpgrades);
 
 const NO_ISSUES: ApiIssue[] = [];
 
@@ -214,6 +219,8 @@ export interface LiveActions {
   mergeChat: (messages: ChatMessage[]) => void;
   /** (Re)load pending pairings over REST [admin]. Rejects with the request's error. */
   loadPairings: () => Promise<void>;
+  /** (Re)load pending scope upgrades over REST [admin]. Rejects with the request's error. */
+  loadScopeUpgrades: () => Promise<void>;
   /** (Re)load connected apps over REST [admin]. Rejects with the request's error. */
   loadApps: () => Promise<void>;
 }
@@ -232,6 +239,7 @@ export function useLiveActions(): LiveActions {
       patchSession: (p) => store.patchSession(p, profileId),
       mergeChat: (m) => store.mergeChat(m, profileId),
       loadPairings: () => store.loadPairings(api.pairings),
+      loadScopeUpgrades: () => store.loadScopeUpgrades(api.scopeUpgrades),
       loadApps: () => store.loadApps(api.apps),
     }),
     [store, profileId],

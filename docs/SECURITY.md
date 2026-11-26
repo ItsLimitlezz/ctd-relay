@@ -28,6 +28,7 @@ Public paths that work without logging in:
 - The secret is shown once and stored only as a SHA-256 hash. Revoking a token takes effect immediately (open event streams close within 30 s). Creating and revoking tokens is in the audit log.
 - Each token is limited to 600 requests per minute and 5 open event streams. The API never sets or reads cookies.
 - A token holder can read your chat and stream status (titles, destination names, watch URLs, error messages). Stream keys, account tokens and settings are never part of the API.
+- **Scope upgrades** (v1.18, [API.md §9.3.1](API.md)): an app can ask for more scopes for the token it already holds. Nothing is granted until an admin approves it in **Settings → API**; the prompt names the app, lists exactly the scopes being added (sensitive ones marked, with why) and the token's profile, and shows the app's reason as untrusted, quoted text. Approval adds exactly those scopes and never changes the token's profile, so a token limited to one profile stays limited; `system:admin` can never be added this way. One pending request per token, at most 10 in total, in memory only. Requests, approvals, denials and expiries are audited (`scope_upgrade.*`) with the token's prefix, never its secret.
 - Treat a token like a password: give each app its own, and revoke it when an app is retired or a dock URL (`/dock#token=…`) may have leaked.
 
 ### Operator tools (v1.11)

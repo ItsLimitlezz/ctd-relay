@@ -7,7 +7,8 @@ import { APP_ID_RE, APP_KIND_RE, CAPABILITY_RE, MAX_CAPABILITIES, MAX_META_BYTES
 import { PROBLEM_CODES, PROBLEM_TYPE } from './http.js';
 import { MAX_PENDING_PAIRINGS, MAX_PENDING_PAIRINGS_INTERNET, MAX_PENDING_PAIRINGS_PER_ADDRESS, PAIRING_CODE_RE, PAIRING_POLL_INTERVAL_SEC, PAIRING_TTL_MS } from './pairing.js';
 import { ALERT_COUNT_UNITS, ALERT_KINDS, API_ROLES, EVENT_TYPES, ISSUE_SEVERITIES } from './types.js';
-import { CLAIMS_PER_MINUTE_PER_IP, MESSAGE_DATA_MAX_BYTES, MESSAGE_TYPE_RE, MESSAGES_PER_MINUTE, PAIRINGS_PER_MINUTE_PER_IP } from './v1-hub.js';
+import { CLAIMS_PER_MINUTE_PER_IP, MESSAGE_DATA_MAX_BYTES, MESSAGE_TYPE_RE, MESSAGES_PER_MINUTE, PAIRINGS_PER_MINUTE_PER_IP, SCOPE_UPGRADES_PER_MINUTE_PER_TOKEN } from './v1-hub.js';
+import { MAX_PENDING_SCOPE_UPGRADES, SCOPE_UPGRADE_APP_NAME_MAX, SCOPE_UPGRADE_REASON_MAX, SCOPE_UPGRADE_TTL_MS } from './scope-upgrade.js';
 import { OBS_BODY_LIMIT, OBS_DATA_MAX_BYTES, OBS_EVENT_TYPES, OBS_MAX_EVENTS, OBS_POSTS_PER_MINUTE } from './obs.js';
 import { PREVIEW_MAX_AGE_MS } from './previews.js';
 import { DEFAULT_LIVE_MAX_VIEWERS, VIEWER_IDLE_MS } from '../media/live-preview.js';
@@ -661,6 +662,66 @@ export function openApiDocument(version: string): Record<string, unknown> {
           },
         },
       },
+      '/pairing/upgrade': {
+        post: {
+          summary: 'Ask for more scopes for this token (v1.18); an admin approves in Settings → API',
+          operationId: 'requestScopeUpgrade',
+          tags: ['pairing'],
+          description: `Any valid token. Unknown scopes and system:admin are ignored; scopes the token holds are dropped. Nothing new to add: 200 with the token's scopes (no request is made). Otherwise a pending request (one per token: a new one replaces the previous; at most ${MAX_PENDING_SCOPE_UPGRADES} pending at once), answered within ${SCOPE_UPGRADE_TTL_MS / 60_000} minutes. Show \`approveUrl\` to the user, then poll GET /pairing/upgrade/{upgradeId} every \`interval\` seconds. Approved scopes are added to the same token (secret and profile unchanged). ${SCOPE_UPGRADES_PER_MINUTE_PER_TOKEN} requests/minute per token.`,
+          requestBody: {
+            required: true,
+            content: json({
+              type: 'object',
+              required: ['scopes'],
+              properties: {
+                scopes: { type: 'array', minItems: 1, items: str, description: 'Scopes the app needs (see Scope)' },
+                appName: { type: 'string', maxLength: SCOPE_UPGRADE_APP_NAME_MAX, description: 'Shown to the admin (default: the app registered with this token)' },
+                reason: { type: 'string', maxLength: SCOPE_UPGRADE_REASON_MAX, description: 'Why, shown to the admin' },
+              },
+            }),
+          },
+          responses: {
+            '200': { description: 'The token already holds every scope asked for', content: json(ref('ScopeUpgradeApproved')) },
+            '202': {
+              description: 'Pending',
+              content: json({
+                type: 'object',
+                properties: {
+                  upgradeId: str,
+                  status: { const: 'pending' },
+                  adding: { type: 'array', items: ref('Scope') },
+                  expiresIn: { ...int, description: 'Seconds' },
+                  interval: { ...int, description: 'Seconds between polls' },
+                  approveUrl: { type: 'string', description: 'Settings → API with this request open (`?tab=api&upgrade=<id>`)' },
+                },
+              }),
+            },
+            '400': problemResponse('Invalid body, or no scope this server can add (`invalid`)'),
+            ...errors,
+            '429': {
+              ...problemResponse('Too many requests for this token, or too many pending (`rate_limited`)'),
+              headers: { 'Retry-After': { schema: int, description: 'Seconds to wait' } },
+            },
+          },
+        },
+      },
+      '/pairing/upgrade/{upgradeId}': {
+        get: {
+          summary: 'Poll a scope upgrade request (v1.18)',
+          operationId: 'pollScopeUpgrade',
+          tags: ['pairing'],
+          description: 'With the same token that asked. Finished requests answer for 10 minutes, then are forgotten; a server restart forgets them too (410: ask again).',
+          parameters: [{ name: 'upgradeId', in: 'path', required: true, schema: str }],
+          responses: {
+            '200': { description: 'Approved: the same token now holds these scopes', content: json(ref('ScopeUpgradeApproved')) },
+            '202': { description: 'Still waiting for the admin', content: json({ type: 'object', properties: { status: { const: 'pending' } } }) },
+            '403': problemResponse('Denied by the admin (`denied`): the token keeps its scopes'),
+            '404': problemResponse('Unknown id, or another token’s request (`not_found`)'),
+            '410': problemResponse('Expired, replaced, the token was revoked, or the server restarted (`expired`): ask again'),
+            ...errors,
+          },
+        },
+      },
       ...showPaths({ errors, profileErrors, idPath }),
       ...platformPaths({ errors }),
       ...reportPaths({ errors }),
@@ -685,6 +746,11 @@ export function openApiDocument(version: string): Record<string, unknown> {
           },
         },
         Scope: { enum: [...API_SCOPES] },
+        ScopeUpgradeApproved: {
+          type: 'object',
+          required: ['status', 'scopes'],
+          properties: { status: { const: 'approved' }, scopes: { type: 'array', items: ref('Scope'), description: 'Every scope the token holds now' } },
+        },
         WhoAmI: {
           type: 'object',
           required: ['name', 'version', 'build', 'apiRevision', 'apiVersion', 'token'],

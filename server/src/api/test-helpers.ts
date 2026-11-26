@@ -47,6 +47,7 @@ import { EventHub, eventHubDeps } from './event-hub.js';
 import { createAppRegistry, type AppRegistryHandle } from './hub.js';
 import { lanHttpPlugin } from './lan.js';
 import { createPairingService, type PairingServiceHandle } from './pairing.js';
+import { createScopeUpgradeService, type ScopeUpgradeServiceHandle } from './scope-upgrade.js';
 import { isDown } from './status.js';
 import type { PreviewService } from './previews.js';
 import type { LivePreviewService } from '../media/live-preview.js';
@@ -236,6 +237,7 @@ export interface TestApi {
   guests: GuestFeeds;
   apps: AppRegistryHandle;
   pairings: PairingServiceHandle;
+  scopeUpgrades: ScopeUpgradeServiceHandle;
   /** Mutable orchestrator state of the default profile (services.orchestrators.get('default').state()). */
   state: { current: SessionState };
   /** Session state of other profiles (offline when unset). */
@@ -280,6 +282,7 @@ export async function createTestApi(
   } as unknown as TlsManager;
   const apps = createAppRegistry({ repos, bus, log: silentLog, now });
   const pairings = createPairingService({ repos, bus, log: silentLog, config, now });
+  const scopeUpgrades = createScopeUpgradeService({ repos, bus, log: silentLog, now });
   const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ctd-api-'));
   const blobStore = createBlobStore({ dataDir, repo: repos.blobs, ...(opts.blobLimits ? { limits: opts.blobLimits } : {}) });
   const services = {
@@ -293,6 +296,7 @@ export async function createTestApi(
     orchestrators: fakeOrchestrators(repos, stateOf),
     apps,
     pairings,
+    scopeUpgrades,
     media: fakeMedia(repos),
     platforms: { get: (p: PlatformId) => ({ info: platformInfo(p) }), all: () => [] },
     appSettings: () => ({ publicBaseUrl: '', ingestHost: settings.ingestHost, disconnectGraceSec: 15 }),
@@ -380,6 +384,7 @@ export async function createTestApi(
     guests,
     apps,
     pairings,
+    scopeUpgrades,
     state,
     states,
     settings,
@@ -399,6 +404,7 @@ export async function createTestApi(
       hub.close();
       apps.close();
       pairings.close();
+      scopeUpgrades.close();
       db.close();
       fs.rmSync(dataDir, { recursive: true, force: true });
     },
