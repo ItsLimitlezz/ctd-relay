@@ -301,19 +301,30 @@ describe('audit fixes (0.2.100)', () => {
     expectProblem(await save(all, club.id, 0, { note: 'x'.repeat(4 * 1024 * 1024) }), 413, 'limit');
   });
 
-  it('a manifest secrets[] entry must not carry its value (manifests are readable with show:read)', async () => {
+  it('a manifest secrets[] value is dropped, never stored or served (manifests are readable with show:read)', async () => {
     await uploadAll(all);
     const saveWith = (m: Record<string, unknown>, extra: Record<string, unknown> = {}) =>
       call('POST', `/api/v1/profiles/${club.id}/show/revisions`, all, { parentRevision: 0, manifest: m, bundleSha256: sha(BUNDLE), ...extra });
-    const res = await saveWith(manifest({ secrets: [{ source: 'src-1', key: 'url', value: 'placeholder-secret' }] }));
-    expectProblem(res, 400, 'invalid');
-    expect(res.body).not.toContain('placeholder-secret');
     expectProblem(await saveWith(manifest({ secrets: 'x' })), 400, 'invalid');
     expect(t.repos.showProfiles.getByProfile(club.id)).toBeNull();
-    // Names only: accepted, and the value stays out of the manifest.
-    const ok = await saveWith(manifest({ secrets: [{ source: 'src-1', key: 'url' }] }), { secrets: [{ source: 'src-1', key: 'url', value: 'placeholder-secret' }] });
+    // A plugin that still sends the value keeps saving; the value is dropped before it is stored.
+    const res = await saveWith(manifest({ secrets: [{ source: 'src-1', key: 'url', value: 'placeholder-secret' }] }));
+    expect(res.statusCode, res.body).toBe(201);
+    expect(res.body).not.toContain('placeholder-secret');
+    const rev1 = await get(`/api/v1/profiles/${club.id}/show/revisions/1`, all);
+    expect(rev1.body).not.toContain('placeholder-secret');
+    expect(rev1.json().manifest.secrets).toEqual([{ source: 'src-1', key: 'url' }]);
+    // A revision stored before this check, with a value in its manifest: served without it.
+    const sp = t.repos.showProfiles.getByProfile(club.id)!;
+    t.db.prepare('UPDATE show_revisions SET manifest = ? WHERE show_profile_id = ? AND revision = 1').run(
+      JSON.stringify(manifest({ secrets: [{ source: 'src-1', key: 'url', value: 'old-placeholder-secret' }] })),
+      sp.id,
+    );
+    expect((await get(`/api/v1/profiles/${club.id}/show/revisions/1`, all)).body).not.toContain('old-placeholder-secret');
+    // Names only: accepted as before.
+    const ok = await saveWith(manifest({ secrets: [{ source: 'src-1', key: 'url' }] }), { parentRevision: 1, secrets: [{ source: 'src-1', key: 'url', value: 'placeholder-secret' }] });
     expect(ok.statusCode, ok.body).toBe(201);
-    expect((await get(`/api/v1/profiles/${club.id}/show/revisions/1`, all)).body).not.toContain('placeholder-secret');
+    expect((await get(`/api/v1/profiles/${club.id}/show/revisions/2`, all)).body).not.toContain('placeholder-secret');
   });
 
   it('secrets: written and read are audited (never the value), served no-store, never in show.changed', async () => {

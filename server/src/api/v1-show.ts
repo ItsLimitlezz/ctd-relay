@@ -81,6 +81,25 @@ export interface ParsedManifest {
   appId: string | null;
 }
 
+/**
+ * A manifest without secret values: `secrets[]` only names {source, key}, and a manifest is readable
+ * with show:read, so a `value` in an entry is dropped on save and on read (revisions saved before
+ * this check may hold one). Dropped, not refused, so a plugin that sends one keeps saving.
+ */
+export function withoutSecretValues(manifest: unknown): { manifest: unknown; stripped: number } {
+  if (!manifest || typeof manifest !== 'object' || Array.isArray(manifest)) return { manifest, stripped: 0 };
+  const m = manifest as Record<string, unknown>;
+  if (!Array.isArray(m.secrets)) return { manifest, stripped: 0 };
+  let stripped = 0;
+  const secrets = m.secrets.map((s: unknown) => {
+    if (!s || typeof s !== 'object' || Array.isArray(s) || !Object.hasOwn(s, 'value')) return s;
+    stripped++;
+    const { value: _value, ...rest } = s as Record<string, unknown>;
+    return rest;
+  });
+  return stripped === 0 ? { manifest, stripped } : { manifest: { ...m, secrets }, stripped };
+}
+
 /** Check what the server relies on in a manifest; the rest is the plugin's business. Returns a problem text or the parsed parts. */
 export function parseManifest(m: Record<string, unknown>): ParsedManifest | string {
   if (typeof m.schema !== 'number' || !SHOW_MANIFEST_SCHEMAS.includes(m.schema)) {
@@ -109,7 +128,6 @@ export function parseManifest(m: Record<string, unknown>): ParsedManifest | stri
   if (!Array.isArray(rawSecrets)) return 'manifest.secrets must be an array';
   for (const s of rawSecrets) {
     if (!s || typeof s !== 'object' || Array.isArray(s)) return 'manifest.secrets[] entries must be objects ({ source, key })';
-    if (Object.hasOwn(s, 'value')) return 'manifest.secrets[] names a secret ({ source, key }) and must not hold its value: send values in the body\'s secrets';
   }
   const savedBy = m.savedBy as { appId?: unknown } | null | undefined;
   const appId = typeof savedBy?.appId === 'string' && savedBy.appId.length <= 64 && !CONTROL_RE.test(savedBy.appId) ? savedBy.appId : null;
@@ -279,7 +297,7 @@ export function registerShowRoutes(app: FastifyInstance, ctx: V1Context): void {
     if (!found) return reply;
     let manifest: unknown;
     try {
-      manifest = JSON.parse(found.rev.manifest);
+      manifest = withoutSecretValues(JSON.parse(found.rev.manifest)).manifest;
     } catch {
       manifest = null;
     }
@@ -320,7 +338,12 @@ export function registerShowRoutes(app: FastifyInstance, ctx: V1Context): void {
       if (!parsedBody.success) return sendProblem(reply, 400, 'invalid', zodMessage(parsedBody.error));
       const body = parsedBody.data;
       const limits = store().limits();
-      const manifestText = JSON.stringify(body.manifest);
+      const clean = withoutSecretValues(body.manifest);
+      if (clean.stripped > 0) {
+        // Count only: never a source, key or value.
+        services.log.warn({ profileId, stripped: clean.stripped }, 'show save: dropped secret values from manifest.secrets[] (they belong in the body\'s secrets)');
+      }
+      const manifestText = JSON.stringify(clean.manifest);
       if (Buffer.byteLength(manifestText, 'utf8') > limits.manifestBytes) {
         return sendProblem(reply, 413, 'limit', `The manifest is over ${limits.manifestBytes} bytes`);
       }

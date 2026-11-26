@@ -1424,7 +1424,7 @@ telling the user to update CTD Relay), `name` is 1–100 characters, every path 
 (no `..`, no leading `/`, no `\`, no drive letter), `assets` has at most 2000 entries, each with a
 lowercase hex `sha256`, and `secrets` (when present) is an array of objects that name a secret
 (`source`, `key`) and never carry its `value` (since 0.2.100: the manifest is readable with `show:read`,
-so a value there would leak; send values in the save body's `secrets`). `savedBy.appId` is recorded as the
+so a value there would leak: Relay drops one on save and on read; send values in the save body's `secrets`). `savedBy.appId` is recorded as the
 revision's `savedBy`.
 
 **Secrets are not in the bundle.** The values travel in the save body's `secrets` and come back from a
@@ -1506,7 +1506,7 @@ stores secrets (`show.secrets.write`, with the count only).
 
 | Status | `code` | When |
 |---|---|---|
-| 400 | `invalid` | Bad body or manifest (§14.1), including a manifest `secrets[]` entry with a `value` |
+| 400 | `invalid` | Bad body or manifest (§14.1) |
 | 400 | `missing_blobs` | Not uploaded yet: `{ …, "missing": ["<sha256>", …] }` |
 | 409 | `revision_conflict` | `parentRevision` is not the head: `{ …, "head": 8 }` |
 | 413 | `limit` | Manifest over 1 MB, bundle over 16 MB, or `secrets` too large; also a whole body over about 3 MB |
@@ -2322,8 +2322,8 @@ the revision in `info.version`.
 
 - **Show profiles (§14), fixes, no new fields:** a malformed save or `POST /blobs/check` body is
   `400 invalid` (was `500`); a save body over about 3 MB is `413 limit` as documented (was `413 invalid`);
-  a manifest `secrets[]` entry that carries a `value` is refused with `400 invalid` (the manifest is readable
-  with `show:read`); `library.changed` also fires when deleting a profile removes its library entries.
+  a `value` in a manifest `secrets[]` entry is dropped on save and on read (the manifest is
+  readable with `show:read`; dropped, not refused, so older plugins keep saving); `library.changed` also fires when deleting a profile removes its library entries.
   Saves that store secrets are audited (`show.secrets.write`).
 - **Scope upgrades (§9.3.1, additive):** `POST /pairing/upgrade` and `GET /pairing/upgrade/{upgradeId}`.
   A paired app asks for more scopes with its own token; once an admin approves in Settings → API, the
