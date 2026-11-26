@@ -26,7 +26,7 @@ import {
   type SessionState,
 } from '../../../shared/types.js';
 import type { AppConfig } from '../config.js';
-import { openDatabase } from '../db/database.js';
+import { openDatabase, type Db } from '../db/database.js';
 import { createGuestFeedsRepo } from '../db/guest-feeds-repo.js';
 import { DEFAULT_GUEST_LIMITS, GuestFeeds, type GuestFeedLimits } from '../media/guest-feeds.js';
 import { bindGuestFeeds, bindGuestLive } from './guest-feeds.js';
@@ -229,6 +229,8 @@ export function fakeMedia(repos: Repos): MediaServer {
 
 export interface TestApi {
   app: FastifyInstance;
+  /** The in-memory database behind the repos (for tests that set up old rows directly). */
+  db: Db;
   services: AppServices;
   repos: Repos;
   bus: EventBus;
@@ -376,6 +378,7 @@ export async function createTestApi(
 
   let closed = false;
   return {
+    db,
     app,
     services,
     repos,

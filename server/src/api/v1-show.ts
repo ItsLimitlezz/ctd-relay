@@ -13,6 +13,7 @@ import { z } from 'zod';
 import type { ApiTokenInfo } from '../../../shared/types.js';
 import { audit } from '../http/guards.js';
 import type { AppServices, ShowRevisionRecord, ShowRevisionSummary } from '../services.js';
+import { zodMessage } from './guest-routes-schema.js';
 import { BlobError, SHA256_RE, isBlobKind, maxBytesForKind, type BlobKind } from '../storage/blob-store.js';
 import { ConcurrencyLimiter, PROBLEM_CONTENT_TYPE, params, problem, query, sendProblem } from './http.js';
 import { CONTROL_RE, jsonBytes } from './json.js';
@@ -80,6 +81,25 @@ export interface ParsedManifest {
   appId: string | null;
 }
 
+/**
+ * A manifest without secret values: `secrets[]` only names {source, key}, and a manifest is readable
+ * with show:read, so a `value` in an entry is dropped on save and on read (revisions saved before
+ * this check may hold one). Dropped, not refused, so a plugin that sends one keeps saving.
+ */
+export function withoutSecretValues(manifest: unknown): { manifest: unknown; stripped: number } {
+  if (!manifest || typeof manifest !== 'object' || Array.isArray(manifest)) return { manifest, stripped: 0 };
+  const m = manifest as Record<string, unknown>;
+  if (!Array.isArray(m.secrets)) return { manifest, stripped: 0 };
+  let stripped = 0;
+  const secrets = m.secrets.map((s: unknown) => {
+    if (!s || typeof s !== 'object' || Array.isArray(s) || !Object.hasOwn(s, 'value')) return s;
+    stripped++;
+    const { value: _value, ...rest } = s as Record<string, unknown>;
+    return rest;
+  });
+  return stripped === 0 ? { manifest, stripped } : { manifest: { ...m, secrets }, stripped };
+}
+
 /** Check what the server relies on in a manifest; the rest is the plugin's business. Returns a problem text or the parsed parts. */
 export function parseManifest(m: Record<string, unknown>): ParsedManifest | string {
   if (typeof m.schema !== 'number' || !SHOW_MANIFEST_SCHEMAS.includes(m.schema)) {
@@ -101,6 +121,13 @@ export function parseManifest(m: Record<string, unknown>): ParsedManifest | stri
     if (typeof sha !== 'string' || !SHA256_RE.test(sha)) return 'manifest.assets[].sha256 must be a lowercase hex SHA-256';
     const kind = (a as { kind?: unknown }).kind;
     assets.push({ sha256: sha, kind: typeof kind === 'string' ? kind : 'other' });
+  }
+  // `secrets[]` only names {source, key}: the values travel in the save body and are served only
+  // with show:secrets (§14.5). A manifest is readable with show:read, so a value here would leak.
+  const rawSecrets = m.secrets ?? [];
+  if (!Array.isArray(rawSecrets)) return 'manifest.secrets must be an array';
+  for (const s of rawSecrets) {
+    if (!s || typeof s !== 'object' || Array.isArray(s)) return 'manifest.secrets[] entries must be objects ({ source, key })';
   }
   const savedBy = m.savedBy as { appId?: unknown } | null | undefined;
   const appId = typeof savedBy?.appId === 'string' && savedBy.appId.length <= 64 && !CONTROL_RE.test(savedBy.appId) ? savedBy.appId : null;
@@ -143,6 +170,17 @@ export function parseRange(header: unknown, size: number): { start: number; end:
   const end = m[2] === '' ? size - 1 : Math.min(Number(m[2]), size - 1);
   if (start >= size || end < start) return null;
   return { start, end };
+}
+
+/**
+ * Route error handler for the save: a body over the route's limit is `413 limit` (§14.4), not the
+ * generic `413 invalid`. Anything else goes on to the API's error handler.
+ */
+function bodyTooLargeIsLimit(this: FastifyInstance, err: Error & { code?: unknown; statusCode?: number }, _req: FastifyRequest, reply: FastifyReply): FastifyReply {
+  if (err.code === 'FST_ERR_CTP_BODY_TOO_LARGE' || err.statusCode === 413) {
+    return sendProblem(reply, 413, 'limit', 'The save is too large (manifest, secrets and note together are limited to about 3 MB)');
+  }
+  throw err;
 }
 
 export function registerShowRoutes(app: FastifyInstance, ctx: V1Context): void {
@@ -259,7 +297,7 @@ export function registerShowRoutes(app: FastifyInstance, ctx: V1Context): void {
     if (!found) return reply;
     let manifest: unknown;
     try {
-      manifest = JSON.parse(found.rev.manifest);
+      manifest = withoutSecretValues(JSON.parse(found.rev.manifest)).manifest;
     } catch {
       manifest = null;
     }
@@ -291,14 +329,21 @@ export function registerShowRoutes(app: FastifyInstance, ctx: V1Context): void {
 
   app.post(
     '/profiles/:id/show/revisions',
-    { preHandler: requireToken('show:write'), bodyLimit: SAVE_BODY_SLACK + 1024 * 1024 },
+    { preHandler: requireToken('show:write'), bodyLimit: SAVE_BODY_SLACK + 1024 * 1024, errorHandler: bodyTooLargeIsLimit },
     async (req, reply) => {
       const profileId = pathProfile(req, reply);
       if (profileId === null) return reply;
       const { token } = authOf(req);
-      const body = SaveBody.parse(req.body ?? {});
+      const parsedBody = SaveBody.safeParse(req.body ?? {});
+      if (!parsedBody.success) return sendProblem(reply, 400, 'invalid', zodMessage(parsedBody.error));
+      const body = parsedBody.data;
       const limits = store().limits();
-      const manifestText = JSON.stringify(body.manifest);
+      const clean = withoutSecretValues(body.manifest);
+      if (clean.stripped > 0) {
+        // Count only: never a source, key or value.
+        services.log.warn({ profileId, stripped: clean.stripped }, 'show save: dropped secret values from manifest.secrets[] (they belong in the body\'s secrets)');
+      }
+      const manifestText = JSON.stringify(clean.manifest);
       if (Buffer.byteLength(manifestText, 'utf8') > limits.manifestBytes) {
         return sendProblem(reply, 413, 'limit', `The manifest is over ${limits.manifestBytes} bytes`);
       }
@@ -353,7 +398,17 @@ export function registerShowRoutes(app: FastifyInstance, ctx: V1Context): void {
 
       // Secrets of this revision; drop those of revisions the save pruned.
       const secrets = repos.secrets.scoped(showSecretScope(saved.showProfileId));
-      if (body.secrets && body.secrets.length > 0) await secrets.setJson(`rev:${saved.revision}`, body.secrets satisfies ApiShowSecret[]);
+      if (body.secrets && body.secrets.length > 0) {
+        await secrets.setJson(`rev:${saved.revision}`, body.secrets satisfies ApiShowSecret[]);
+        // Audited like the reads (show.secrets.read); the count only, never a source, key or value.
+        services.repos.audit.log({
+          userId: null,
+          username: null,
+          action: 'show.secrets.write',
+          detail: `profile ${profileId} revision ${saved.revision}: ${body.secrets.length} secret(s) by token ${token.name}`,
+          ip: req.ip,
+        });
+      }
       const keptNow = new Set(repos.showProfiles.listRevisions(saved.showProfileId).map((r) => r.revision));
       for (const n of keptBefore) if (!keptNow.has(n)) await secrets.delete(`rev:${n}`);
 
@@ -373,7 +428,9 @@ export function registerShowRoutes(app: FastifyInstance, ctx: V1Context): void {
 
   app.post('/blobs/check', { preHandler: requireToken('show:write'), bodyLimit: 256 * 1024 }, async (req, reply) => {
     const { token } = authOf(req);
-    const body = CheckBody.parse(req.body ?? {});
+    const parsedBody = CheckBody.safeParse(req.body ?? {});
+    if (!parsedBody.success) return sendProblem(reply, 400, 'invalid', zodMessage(parsedBody.error));
+    const body = parsedBody.data;
     const missing: string[] = [];
     const seen = new Set<string>();
     for (const item of body.items) {

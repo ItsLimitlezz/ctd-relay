@@ -14,7 +14,11 @@ Versions follow the hub's CONVENTIONS.md → Versioning. Each release that ships
 - **Scope upgrades (API 1.18, docs/API.md §9.3.1):** a paired app asks for more permissions with the token it already has (`POST /api/v1/pairing/upgrade`, poll `GET /api/v1/pairing/upgrade/{id}`); an admin approves or denies in **Settings → API** (a banner on every page, live). Approving adds exactly the listed scopes to the same token: same secret, same profile, no pairing again. Sensitive scopes are marked with why; `system:admin` is never granted this way. Audited (`scope_upgrade.*`). No database change (the token's existing scopes column).
 - `npm run e2e:srt`: SRT end to end with the real MediaMTX/FFmpeg, and the delay measurement (steady state and how old a joining reader's first frame is, with low-delay and default reader settings).
 
+### Fixed
+- **Show profiles (audit, API 1.18, no new fields):** a malformed body on `POST /api/v1/profiles/{id}/show/revisions` or `POST /api/v1/blobs/check` answered `500 internal` (and was logged as a server error); it is now `400 invalid`. A save body over the route's ~3 MB limit is `413 limit`, as docs/API.md §14.4 says (was `413 invalid`). A `value` in a manifest `secrets[]` entry is now dropped on save and when a revision is read (also for revisions saved before): the manifest is readable with `show:read`, so the value would have reached tokens without `show:secrets`. Dropped, not refused, so a plugin that still sends one keeps saving; the values belong in the save body's `secrets`. Deleting a profile that had asset-library entries now emits `library.changed`, so library mirrors drop them. A save that stores secrets writes a `show.secrets.write` audit entry (count only).
+
 ### Docs
+- docs/API.md: the `show:*` scope rows and the show-profile problem codes were listed twice; §14 examples use `relay.example.com`; §14.7 says how a library mirror spots deletions. OpenAPI: `304` on the bundle download.
 - [docs/PULL-LINK.md](docs/PULL-LINK.md): where the ~4 s Pull link delay comes from. Relay adds about nothing (136 ms through Relay against 137 ms direct, loopback), a player with FFmpeg's default settings starts 1.35 s (RTMP) or 5.5 s (SRT) behind and keeps it; the best OBS Media Source settings, a VLC Video Source alternative, and a five-minute test to find the rest.
 
 ## 0.2.90 (2026-11-25)
