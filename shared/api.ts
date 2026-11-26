@@ -315,13 +315,13 @@ export interface IngestInfo {
     streamKey: string;
     fullUrl: string;
     /**
-     * 0.2.90 / API 1.17: the same feed over SRT, for OBS Settings → Stream → Service "Custom…" →
+     * 0.2.100 / API 1.18: the same feed over SRT, for OBS Settings → Stream → Service "Custom…" →
      * Server (stream key empty): `srt://<host>:<port>?streamid=publish:<path>:key=<k>&latency=<µs>`.
      * Null when SRT is off (see `srt`).
      */
     srtUrl?: string | null;
   }[];
-  /** 0.2.90 / API 1.17: whether SRT works here (docs/SRT.md). */
+  /** 0.2.100 / API 1.18: whether SRT works here (docs/SRT.md). */
   srt?: SrtStatus;
 }
 /** POST /api/ingest/rotate [admin] body { feed } -> IngestInfo */

@@ -32,10 +32,10 @@ export interface PullLinkInfo extends PullLinkState {
   /** The same as `url` without the query (handy to show which feed it is). */
   serverUrl: string;
   /**
-   * API 1.17: the pull link over SRT (lower delay), `srt://<host>:<port>?streamid=read:<path>:key=<read key>&latency=<µs>`.
+   * API 1.18: the pull link over SRT (lower delay), `srt://<host>:<port>?streamid=read:<path>:key=<read key>&latency=<µs>`.
    * OBS Media Source: untick Local File, paste into Input, Input Format `mpegts`. Null while off or when SRT is off.
    */
   srtUrl?: string | null;
-  /** API 1.17: whether SRT works here (docs/SRT.md). */
+  /** API 1.18: whether SRT works here (docs/SRT.md). */
   srt?: SrtStatus;
 }

@@ -18,7 +18,7 @@ import { reportPaths, reportSchemas } from './openapi-reports.js';
 import { showPaths, showSchemas } from './openapi-show.js';
 
 /** Minor revision of the v1 contract (additive changes only; see the changelog in docs/API.md). */
-export const API_REVISION = '1.17';
+export const API_REVISION = '1.18';
 
 const ref = (name: string) => ({ $ref: `#/components/schemas/${name}` });
 const nullable = (schema: object) => ({ oneOf: [schema, { type: 'null' }] });
@@ -1121,7 +1121,7 @@ export function openApiDocument(version: string): Record<string, unknown> {
                   srtUrl: {
                     oneOf: [{ type: 'string' }, { type: 'null' }],
                     description:
-                      'v1.17: the feed over SRT (docs/SRT.md), srt://<host>:<port>?streamid=publish:<path>:key=<k>&latency=<µs>: OBS Server field with the Stream Key empty (secret). Null when SRT is off.',
+                      'v1.18: the feed over SRT (docs/SRT.md), srt://<host>:<port>?streamid=publish:<path>:key=<k>&latency=<µs>: OBS Server field with the Stream Key empty (secret). Null when SRT is off.',
                   },
                 },
               },
@@ -1132,7 +1132,7 @@ export function openApiDocument(version: string): Record<string, unknown> {
         SrtStatus: {
           type: 'object',
           required: ['enabled', 'port', 'latencyMs', 'lanLatencyMs', 'reason'],
-          description: 'v1.17: whether SRT works on this server (docs/SRT.md). Never contains a key.',
+          description: 'v1.18: whether SRT works on this server (docs/SRT.md). Never contains a key.',
           properties: {
             enabled: { type: 'boolean' },
             port: { oneOf: [{ type: 'integer' }, { type: 'null' }], description: 'SRT UDP port (SRT_PORT), null when off' },
@@ -1506,7 +1506,7 @@ const pullLinkSchemas = {
       srtUrl: {
         oneOf: [{ type: 'string' }, { type: 'null' }],
         description:
-          'v1.17: the pull link over SRT, srt://<host>:<port>?streamid=read:<path>:key=<read key>&latency=<µs>. OBS Media Source: untick Local File, paste into Input, Input Format mpegts. Null while off or when SRT is off. A secret.',
+          'v1.18: the pull link over SRT, srt://<host>:<port>?streamid=read:<path>:key=<read key>&latency=<µs>. OBS Media Source: untick Local File, paste into Input, Input Format mpegts. Null while off or when SRT is off. A secret.',
       },
       srt: { $ref: '#/components/schemas/SrtStatus' },
     },

@@ -195,6 +195,9 @@ the auth hook accepts from loopback only.
 > over SRT (their ingest details include the SRT address). See [SRT.md](./SRT.md) for setup, the
 > UDP port to map, latency, and measured delay.
 
+Delay: Relay adds next to nothing; the OBS Media Source settings decide most of it. Numbers and
+the best settings: [PULL-LINK.md](PULL-LINK.md).
+
 A guest feed (or a profile's own Landscape or Vertical feed) can have a **Pull link**: a plain
 address you paste into an OBS **Media Source** or VLC. No MediaMTX or other server is needed on the
 PC: OBS plays straight from Relay's bundled MediaMTX, on the RTMP port ingest already uses (so it

@@ -454,9 +454,9 @@ export interface ApiShowChanged {
 export interface ApiIngest {
   profileId: string;
   serverUrl: string;
-  /** srtUrl (API 1.17): the feed over SRT (docs/SRT.md); null when SRT is off. */
+  /** srtUrl (API 1.18): the feed over SRT (docs/SRT.md); null when SRT is off. */
   feeds: { feed: Feed; streamKey: string; fullUrl: string; srtUrl: string | null }[];
-  /** API 1.17: whether SRT works on this server. */
+  /** API 1.18: whether SRT works on this server. */
   srt: SrtStatus;
 }
 

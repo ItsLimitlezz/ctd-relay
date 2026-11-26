@@ -159,11 +159,13 @@ function counterPublisher(bin: string, url: string, format: 'flv' | 'mpegts', se
 }
 
 /** Read a URL for `seconds`, decode the frame numbers and return each one's arrival time. */
-function counterReader(bin: string, url: string, seconds: number, inputArgs: string[] = []): Promise<Map<number, number>> {
+function counterReader(bin: string, url: string, seconds: number, inputArgs: string[] = [], lowDelay = true): Promise<Map<number, number>> {
   const arrived = new Map<number, number>();
+  // lowDelay=false: FFmpeg's defaults (probesize 5 MB, analyzeduration 5 s), what an OBS Media Source uses with no options.
+  const flags = lowDelay ? ['-fflags', 'nobuffer', '-flags', 'low_delay'] : [];
   const child = spawn(
     bin,
-    ['-hide_banner', '-nostdin', '-loglevel', 'error', '-fflags', 'nobuffer', '-flags', 'low_delay', ...inputArgs, '-i', url, '-t', String(seconds), '-an', '-vf', 'scale=16:1:flags=area,format=gray', '-f', 'rawvideo', 'pipe:1'],
+    ['-hide_banner', '-nostdin', '-loglevel', 'error', ...flags, ...inputArgs, '-i', url, '-t', String(seconds), '-an', '-vf', 'scale=16:1:flags=area,format=gray', '-f', 'rawvideo', 'pipe:1'],
     { stdio: ['ignore', 'pipe', 'ignore'], windowsHide: true },
   );
   children.add(child);
@@ -193,6 +195,17 @@ function delays(sent: Map<number, number>, arrived: Map<number, number>): number
   }
   out.sort((a, b) => a.n - b.n);
   return out.slice(30).map((x) => x.d);
+}
+
+/**
+ * How old the first frame a reader decodes is when it arrives (arrival − send of the lowest frame
+ * number). A player that shows frames at their timestamps from then on (an OBS Media Source) keeps
+ * this delay for good; the steady-state figure is what a reader that catches up gets.
+ */
+function firstFrameLag(sent: Map<number, number>, arrived: Map<number, number>): number | null {
+  let n0: number | null = null;
+  for (const n of arrived.keys()) if (sent.has(n) && (n0 === null || n < n0)) n0 = n;
+  return n0 === null ? null : arrived.get(n0)! - sent.get(n0)!;
 }
 
 function stats(late: number[]): string {
@@ -348,18 +361,20 @@ async function run(): Promise<void> {
     publisher.kill('SIGKILL');
     await until(() => !media.feed(DEFAULT_PROFILE_ID, 'landscape').online, 15_000, 'offline');
     const info = () => pull.info(target, host, rtmpPort, media.srtStatus!());
-    const runCase = async (name: string, pubUrl: string, format: 'flv' | 'mpegts', readUrl: () => string) => {
+    const runCase = async (name: string, pubUrl: string, format: 'flv' | 'mpegts', readUrl: () => string, lowDelay = true) => {
       await step(`measure ${name}`, async () => {
         const sent = new Map<number, number>();
         const online = waitFor<FeedState>(bus, 'feed', isOnline, 30_000, 'online');
         const pub = counterPublisher(ff, pubUrl, format, sent);
         await online;
-        const arrived = await counterReader(ff, readUrl(), measureSec);
+        await sleep(1500); // join mid-stream, like a Media Source opened on a running feed
+        const arrived = await counterReader(ff, readUrl(), measureSec, [], lowDelay);
         pub.kill('SIGKILL');
         await until(() => !media.feed(DEFAULT_PROFILE_ID, 'landscape').online, 15_000, 'offline');
         const d = delays(sent, arrived);
         if (d.length < 30) throw new Error(`only ${d.length} frames matched`);
-        results.push(`${name}: ${stats(d)}`);
+        const lag = firstFrameLag(sent, arrived);
+        results.push(`${name}: ${stats(d)}; first frame ${lag === null ? '?' : `${lag.toFixed(0)} ms`} old`);
       });
     };
     await runCase('RTMP → Relay → RTMP pull', `${rtmp}/live/landscape?key=${keys.landscape}`, 'flv', () => info().url!);
@@ -367,6 +382,9 @@ async function run(): Promise<void> {
     await runCase(`SRT → Relay → SRT pull (latency=${latencyMs} ms)`, obsSrtUrl, 'mpegts', srtPull);
     await runCase('RTMP → Relay → SRT pull', `${rtmp}/live/landscape?key=${keys.landscape}`, 'flv', srtPull);
     await runCase('SRT → Relay → RTMP pull', obsSrtUrl, 'mpegts', () => info().url!);
+    // The same pulls read with FFmpeg's defaults: what an OBS Media Source does with no FFmpeg options.
+    await runCase('RTMP → Relay → RTMP pull, reader with FFmpeg defaults', `${rtmp}/live/landscape?key=${keys.landscape}`, 'flv', () => info().url!, false);
+    await runCase(`SRT → Relay → SRT pull (latency=${latencyMs} ms), reader with FFmpeg defaults`, obsSrtUrl, 'mpegts', srtPull, false);
     // Baselines: the same publisher straight into the reader (no Relay): what FFmpeg + the protocol add.
     const baseline = async (name: string, listenUrl: string, callUrl: string, format: 'flv' | 'mpegts', inputArgs: string[]) => {
       await step(`measure baseline ${name}`, async () => {
@@ -384,7 +402,7 @@ async function run(): Promise<void> {
     await baseline(`SRT → SRT direct (latency=${latencyMs} ms)`, `srt://127.0.0.1:${p1}?mode=listener&${lat}`, `srt://127.0.0.1:${p1}?mode=caller&${lat}`, 'mpegts', []);
     const p2 = await freePort();
     await baseline('RTMP → RTMP direct', `rtmp://127.0.0.1:${p2}/app/x`, `rtmp://127.0.0.1:${p2}/app/x`, 'flv', ['-listen', '1']);
-    console.log('\nDelay per frame (reader arrival − publisher send, same frame number), steady state, loopback:');
+    console.log('\nDelay per frame (reader arrival − publisher send, same frame number), steady state, loopback; and how old the first frame a joining reader decodes is:');
     for (const r of results) console.log(`  ${r}`);
     console.log('\nPASS');
   } finally {

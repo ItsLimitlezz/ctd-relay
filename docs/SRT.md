@@ -127,7 +127,9 @@ What this says:
   MPEG-TS adds a little on top. SRT pays off on lossy links (Wi-Fi, the internet). There TCP-based
   RTMP stalls and builds up delay that never goes away, while SRT's delay stays at what you set.
 - So **seconds of delay in an OBS Media Source come from the player or the network**, not from
-  Relay. The player buffers at start-up and never drops to catch up; RTMP over a lossy internet link
+  Relay. A Media Source with no FFmpeg options starts about 5.5 s behind on an SRT pull link (1.35 s
+  on RTMP) and keeps that delay: see [PULL-LINK.md](PULL-LINK.md) for the measurement and the best
+  OBS settings. The player buffers at start-up and never drops to catch up; RTMP over a lossy internet link
   adds its own build-up. Things to try on the reading OBS:
   - keep **Network Buffering** at 0 MB;
   - send 1 s keyframes (a reader starts at a keyframe);

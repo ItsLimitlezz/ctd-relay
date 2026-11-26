@@ -61,9 +61,9 @@ export interface GuestIngestInfo {
   streamKey: string | null;
   /** serverUrl + '/' + streamKey; null when the key is revoked. */
   fullUrl: string | null;
-  /** 0.2.90: the same over SRT (docs/SRT.md, OBS Server field, stream key empty); null when revoked or SRT is off. */
+  /** 0.2.100: the same over SRT (docs/SRT.md, OBS Server field, stream key empty); null when revoked or SRT is off. */
   srtUrl?: string | null;
-  /** 0.2.90: whether SRT works here. */
+  /** 0.2.100: whether SRT works here. */
   srt?: SrtStatus;
 }
 
