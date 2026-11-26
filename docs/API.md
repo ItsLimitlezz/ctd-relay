@@ -67,9 +67,6 @@ Authorization: Bearer ctd_pat_3fK9wQ1v…
 | `show:read` | Show profiles (§14): `GET /profiles/{id}/show…` (manifests, bundles), `GET /blobs/{sha256}`, `GET /library`, `show.changed` and `library.changed` events (v1.9) |
 | `show:write` | `POST /profiles/{id}/show/revisions`, `POST /blobs/check`, `PUT /blobs/{sha256}`: save revisions and upload files (v1.9) |
 | `show:secrets` | `GET /profiles/{id}/show/revisions/{rev}/secrets`: third-party secrets (URL keys, passwords) saved with a show profile. Grant it per trusted machine only (v1.9) |
-| `show:read` | Show profiles (§14): `GET /profiles/{id}/show…` (manifests, bundles), `GET /blobs/{sha256}`, `GET /library`, `show.changed` and `library.changed` events (v1.9) |
-| `show:write` | `POST /profiles/{id}/show/revisions`, `POST /blobs/check`, `PUT /blobs/{sha256}`: save revisions and upload files (v1.9) |
-| `show:secrets` | `GET /profiles/{id}/show/revisions/{rev}/secrets`: third-party secrets (URL keys, passwords) saved with a show profile. Grant it per trusted machine only (v1.9) |
 | `system:admin` | Operator tools (§15): read, replace and revert the Instagram chat reader's selector pack, and take its sanitised debug capture; manage guest feed routes (§18.8, v1.17). Only for a token an admin creates for **every profile**; pairing never grants it (v1.11) |
 | `reports:read` | Stream reports (§16): `GET /reports/…` past streams, viewers over time, chat counts, events, leaderboards and exports. Holds viewers' names: give it only to apps you trust with your audience (v1.13) |
 | `feeds:watch` | Live preview (§10): `GET /profiles/{id}/feeds/{feed}/live.m3u8` and `…/live/{file}`, the feeds as live video **with sound**. Each player pulls the feed's full bitrate. The JPEG previews stay under `status:read` (v1.14). Also guest feeds live (§18, v1.17): `…/guest-feeds/{slot}/live.m3u8` and `…/live/{file}` |
@@ -126,10 +123,6 @@ counts as none).
 | 400 | `missing_blobs` | A save names files that are not uploaded yet; carries `missing` (v1.9, §14) |
 | 400 | `hash_mismatch` | The uploaded bytes do not hash to the SHA-256 in the path (v1.9, §14) |
 | 413 | `quota_exceeded` | The upload would take the blob storage over its total quota (v1.9, §14). A file over its kind's size limit is `413 limit` |
-| 409 | `revision_conflict` | Saving a show-profile revision on a `parentRevision` that is no longer the head; carries `head` (v1.9, §14) |
-| 400 | `missing_blobs` | A save names files that are not uploaded yet; carries `missing` (v1.9, §14) |
-| 400 | `hash_mismatch` | The uploaded bytes do not hash to the SHA-256 in the path (v1.9, §14) |
-| 413 | `quota_exceeded` | The upload would take blob storage over its total quota (v1.9, §14). A file over its kind's size limit is `413 limit` |
 | 429 | `rate_limited` | Over the limit (`Retry-After` seconds) |
 
 Treat a `code` you don't know by its HTTP status.
@@ -1394,7 +1387,7 @@ and never reads OBS files itself.
   and shared by every revision and profile that uses them.
 - Stream keys never go into a bundle. Overlay URLs are replaced by `{slot, canvas}` references.
 
-The examples use `http://192.168.1.20:30080/api/v1` and a token with `show:read` and `show:write`
+The examples use `https://relay.example.com/api/v1` and a token with `show:read` and `show:write`
 (add `show:secrets` for §14.5).
 
 ### 14.1 Manifest (schema 1)
@@ -1429,7 +1422,10 @@ In the bundle's JSON files, placeholders stand for values that are not stored in
 What Relay checks on a save: `schema` is a number this server reads (`1`; another gets `400 invalid`
 telling the user to update CTD Relay), `name` is 1–100 characters, every path in `files` is relative
 (no `..`, no leading `/`, no `\`, no drive letter), `assets` has at most 2000 entries, each with a
-lowercase hex `sha256`. `savedBy.appId` is recorded as the revision's `savedBy`.
+lowercase hex `sha256`, and `secrets` (when present) is an array of objects that name a secret
+(`source`, `key`) and never carry its `value` (since 0.2.100: the manifest is readable with `show:read`,
+so a value there would leak; send values in the save body's `secrets`). `savedBy.appId` is recorded as the
+revision's `savedBy`.
 
 **Secrets are not in the bundle.** The values travel in the save body's `secrets` and come back from a
 separate route (§14.5), so the bundle stays byte-identical to its `bundleSha256`. A reader without
@@ -1493,7 +1489,8 @@ The bundle (a tar of JSON files), downloaded as in §14.6. Byte-identical to `bu
 { "items": [ { "source": "8a1f…", "key": "url", "value": "https://example.invalid/widget?key=…" } ] }
 ```
 The values the manifest's `secrets[]` stand for, `Cache-Control: no-store`. `items` is empty when the
-revision saved none. Every read is written to the audit log (`show.secrets.read`).
+revision saved none. Every read is written to the audit log (`show.secrets.read`), and so is every save that
+stores secrets (`show.secrets.write`, with the count only).
 
 #### `POST /api/v1/profiles/{id}/show/revisions` — `show:write`
 ```json
@@ -1509,10 +1506,10 @@ revision saved none. Every read is written to the audit log (`show.secrets.read`
 
 | Status | `code` | When |
 |---|---|---|
-| 400 | `invalid` | Bad body or manifest (§14.1) |
+| 400 | `invalid` | Bad body or manifest (§14.1), including a manifest `secrets[]` entry with a `value` |
 | 400 | `missing_blobs` | Not uploaded yet: `{ …, "missing": ["<sha256>", …] }` |
 | 409 | `revision_conflict` | `parentRevision` is not the head: `{ …, "head": 8 }` |
-| 413 | `limit` | Manifest over 1 MB, bundle over 16 MB, or `secrets` too large (the whole body is limited to about 3 MB) |
+| 413 | `limit` | Manifest over 1 MB, bundle over 16 MB, or `secrets` too large; also a whole body over about 3 MB |
 
 #### `POST /api/v1/blobs/check` — `show:write`
 ```json
@@ -1598,8 +1595,11 @@ Blobs are shared by hash across profiles, so access is checked per token:
 
 `show.changed` (`show:read`, `src.profile` = the profile) after every saved revision, with
 `{ profileId, revision, parentRevision, byAppId }`. Compare `revision` with the one you have loaded
-and offer the update. `library.changed` (`show:read`, `data: {}`) when the asset library changes:
-refetch `GET /library`. Both are in §5.
+and offer the update. `library.changed` (`show:read`, `data: {}`) when the asset library changes
+(an upload, a rename, a reassignment, a delete, or deleting a profile that had entries; `src.profile` is the
+entry's profile, `null` for a shared one): refetch `GET /library` and compare by `id`. An entry that is no
+longer listed was deleted or moved to another profile; drop your copy unless another entry or a revision you
+keep uses the same `sha256`. Both are in §5.
 
 ### 14.8 Limits
 
@@ -2320,6 +2320,11 @@ the revision in `info.version`.
 
 ### v1.18
 
+- **Show profiles (§14), fixes, no new fields:** a malformed save or `POST /blobs/check` body is
+  `400 invalid` (was `500`); a save body over about 3 MB is `413 limit` as documented (was `413 invalid`);
+  a manifest `secrets[]` entry that carries a `value` is refused with `400 invalid` (the manifest is readable
+  with `show:read`); `library.changed` also fires when deleting a profile removes its library entries.
+  Saves that store secrets are audited (`show.secrets.write`).
 - **Scope upgrades (§9.3.1, additive):** `POST /pairing/upgrade` and `GET /pairing/upgrade/{upgradeId}`.
   A paired app asks for more scopes with its own token; once an admin approves in Settings → API, the
   same token holds them (secret and profile unchanged). No more pairing again for a new scope.

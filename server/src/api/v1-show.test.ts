@@ -286,3 +286,79 @@ describe('helpers', () => {
     expect(parseRange('bytes=0-1,3-4', 10)).toBeUndefined();
   });
 });
+
+describe('audit fixes (0.2.100)', () => {
+  it('a malformed save or check body is 400 invalid, not 500', async () => {
+    await uploadAll(all);
+    expectProblem(await call('POST', `/api/v1/profiles/${club.id}/show/revisions`, all, { parentRevision: 'x', manifest: manifest(), bundleSha256: sha(BUNDLE) }), 400, 'invalid');
+    expectProblem(await save(all, club.id, 0, { secrets: [{ source: 's', key: 'k', value: 'x'.repeat(8 * 1024 + 1) }] }), 400, 'invalid');
+    expectProblem(await call('POST', '/api/v1/blobs/check', all, { items: [{ sha256: 'XYZ', size: 1 }] }), 400, 'invalid');
+    expectProblem(await call('POST', '/api/v1/blobs/check', all, { items: 'nope' }), 400, 'invalid');
+    expect(t.repos.showProfiles.getByProfile(club.id)).toBeNull();
+  });
+
+  it('a save body over the route limit is 413 limit', async () => {
+    expectProblem(await save(all, club.id, 0, { note: 'x'.repeat(4 * 1024 * 1024) }), 413, 'limit');
+  });
+
+  it('a manifest secrets[] entry must not carry its value (manifests are readable with show:read)', async () => {
+    await uploadAll(all);
+    const saveWith = (m: Record<string, unknown>, extra: Record<string, unknown> = {}) =>
+      call('POST', `/api/v1/profiles/${club.id}/show/revisions`, all, { parentRevision: 0, manifest: m, bundleSha256: sha(BUNDLE), ...extra });
+    const res = await saveWith(manifest({ secrets: [{ source: 'src-1', key: 'url', value: 'placeholder-secret' }] }));
+    expectProblem(res, 400, 'invalid');
+    expect(res.body).not.toContain('placeholder-secret');
+    expectProblem(await saveWith(manifest({ secrets: 'x' })), 400, 'invalid');
+    expect(t.repos.showProfiles.getByProfile(club.id)).toBeNull();
+    // Names only: accepted, and the value stays out of the manifest.
+    const ok = await saveWith(manifest({ secrets: [{ source: 'src-1', key: 'url' }] }), { secrets: [{ source: 'src-1', key: 'url', value: 'placeholder-secret' }] });
+    expect(ok.statusCode, ok.body).toBe(201);
+    expect((await get(`/api/v1/profiles/${club.id}/show/revisions/1`, all)).body).not.toContain('placeholder-secret');
+  });
+
+  it('secrets: written and read are audited (never the value), served no-store, never in show.changed', async () => {
+    await uploadAll(all);
+    const reader = t.token(['show:read'], 'reader');
+    const start = (await get('/api/v1/events/poll?profile=*', reader)).json().next;
+    const secrets = [{ source: 'src-1', key: 'url', value: 'placeholder-secret' }];
+    expect((await save(all, club.id, 0, { secrets })).statusCode).toBe(201);
+    const trusted = t.token(['show:secrets'], 'trusted');
+    const res = await get(`/api/v1/profiles/${club.id}/show/revisions/1/secrets`, trusted);
+    expect(res.statusCode).toBe(200);
+    expect(res.headers['cache-control']).toBe('no-store');
+    const entries = t.repos.audit.list({ limit: 10 });
+    expect(entries.map((e) => e.action)).toEqual(expect.arrayContaining(['show.save', 'show.secrets.write', 'show.secrets.read']));
+    expect(entries.find((e) => e.action === 'show.secrets.write')?.detail).toContain('1 secret');
+    expect(JSON.stringify(entries)).not.toContain('placeholder-secret');
+    const events = (await get(`/api/v1/events/poll?profile=*&after=${start}`, reader)).json().items;
+    expect(events.some((e: { type: string }) => e.type === 'show.changed')).toBe(true);
+    expect(JSON.stringify(events)).not.toContain('placeholder-secret');
+    // A save without secrets writes no secrets audit line.
+    expect((await save(all, club.id, 1)).statusCode).toBe(201);
+    expect(t.repos.audit.list({ limit: 20 }).filter((e) => e.action === 'show.secrets.write')).toHaveLength(1);
+  });
+
+  it('concurrent saves on the same parent: one 201, the other 409 with the head; nothing overwritten', async () => {
+    await uploadAll(all);
+    const [a, b] = await Promise.all([save(all, club.id, 0, { note: 'a' }), save(all, club.id, 0, { note: 'b' })]);
+    expect([a.statusCode, b.statusCode].sort()).toEqual([201, 409]);
+    const loser = a.statusCode === 409 ? a : b;
+    expect(loser.json()).toMatchObject({ code: 'revision_conflict', head: 1 });
+    const list = (await get(`/api/v1/profiles/${club.id}/show/revisions`, all)).json();
+    expect(list.head).toBe(1);
+    expect(list.items).toHaveLength(1);
+  });
+
+  it('a plugin token upgraded to show:read/show:write (§9.3.1) reaches its own show and library at once', async () => {
+    const plugin = t.token(['status:read', 'apps:write'], 'plugin', club.id);
+    expectProblem(await get('/api/v1/library', plugin), 403, 'missing_scope');
+    const req = await call('POST', '/api/v1/pairing/upgrade', plugin, { scopes: ['show:read', 'show:write'], appName: 'CTD OBS plugin' });
+    expect(req.statusCode, req.body).toBe(202);
+    t.scopeUpgrades.approve(req.json().upgradeId);
+    expect((await get('/api/v1/library', plugin)).statusCode).toBe(200);
+    await uploadAll(plugin);
+    expect((await save(plugin, club.id, 0)).statusCode).toBe(201);
+    expectProblem(await get(`/api/v1/profiles/${DEFAULT_PROFILE_ID}/show`, plugin), 403, 'profile_forbidden');
+    expectProblem(await get(`/api/v1/profiles/${club.id}/show/revisions/1/secrets`, plugin), 403, 'missing_scope');
+  });
+});

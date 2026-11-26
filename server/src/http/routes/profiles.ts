@@ -161,6 +161,7 @@ const profileRoutes: FastifyPluginAsync<RouteOptions> = async (app, { services }
     const show = repos.showProfiles.getByProfile(id);
     if (show) repos.secrets.deleteScope(showSecretScope(show.id));
     repos.showProfiles.deleteByProfile(id);
+    const libraryChanged = repos.assetLibrary.list({ profileId: id }).some((a) => a.profileId === id);
     repos.assetLibrary.deleteByProfile(id);
 
     // 8. The profile itself.
@@ -168,6 +169,8 @@ const profileRoutes: FastifyPluginAsync<RouteOptions> = async (app, { services }
     if (appsChanged > 0) bus.emit('apps-changed');
     bus.emit('destinations-changed', { profileId: id });
     bus.emit('profiles-changed');
+    // Library mirrors (every-profile tokens) refetch GET /library and drop the removed entries.
+    if (libraryChanged) bus.emit('library-changed', { profileId: id });
     audit(
       services,
       req,

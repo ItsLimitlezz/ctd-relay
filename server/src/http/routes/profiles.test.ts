@@ -255,12 +255,25 @@ describe('DELETE /api/profiles/:id', () => {
     save('default');
     repos.assetLibrary.create({ sha256: sha('a'), name: 'club', kind: 'image', profileId: s.club.id, uploadedBy: null });
     const shared = repos.assetLibrary.create({ sha256: sha('a'), name: 'shared', kind: 'image', profileId: null, uploadedBy: null });
+    const library: unknown[] = [];
+    t.bus.on('library-changed', (e) => library.push(e));
 
     const res = await app.inject({ method: 'DELETE', url: `/api/profiles/${s.club.id}` });
     expect(res.statusCode).toBe(200);
     expect(repos.showProfiles.getByProfile(s.club.id)).toBeNull();
     expect(repos.showProfiles.getByProfile('default')).not.toBeNull();
     expect(repos.assetLibrary.list().map((a) => a.id)).toEqual([shared.id]);
+    // Library mirrors learn that its entries are gone (library.changed, §14.7).
+    expect(library).toEqual([{ profileId: s.club.id }]);
+  });
+
+  it('announces no library change when the profile had no library entries', async () => {
+    const t = await build();
+    const s = await seedClub(t);
+    const library: unknown[] = [];
+    t.bus.on('library-changed', (e) => library.push(e));
+    expect((await t.app.inject({ method: 'DELETE', url: `/api/profiles/${s.club.id}` })).statusCode).toBe(200);
+    expect(library).toEqual([]);
   });
 
   it("deletes the profile with everything that belonged to it, and nothing else", async () => {
