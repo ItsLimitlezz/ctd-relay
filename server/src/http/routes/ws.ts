@@ -1,7 +1,7 @@
 import type { FastifyPluginAsync, FastifyReply, FastifyRequest } from 'fastify';
 import type { Logger } from 'pino';
 import type { WsServerMessage } from '../../../../shared/api.js';
-import { DEFAULT_PROFILE_ID, type ConnectedApp, type DestinationPhase, type PairingRequest, type ProfileSummary } from '../../../../shared/types.js';
+import { DEFAULT_PROFILE_ID, type ConnectedApp, type DestinationPhase, type PairingRequest, type ProfileSummary, type ScopeUpgradeRequest } from '../../../../shared/types.js';
 import { eventHubFor } from '../../api/event-hub.js';
 import type { ApiIssueCleared, ApiIssueRaised, Envelope } from '../../api/types.js';
 import type { EventBus } from '../../events.js';
@@ -35,6 +35,8 @@ export interface HubSources {
   profiles?: () => ProfileSummary[];
   /** Pending app pairings ('pairings' messages, admins only). */
   pairings?: () => PairingRequest[];
+  /** Pending scope upgrades ('scope-upgrades' messages, admins only). */
+  scopeUpgrades?: () => ScopeUpgradeRequest[];
   /** Connected apps ('apps' messages). */
   apps?: () => ConnectedApp[];
 }
@@ -111,6 +113,7 @@ export class WsHub {
       }),
       bus.on('profiles-changed', () => this.scheduleProfiles(true)),
       bus.on('pairings-changed', () => this.sendPairings(null)),
+      bus.on('scope-upgrades-changed', () => this.sendScopeUpgrades(null)),
       bus.on('apps-changed', () => this.sendApps()),
     ];
   }
@@ -155,6 +158,7 @@ export class WsHub {
     if (socket.readyState !== OPEN) return;
     this.clients.add(client);
     this.sendPairings(client);
+    this.sendScopeUpgrades(client);
   }
 
   broadcast(msg: WsServerMessage): void {
@@ -256,6 +260,24 @@ export class WsHub {
     for (const client of targets) this.send(client, data);
   }
 
+  /** Pending scope upgrades to every admin socket, or to `only` (a new socket) when it is an admin's and some are pending. */
+  private sendScopeUpgrades(only: Client | null): void {
+    if (!this.sources.scopeUpgrades || this.clients.size === 0) return;
+    const targets = (only ? [only] : [...this.clients]).filter((c) => this.admin(c));
+    if (targets.length === 0) return;
+    let upgrades: ScopeUpgradeRequest[];
+    try {
+      upgrades = this.sources.scopeUpgrades();
+    } catch (err) {
+      this.log.debug({ error: (err as Error).message }, 'listing scope upgrades failed');
+      return;
+    }
+    // A new socket hears nothing when nothing waits (older tests and clients see the same messages as before).
+    if (only && upgrades.length === 0) return;
+    const data = JSON.stringify({ type: 'scope-upgrades', upgrades } satisfies WsServerMessage);
+    for (const client of targets) this.send(client, data);
+  }
+
   private sendApps(): void {
     if (!this.sources.apps || this.clients.size === 0) return;
     let apps: ConnectedApp[];
@@ -313,6 +335,7 @@ const wsRoutes: FastifyPluginAsync<RouteOptions> = async (app, { services }) => 
   const hub = new WsHub(services.bus, log, {
     profiles: () => services.orchestrators.summaries(),
     pairings: () => services.pairings.list(),
+    scopeUpgrades: () => services.scopeUpgrades.list(),
     apps: () => services.apps.list(),
   });
   // Issues (v1.18): the API event hub decides what is open; the dashboard shows it live.

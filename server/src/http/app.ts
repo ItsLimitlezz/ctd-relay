@@ -31,6 +31,7 @@ import healthRoutes from './routes/health.js';
 import ingestRoutes from './routes/ingest.js';
 import musicRoutes from './routes/music.js';
 import pairingRoutes from './routes/pairings.js';
+import scopeUpgradeRoutes from './routes/scope-upgrades.js';
 import platformRoutes from './routes/platforms.js';
 import profileRoutes from './routes/profiles.js';
 import reportRoutes from './routes/reports.js';
@@ -135,6 +136,8 @@ export async function buildApp(services: AppServices, tlsMaterial: TlsMaterial |
   await app.register(assetRoutes, opts);
   // The hub's admin side: pending app pairings + connected apps (Settings → API).
   await app.register(pairingRoutes, opts);
+  // Apps asking for more scopes for the token they hold (Settings → API).
+  await app.register(scopeUpgradeRoutes, opts);
   await app.register(overlayModeration, opts);
   // External API (bearer tokens, docs/API.md) + the OBS dock page that uses it.
   await app.register(v1Routes, { ...opts, prefix: API_PREFIX });

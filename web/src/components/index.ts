@@ -56,6 +56,7 @@ export { LinksEditor, type LinksEditorProps } from './LinksEditor';
 export { Modal, type ModalProps } from './Modal';
 export { PHASE_META, PhaseBadge, phaseMeta, type PhaseBadgeProps } from './PhaseBadge';
 export { PairingBanner } from './PairingBanner';
+export { ScopeUpgradeBanner } from './ScopeUpgradeBanner';
 export { PLATFORM_META, PlatformBadge, platformMeta, platformName, type PlatformBadgeProps } from './PlatformBadge';
 export { PROFILE_STATUS_UI, ProfileDot, ProfileStatusBadge, ProfileTag } from './ProfileBadge';
 export { LiveProfilesIndicator, ProfileSwitcher, ProfileSwitcherView, type ProfileSwitcherViewProps } from './ProfileSwitcher';

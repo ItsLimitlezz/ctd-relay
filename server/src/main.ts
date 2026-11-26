@@ -11,6 +11,7 @@ import { musicFor } from './music/music-service.js';
 import { createAppRegistry } from './api/hub.js';
 import { createLanHandler } from './api/lan.js';
 import { createPairingService } from './api/pairing.js';
+import { createScopeUpgradeService } from './api/scope-upgrade.js';
 import { createChatHub } from './chat/chat-hub.js';
 import { createBrowserManager } from './browser/browser-manager.js';
 import { loadConfig, type AppConfig } from './config.js';
@@ -215,6 +216,8 @@ export async function createServices(config: AppConfig): Promise<AppServices> {
   // The hub: connected apps (presence + resources) and "connect this app" pairing requests.
   const apps = createAppRegistry({ repos, bus, log: log.child({ mod: 'apps' }) });
   const pairings = createPairingService({ repos, bus, log: log.child({ mod: 'pairing' }), config });
+  // Paired apps asking for more scopes for the token they hold (docs/API.md §9.3.1).
+  const scopeUpgrades = createScopeUpgradeService({ repos, bus, log: log.child({ mod: 'scope-upgrade' }) });
 
   // Show-profile assets and bundles under DATA_DIR/blobs. Limits: defaults < ASSETS_QUOTA_BYTES < the
   // 'assets.limits' setting (Partial<BlobLimits>), read on every upload so a change applies at once.
@@ -249,6 +252,7 @@ export async function createServices(config: AppConfig): Promise<AppServices> {
     platforms,
     apps,
     pairings,
+    scopeUpgrades,
     tls,
     blobStore,
     appSettings,
@@ -294,9 +298,9 @@ export async function createServices(config: AppConfig): Promise<AppServices> {
   return services;
 }
 
-/** Stop the hub's background timers (presence checks, pairing expiry), when the implementation has them. */
+/** Stop the hub's background timers (presence checks, pairing and scope-upgrade expiry), when the implementation has them. */
 function closeHub(services: AppServices): void {
-  for (const part of [services.apps, services.pairings]) (part as Partial<{ close(): void }>).close?.();
+  for (const part of [services.apps, services.pairings, services.scopeUpgrades]) (part as Partial<{ close(): void }>).close?.();
 }
 
 export async function main(): Promise<void> {

@@ -1,7 +1,7 @@
 // Pure helpers for the hub in the web UI: app pairing requests ("an app wants to connect"),
 // connected apps and their resources, and profile pickers for tokens (Settings → API).
 
-import type { ApiScope, AppResource, ConnectedApp, PairingRequest, Profile } from '@shared/types';
+import type { ApiScope, AppResource, ConnectedApp, PairingRequest, Profile, ScopeUpgradeRequest } from '@shared/types';
 import { ADMIN_ONLY_SCOPES, API_SCOPES, DEFAULT_PROFILE_ID } from '@shared/types';
 import { formatAgo, plural } from '../components/format';
 import { findProfile, profileLabel, sortProfiles } from './profiles';
@@ -123,6 +123,42 @@ export function pairingBannerText(pending: readonly Pick<PairingRequest, 'appNam
     return `${p.appName || 'An app'} wants to connect to CTD Relay (code ${p.code}).`;
   }
   return `${pending.length} apps want to connect to CTD Relay.`;
+}
+
+// ---------------------------------------------------------------------------
+// Scope upgrades ("an app asks for more permissions", docs/API.md §9.3.1)
+// ---------------------------------------------------------------------------
+
+/** Longest part of an app's reason shown in the prompt (it is the app's own, untrusted text). */
+export const UPGRADE_REASON_SHOWN = 140;
+
+/** Requests that haven't expired yet, newest first. */
+export function pendingScopeUpgrades(list: readonly ScopeUpgradeRequest[] | null | undefined, now: number): ScopeUpgradeRequest[] {
+  return (list ?? [])
+    .filter((u) => {
+      const exp = timeOf(u.expiresAt);
+      return exp === null || exp > now;
+    })
+    .sort((a, b) => (timeOf(b.createdAt) ?? 0) - (timeOf(a.createdAt) ?? 0));
+}
+
+/** The name to show for the app asking: what it said, else its token's name. */
+export function scopeUpgradeAppName(u: Pick<ScopeUpgradeRequest, 'appName' | 'tokenName'>): string {
+  return u.appName?.trim() || u.tokenName.trim() || 'An app';
+}
+
+/** The app's reason, quoted and cut short ('' when it gave none). */
+export function quotedReason(reason: string | null | undefined, max = UPGRADE_REASON_SHOWN): string {
+  const r = (reason ?? '').replace(/\s+/g, ' ').trim();
+  if (!r) return '';
+  return `“${r.length > max ? `${r.slice(0, max - 1)}…` : r}”`;
+}
+
+/** Banner text for pending requests ('' when none). */
+export function scopeUpgradeBannerText(pending: readonly Pick<ScopeUpgradeRequest, 'appName' | 'tokenName'>[]): string {
+  if (pending.length === 0) return '';
+  if (pending.length === 1) return `${scopeUpgradeAppName(pending[0] as ScopeUpgradeRequest)} asks for more permissions.`;
+  return `${pending.length} apps ask for more permissions.`;
 }
 
 // ---------------------------------------------------------------------------

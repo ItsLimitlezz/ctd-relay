@@ -15,6 +15,7 @@ import type {
   AssetsResponse,
   AppSettings,
   ApprovePairingRequest,
+  ApproveScopeUpgradeResponse,
   AuditResponse,
   ChangePasswordRequest,
   ConnectCompleteRequest,
@@ -77,6 +78,7 @@ import type {
   Destination,
   Feed,
   PairingRequest,
+  ScopeUpgradeRequest,
   PlatformId,
   PlatformInfo,
   Profile,
@@ -380,6 +382,11 @@ export const api = {
   approvePairing: (id: string, body: ApprovePairingRequest) =>
     post<CreateApiTokenResponse>(`/api/pairings/${encodeURIComponent(id)}/approve`, body),
   denyPairing: (id: string) => post<object>(`/api/pairings/${encodeURIComponent(id)}/deny`),
+  /** Apps asking for more scopes for the token they hold, newest first. */
+  scopeUpgrades: () => get<ScopeUpgradeRequest[]>('/api/scope-upgrades'),
+  /** Adds exactly the requested scopes to that token (same secret, same profile). */
+  approveScopeUpgrade: (id: string) => post<ApproveScopeUpgradeResponse>(`/api/scope-upgrades/${encodeURIComponent(id)}/approve`),
+  denyScopeUpgrade: (id: string) => post<object>(`/api/scope-upgrades/${encodeURIComponent(id)}/deny`),
   apps: () => get<ConnectedApp[]>('/api/apps'),
   removeApp: (id: string) => del<object>(`/api/apps/${encodeURIComponent(id)}`),
 

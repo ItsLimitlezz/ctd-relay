@@ -15,6 +15,7 @@ import { LAN_HTTP_PORT_ENV, LAN_HTTP_PORT_SETTING, parsePortOverride } from './a
 import { SlidingWindowLimiter, addressBucket, params, query, sendProblem } from './http.js';
 import { CONTROL_RE, jsonBytes } from './json.js';
 import { PAIRING_POLL_INTERVAL_SEC, PAIRING_SCOPES, TOKEN_NAME_MAX } from './pairing.js';
+import { SCOPE_UPGRADE_APP_NAME_MAX, SCOPE_UPGRADE_REASON_MAX } from './scope-upgrade.js';
 import { apiProfile, buildApiIngest } from './profiles.js';
 import { createUlidGenerator, parseUlid } from './ulid.js';
 import { showSummary } from './v1-show.js';
@@ -29,6 +30,9 @@ export const MESSAGES_PER_MINUTE = 120;
 export const PAIRINGS_PER_MINUTE_PER_IP = 10;
 /** Polls every 3 s are 20 a minute; leaves room for several apps pairing behind one address. */
 export const PAIRING_POLLS_PER_MINUTE_PER_IP = 120;
+/** Scope upgrade requests / polls per token per minute (like pairing's per-address limits). */
+export const SCOPE_UPGRADES_PER_MINUTE_PER_TOKEN = PAIRINGS_PER_MINUTE_PER_IP;
+export const SCOPE_UPGRADE_POLLS_PER_MINUTE_PER_TOKEN = PAIRING_POLLS_PER_MINUTE_PER_IP;
 export const MESSAGE_TYPE_RE = /^[a-z0-9_.-]{1,64}$/;
 
 const profileRef = z.string().min(1).max(64);
@@ -58,6 +62,24 @@ const PairingBody = z.object({
   // limit bounds the list; the route keeps the known ones and refuses only an empty result.
   scopes: z.array(z.unknown()).min(1, 'ask for at least one scope'),
   profileId: profileRef.nullable().optional(),
+});
+
+const UpgradeBody = z.object({
+  // Unknown scopes are ignored, like pairing; the service refuses only an empty result.
+  scopes: z.array(z.unknown()).min(1, 'ask for at least one scope'),
+  appName: z
+    .string()
+    .trim()
+    .min(1, 'must not be empty')
+    .max(SCOPE_UPGRADE_APP_NAME_MAX, `at most ${SCOPE_UPGRADE_APP_NAME_MAX} characters`)
+    .refine((s) => !CONTROL_RE.test(s), 'control characters are not allowed')
+    .optional(),
+  reason: z
+    .string()
+    .trim()
+    .max(SCOPE_UPGRADE_REASON_MAX, `at most ${SCOPE_UPGRADE_REASON_MAX} characters`)
+    .refine((s) => !CONTROL_RE.test(s), 'control characters are not allowed')
+    .optional(),
 });
 
 const PollBody = z.object({ pollSecret: z.string().min(1).max(200) });
@@ -106,6 +128,8 @@ export function registerHubRoutes(app: FastifyInstance, ctx: V1Context): void {
   const pairingLimiter = new SlidingWindowLimiter(PAIRINGS_PER_MINUTE_PER_IP, 60_000, ctx.now);
   const pollLimiter = new SlidingWindowLimiter(PAIRING_POLLS_PER_MINUTE_PER_IP, 60_000, ctx.now);
   const claimLimiter = new SlidingWindowLimiter(CLAIMS_PER_MINUTE_PER_IP, 60_000, ctx.now);
+  const upgradeLimiter = new SlidingWindowLimiter(SCOPE_UPGRADES_PER_MINUTE_PER_TOKEN, 60_000, ctx.now);
+  const upgradePollLimiter = new SlidingWindowLimiter(SCOPE_UPGRADE_POLLS_PER_MINUTE_PER_TOKEN, 60_000, ctx.now);
   const messageId = createUlidGenerator(ctx.now);
   const obsLimiter = new SlidingWindowLimiter(OBS_POSTS_PER_MINUTE, 60_000, ctx.now);
   const obsStore = obsStoreFor(services);
@@ -133,6 +157,26 @@ export function registerHubRoutes(app: FastifyInstance, ctx: V1Context): void {
     if (rate.ok) return true;
     reply.header('retry-after', String(rate.retryAfterSec));
     sendProblem(reply, 429, 'rate_limited', `Too many ${what} from this address. Retry in ${rate.retryAfterSec} s.`);
+    return false;
+  };
+
+  /** The web UI address an app's approve link points at (pairing and scope upgrades alike). */
+  const approveBase = (req: FastifyRequest): string => {
+    const secure = (req.raw.socket as { encrypted?: boolean } | undefined)?.encrypted === true;
+    let lanHttpPort: number | null = null;
+    try {
+      lanHttpPort = parsePortOverride(process.env[LAN_HTTP_PORT_ENV], services.repos.settings.get<unknown>(LAN_HTTP_PORT_SETTING, null));
+    } catch {
+      lanHttpPort = parsePortOverride(process.env[LAN_HTTP_PORT_ENV]);
+    }
+    return webUiBase(services.config, req.headers.host, secure, services.publicBaseUrl(), lanHttpPort);
+  };
+
+  const tokenLimited = (limiter: SlidingWindowLimiter, tokenId: string, reply: FastifyReply, what: string): boolean => {
+    const rate = limiter.hit(tokenId);
+    if (rate.ok) return true;
+    reply.header('retry-after', String(rate.retryAfterSec));
+    sendProblem(reply, 429, 'rate_limited', `Too many ${what} for this token. Retry in ${rate.retryAfterSec} s.`);
     return false;
   };
 
@@ -393,14 +437,7 @@ export function registerHubRoutes(app: FastifyInstance, ctx: V1Context): void {
       requestedProfileId: profileId,
       ip: req.ip ?? null,
     });
-    const secure = (req.raw.socket as { encrypted?: boolean } | undefined)?.encrypted === true;
-    let lanHttpPort: number | null = null;
-    try {
-      lanHttpPort = parsePortOverride(process.env[LAN_HTTP_PORT_ENV], services.repos.settings.get<unknown>(LAN_HTTP_PORT_SETTING, null));
-    } catch {
-      lanHttpPort = parsePortOverride(process.env[LAN_HTTP_PORT_ENV]);
-    }
-    const base = webUiBase(services.config, req.headers.host, secure, services.publicBaseUrl(), lanHttpPort);
+    const base = approveBase(req);
     const expiresIn = Math.max(0, Math.round((Date.parse(pairing.expiresAt) - ctx.now()) / 1000));
     return reply.code(201).header('cache-control', 'no-store').send({
       pairingId: pairing.id,
@@ -433,6 +470,53 @@ export function registerHubRoutes(app: FastifyInstance, ctx: V1Context): void {
         return sendProblem(reply, 403, 'denied', 'The connection was denied in Settings → API.');
       default:
         return sendProblem(reply, 410, 'expired', 'This pairing request expired (or is unknown); start a new one.');
+    }
+  });
+
+  // ---- scope upgrade (§9.3.1, v1.18): more scopes for the token the app holds ----
+
+  app.post('/pairing/upgrade', { preHandler: requireToken(null), bodyLimit: PAIRING_BODY_LIMIT }, async (req, reply) => {
+    const { token } = authOf(req);
+    if (!tokenLimited(upgradeLimiter, token.id, reply, 'scope upgrade requests')) return reply;
+    const parsed = UpgradeBody.safeParse(req.body ?? {});
+    if (!parsed.success) return sendProblem(reply, 400, 'invalid', issuesText(parsed.error));
+    const body = parsed.data;
+    const result = services.scopeUpgrades.request(token, {
+      scopes: body.scopes,
+      appName: body.appName ?? null,
+      reason: body.reason ? body.reason : null,
+      ip: req.ip ?? null,
+    });
+    reply.header('cache-control', 'no-store');
+    if (result.status === 'approved') return reply.code(200).send({ status: 'approved', scopes: result.scopes });
+    const { upgrade } = result;
+    return reply.code(202).send({
+      upgradeId: upgrade.id,
+      status: 'pending',
+      adding: upgrade.adding,
+      expiresIn: Math.max(0, Math.round((Date.parse(upgrade.expiresAt) - ctx.now()) / 1000)),
+      interval: PAIRING_POLL_INTERVAL_SEC,
+      approveUrl: `${approveBase(req)}/settings?tab=api&upgrade=${encodeURIComponent(upgrade.id)}`,
+    });
+  });
+
+  app.get('/pairing/upgrade/:upgradeId', { preHandler: requireToken(null) }, async (req, reply) => {
+    const { token } = authOf(req);
+    if (!tokenLimited(upgradePollLimiter, token.id, reply, 'scope upgrade polls')) return reply;
+    const id = params(req).upgradeId;
+    reply.header('cache-control', 'no-store');
+    // Another token's request looks exactly like an unknown one.
+    const result = typeof id === 'string' && id.length <= 64 ? services.scopeUpgrades.poll(id, token.id) : null;
+    if (!result) return sendProblem(reply, 404, 'not_found', 'No such scope upgrade request for this token.');
+    switch (result.status) {
+      case 'pending':
+        return reply.code(202).send({ status: 'pending' });
+      case 'approved':
+        return reply.code(200).send({ status: 'approved', scopes: result.scopes });
+      case 'denied':
+        return sendProblem(reply, 403, 'denied', 'The request for more permissions was denied in Settings → API. The token keeps its current scopes.');
+      default:
+        return sendProblem(reply, 410, 'expired', 'This request expired (or the server restarted); ask again.');
     }
   });
 }

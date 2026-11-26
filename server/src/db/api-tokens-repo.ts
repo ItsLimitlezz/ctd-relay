@@ -98,5 +98,22 @@ export function createApiTokensRepo(stmt: Stmt, now: () => number = Date.now): A
     delete(id) {
       stmt('DELETE FROM api_tokens WHERE id = ?').run(id);
     },
+
+    addScopes(id, scopes) {
+      const row = stmt('SELECT scopes FROM api_tokens WHERE id = ?').get(id);
+      if (!row) return null;
+      // The same JSON column as ever (no schema change: older versions still read it). Values this
+      // version doesn't know (written by a newer one) are kept; new scopes go after them.
+      let stored: unknown;
+      try {
+        stored = typeof row.scopes === 'string' ? JSON.parse(row.scopes) : [];
+      } catch {
+        stored = [];
+      }
+      const kept = Array.isArray(stored) ? stored.filter((v): v is string => typeof v === 'string') : [];
+      const added = API_SCOPES.filter((s) => scopes.includes(s) && !kept.includes(s));
+      if (added.length > 0) stmt('UPDATE api_tokens SET scopes = ? WHERE id = ?').run(JSON.stringify([...kept, ...added]), id);
+      return get(id);
+    },
   };
 }

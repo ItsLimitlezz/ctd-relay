@@ -509,6 +509,17 @@ export const API_SCOPES: readonly ApiScope[] = [
 ];
 /** Scopes an app cannot ask for by pairing, and that a token limited to one profile cannot hold. */
 export const ADMIN_ONLY_SCOPES: readonly ApiScope[] = ['system:admin'];
+/**
+ * Scopes an operator should think twice about, with the one-line reason shown next to them when an
+ * app asks for them (pairing or a scope upgrade, docs/API.md §9.3.1). Other scopes have no entry.
+ */
+export const SENSITIVE_SCOPES: Readonly<Partial<Record<ApiScope, string>>> = {
+  'show:secrets': 'Hands out the keys saved in OBS sources (e.g. browser-source URL keys).',
+  'reports:read': 'Shows viewer names and who chatted the most.',
+  'ingest:read': 'Hands out the stream keys of OBS.',
+  'feeds:watch': 'Lets the app watch the live video, with sound.',
+  'obs:control': 'Lets the app control OBS: scenes, streaming and recording.',
+};
 
 // ---------------------------------------------------------------------------
 // Connected apps (the hub): other apps register themselves and what they offer, so apps can
@@ -591,6 +602,33 @@ export interface PairingRequest {
   requestedScopes: ApiScope[];
   requestedProfileId: string | null;
   ip: string | null;
+  createdAt: string;
+  expiresAt: string;
+}
+
+/**
+ * A pending scope upgrade (docs/API.md §9.3.1, v1.18): an app asks for more scopes for the token it
+ * already holds; an admin approves (the same token gains exactly `adding`) or denies it in
+ * Settings → API. Never holds a secret.
+ */
+export interface ScopeUpgradeRequest {
+  id: string;
+  tokenId: string;
+  tokenName: string;
+  /** First characters of the token (e.g. "ctd_pat_3fK9"), to recognise it. */
+  tokenPrefix: string;
+  /** The token's profile, or null = every profile. An upgrade never changes it. */
+  profileId: string | null;
+  /** The name the app gave, else the name of the app registered with the token; null if neither. */
+  appName: string | null;
+  /** Kind of the app registered with the token, if any. */
+  kind: string | null;
+  /** What the token holds now. */
+  currentScopes: ApiScope[];
+  /** What approving adds (never an admin-only scope, never one it holds). */
+  adding: ApiScope[];
+  /** Why the app asks, as the app wrote it (≤ 200 characters; untrusted text). */
+  reason: string | null;
   createdAt: string;
   expiresAt: string;
 }

@@ -17,6 +17,7 @@ import type {
   ChatMessage,
   ConnectedApp,
   PairingRequest,
+  ScopeUpgradeRequest,
   Profile,
   ProfileSummary,
   Destination,
@@ -208,6 +209,11 @@ export interface ApiTokensRepo {
   /** Look up a presented secret; null if unknown. Updates lastUsedAt (at most once a minute). */
   verify(secret: string): ApiTokenInfo | null;
   delete(id: string): void;
+  /**
+   * Add scopes to a token (a scope upgrade, docs/API.md §9.3.1): its secret, name and profile stay
+   * the same. Returns the updated token, or null if it no longer exists.
+   */
+  addScopes(id: string, scopes: readonly ApiScope[]): ApiTokenInfo | null;
 }
 
 /** A show profile: the versioned OBS/overlay bundle of one Relay profile (exactly one per profile). */
@@ -601,6 +607,29 @@ export interface PairingService {
   deny(id: string): void;
 }
 
+/**
+ * An app asks for more scopes for the token it holds (docs/API.md §9.3.1, v1.18); an admin approves
+ * or denies. In memory only. Emits 'scope-upgrades-changed' on the bus.
+ */
+export interface ScopeUpgradeService {
+  /**
+   * Ask for `scopes` (unknown and admin-only ones are ignored, held ones dropped). 'approved' when
+   * the token already holds every one it asked for (nothing is created); otherwise the new pending
+   * request, which replaces the token's previous one. Throws ApiProblem 400 (nothing valid) / 429.
+   */
+  request(
+    token: ApiTokenInfo,
+    input: { scopes: readonly unknown[]; appName: string | null; reason: string | null; ip: string | null },
+  ): { status: 'approved'; scopes: ApiScope[] } | { status: 'pending'; upgrade: ScopeUpgradeRequest };
+  /** null = unknown id or another token's request; 'expired' also for a request from before a restart. */
+  poll(id: string, tokenId: string): { status: 'pending' | 'denied' | 'expired' } | { status: 'approved'; scopes: ApiScope[] } | null;
+  /** Pending requests, newest first. */
+  list(): ScopeUpgradeRequest[];
+  /** Adds exactly the request's `adding` to its token. Throws ApiProblem 404/409/410. */
+  approve(id: string): { upgrade: ScopeUpgradeRequest; token: ApiTokenInfo };
+  deny(id: string): ScopeUpgradeRequest;
+}
+
 export interface AppServices {
   config: AppConfig;
   log: Logger;
@@ -616,6 +645,7 @@ export interface AppServices {
   orchestrators: OrchestratorRegistry;
   apps: AppRegistry;
   pairings: PairingService;
+  scopeUpgrades: ScopeUpgradeService;
   tls: TlsManager;
   /** Show-profile bundles and assets on disk (content-addressed, under DATA_DIR/blobs). */
   blobStore: BlobStore;

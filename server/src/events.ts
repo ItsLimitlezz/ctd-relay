@@ -58,6 +58,8 @@ export interface AppEvents {
   'apps-changed': [];
   /** Pending pairings changed (emitted by PairingService). */
   'pairings-changed': [];
+  /** Pending scope upgrades changed (emitted by ScopeUpgradeService). */
+  'scope-upgrades-changed': [];
   /** A message from one connected app to another (or to all), relayed by the hub. */
   'app-message': [AppMessage];
   /** An OBS event a connected app (the CTD OBS plugin) sent into the hub (POST /api/v1/apps/{id}/events). */

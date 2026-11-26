@@ -121,7 +121,7 @@ counts as none).
 | 409 | `exists` | This guest feed already feeds that profile input (v1.17, §18.8) |
 | 409 | `app_owned` | The app id was registered by another token (`PUT /apps/{id}` takes the id over when that token is revoked, or when yours is newer, the app is of the same kind and it is offline (v1.6) or has the same `name` and your token covers that token's profile (the same app paired again; see §9.3)) |
 | 409 | `limit` | Too many apps registered (100 in all, 20 per token) |
-| 403 / 410 | `denied` / `expired` | Pairing poll: denied by the admin / expired, collected or unknown (§9.3) |
+| 403 / 410 | `denied` / `expired` | Pairing poll: denied by the admin / expired, collected or unknown (§9.3); scope upgrade poll: denied / expired, replaced or from before a restart (§9.3.1) |
 | 409 | `revision_conflict` | Saving a show-profile revision on a `parentRevision` that is no longer the head; carries `head` (v1.9, §14) |
 | 400 | `missing_blobs` | A save names files that are not uploaded yet; carries `missing` (v1.9, §14) |
 | 400 | `hash_mismatch` | The uploaded bytes do not hash to the SHA-256 in the path (v1.9, §14) |
@@ -936,7 +936,9 @@ UI, the app receives its own token.
    "profileId": "6f1d…" | null, "scopes": [ … ] }` (returned **once**) | `403 { "code": "denied" }` |
    `410 { "code": "expired" }` (problem documents).
 
-**Pairing again** (e.g. for new scopes) gives the app a new token. When the app then registers
+**Pairing again** gives the app a new token. To get **new scopes**, an app should ask for a scope
+upgrade instead (§9.3.1, v1.18): it keeps its token and needs no new code from the user. When an
+app does pair again, it gets a new token. When the app then registers
 (`PUT /apps/{id}`) the **same app id** with the same `kind` and `name`, the new registration
 replaces the old one, even while the old one still looks online; entries the same app left under
 renewed ids (its id plus `-<6 hex>`, same `kind`, `name` and profile, offline) are removed. The old
@@ -953,6 +955,60 @@ approval (otherwise it is revoked). `410 expired` also answers an unknown `pairi
 `pollSecret`, a second collection, and a token an admin revoked before the app collected it; requests live in memory, so after a server restart the app
 gets `410` and simply starts over. Store the token: it never expires (until revoked in
 Settings → API).
+
+#### 9.3.1 Asking for more scopes (v1.18)
+
+A paired app that needs a scope it lacks (`feeds:watch`, `reports:read`, `show:read`, …) asks for it
+with the token it already holds. The admin approves in the web UI, and **the same token keeps
+working, now with more scopes**: its secret, name and profile never change, nothing to store again.
+
+1. `POST /api/v1/pairing/upgrade` with the app's token (`Authorization: Bearer ctd_pat_…`, any
+   scope):
+   ```json
+   { "scopes": ["status:read", "feeds:watch"], "appName": "CTD OBS plugin (Studio PC)", "reason": "Live preview in the dock" }
+   ```
+   - `scopes` (required, at least one entry): scopes this server doesn't know are ignored, and so
+     is `system:admin` (never given this way); scopes the token holds are dropped.
+   - `appName` (optional, ≤ 60 characters, no control characters): shown to the admin; without
+     it the name of the app registered with this token is shown.
+   - `reason` (optional, ≤ 200 characters, no control characters): shown to the admin, quoted, as
+     the app's own words.
+
+   Answers:
+   - The token already holds every scope asked for: `200 { "status": "approved", "scopes": [ …the
+     token's scopes… ] }`, and nothing is created.
+   - No scope this server can add (only unknown ones or `system:admin`): `400 invalid`.
+   - Otherwise `202 { "upgradeId": "…", "status": "pending", "adding": ["feeds:watch"],
+     "expiresIn": 600, "interval": 3, "approveUrl": "https://relay.example.com/settings?tab=api&upgrade=…" }`.
+     `approveUrl` is built like pairing's (§9.3); show it to the user.
+
+   **Limits:** one pending request per token (a new one replaces the previous one, which then
+   answers `410`); at most 10 pending at once across all tokens (`429` with `Retry-After`);
+   10 requests and 120 polls per minute per token (`429` with `Retry-After`).
+2. The admin sees a banner, opens **Settings → API** and approves or denies. The prompt names the
+   app, lists exactly the scopes being added (sensitive ones are marked), the token's profile and
+   your `reason`. It is all or nothing: approving adds exactly `adding`.
+3. Poll `GET /api/v1/pairing/upgrade/{upgradeId}` with the **same token** every `interval` s:
+   - `202 { "status": "pending" }`
+   - `200 { "status": "approved", "scopes": [ …the token's scopes now… ] }`: use the new scopes
+     right away, with the same token.
+   - `403 denied`: the token keeps its scopes. Don't ask again by yourself; tell the user what the
+     feature needs and let them retry.
+   - `410 expired`: not answered within 10 minutes, replaced by a newer request, or the server
+     restarted (requests live in memory). Ask again when the user wants the feature.
+   - `404 not_found`: an unknown id, or another token's request.
+
+   Finished requests answer for 10 minutes, then are forgotten (`404`; stop polling once you have
+   an answer). If the token is revoked
+   while a request waits, the request ends as expired (and the token gets `401` anyway).
+
+**Open event streams:** `GET /events` decides the event types when it connects. After an upgrade
+that adds event types (e.g. `reports:read`), **reconnect `/events`** (with `Last-Event-ID`) to
+receive them; `/events/poll` and every other route see the new scopes on the next request. The
+same goes for `GET /obs/socket` after gaining `obs:control`: open a new socket.
+
+No response contains a secret. Requests, approvals, denials and expiries are in the audit log
+(`scope_upgrade.*`).
 
 ### 9.5 Overlay summaries: versions and template updates (v1.15)
 
@@ -2264,6 +2320,9 @@ the revision in `info.version`.
 
 ### v1.18
 
+- **Scope upgrades (§9.3.1, additive):** `POST /pairing/upgrade` and `GET /pairing/upgrade/{upgradeId}`.
+  A paired app asks for more scopes with its own token; once an admin approves in Settings → API, the
+  same token holds them (secret and profile unchanged). No more pairing again for a new scope.
 - **Issue history (§17.7, additive):** `GET /issues/history` (`status:read`): every issue of the last 7
   days, newest first (raised → cleared, or still open; `resolution` adds `restarted`). A stream's
   report (§16) gains `issues` (the issues open during it) and its exports an **Issues** sheet. Nothing

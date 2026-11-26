@@ -10,6 +10,7 @@ import type {
   ConnectedApp,
   DestinationState,
   PairingRequest,
+  ScopeUpgradeRequest,
   ProfileSummary,
   SessionState,
   User,
@@ -425,6 +426,27 @@ describe('WsHub profiles', () => {
     admin = false;
     bus.emit('pairings-changed');
     expect(adminSocket.sent.at(-1)?.type).toBe('apps');
+    hub.close();
+  });
+
+  it('sends pending scope upgrades to admin sockets only, when they change and to a new admin socket', () => {
+    const bus = new EventBus();
+    const upgrade = { id: 'up1', adding: ['feeds:watch'] } as unknown as ScopeUpgradeRequest;
+    let upgrades: ScopeUpgradeRequest[] = [];
+    const hub = new WsHub(bus, silent, { scopeUpgrades: () => upgrades });
+    const adminSocket = new FakeSocket();
+    const operator = new FakeSocket();
+    hub.add(adminSocket, hello, undefined, { isAdmin: () => true });
+    hub.add(operator, hello, undefined, { isAdmin: () => false });
+    // Nothing waits: a new socket gets only the hello.
+    expect(adminSocket.sent).toEqual([hello]);
+    upgrades = [upgrade];
+    bus.emit('scope-upgrades-changed');
+    expect(adminSocket.sent.at(-1)).toEqual({ type: 'scope-upgrades', upgrades: [upgrade] });
+    expect(operator.sent).toEqual([hello]);
+    const late = new FakeSocket();
+    hub.add(late, hello, undefined, { isAdmin: () => true });
+    expect(late.sent).toEqual([hello, { type: 'scope-upgrades', upgrades: [upgrade] }]);
     hub.close();
   });
 });

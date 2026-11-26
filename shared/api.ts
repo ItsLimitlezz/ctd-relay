@@ -16,6 +16,7 @@ import type {
   AuditEntry,
   ConnectedApp,
   PairingRequest,
+  ScopeUpgradeRequest,
   ChatMessage,
   ChatModeration,
   ConnectMethod,
@@ -651,6 +652,13 @@ export interface ApprovePairingRequest {
 }
 /** POST /api/pairings/:id/deny [admin] -> {} */
 
+/** GET /api/scope-upgrades [admin] -> ScopeUpgradeRequest[] (apps asking for more scopes for their token, newest first) */
+/** POST /api/scope-upgrades/:id/approve [admin] -> ApproveScopeUpgradeResponse (the token gains exactly `adding`) */
+export interface ApproveScopeUpgradeResponse {
+  token: ApiTokenInfo;
+}
+/** POST /api/scope-upgrades/:id/deny [admin] -> {} */
+
 /** GET /api/apps [admin] -> ConnectedApp[] (for Settings → API; DELETE /api/apps/:id [admin] -> {} removes one) */
 /**
  * External API (docs/API.md §9.2): GET /api/v1/profiles/{id}/overlays lists a profile's overlay
@@ -815,6 +823,8 @@ export type WsServerMessage =
   | { type: 'profiles'; profiles: ProfileSummary[] }
   /** [admin sockets only] pending pairings changed (show "an app wants to connect"). */
   | { type: 'pairings'; pairings: PairingRequest[] }
+  /** [admin sockets only] pending scope upgrades changed (show "an app asks for more permissions"). */
+  | { type: 'scope-upgrades'; upgrades: ScopeUpgradeRequest[] }
   /** Connected apps changed (registered/updated/removed/online/offline). */
   | { type: 'apps'; apps: ConnectedApp[] }
   | { type: 'session'; session: SessionState }
