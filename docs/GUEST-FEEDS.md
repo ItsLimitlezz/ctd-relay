@@ -194,6 +194,10 @@ the auth hook accepts from loopback only.
 > untick Local File, paste the link into Input, set Input Format to `mpegts`. Guests can also send
 > over SRT (their ingest details include the SRT address). See [SRT.md](./SRT.md) for setup, the
 > UDP port to map, latency, and measured delay.
+>
+> **Bonded cellular (SRTLA, 0.2.110):** a guest on BELABOX or Moblin sends with the SRTLA lines of
+> the ingest details (Moblin: the `srtla://` URL; BELABOX: address, port 5000, streamid). See
+> [SRTLA.md](./SRTLA.md).
 
 Delay: Relay adds next to nothing; the OBS Media Source settings decide most of it. Numbers and
 the best settings: [PULL-LINK.md](PULL-LINK.md).

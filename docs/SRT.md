@@ -12,6 +12,9 @@ Everything after ingest works the same whichever protocol published the feed. Fe
 guard, thumbnails, the live preview (LL-HLS), destination pushes and guest routes all read from
 MediaMTX. Media: H.264 + AAC in MPEG-TS, passed through (nothing is transcoded).
 
+Bonded senders (BELABOX, Moblin: several cellular/Wi-Fi links at once) use **SRTLA** on its own UDP
+port (default 5000), which Relay forwards into this SRT listener: see [SRTLA.md](SRTLA.md).
+
 ## Server setup
 
 1. **Map the UDP port** in the app's port mapping, 1:1:
@@ -87,7 +90,8 @@ Each SRT hop has its own buffer (sender → Relay, Relay → reader). MediaMTX k
   - Ingest keys publish (profile feeds and guest slots).
   - Only a feed's Pull link read key reads, and only while that link is on.
   - An ingest key never reads, and a read key never publishes. Every other read is Relay's own
-    (loopback only).
+    (loopback only, over RTMP or HLS: since 0.2.110 never over SRT, because SRTLA forwards remote
+    senders from loopback; [SRTLA.md](SRTLA.md) → Security).
 - The Pull link reader cap (`PULL_LINK_MAX_READERS`) counts RTMP and SRT readers together. Rotating
   the key or turning the link off disconnects SRT readers too.
 - There is no SRT passphrase, so packets travel unencrypted, like RTMP. Treat a link with a key like

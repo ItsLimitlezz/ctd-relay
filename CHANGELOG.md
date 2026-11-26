@@ -2,6 +2,24 @@
 
 Versions follow the hub's CONVENTIONS.md → Versioning. Each release that ships to a TrueNAS install has a runbook in `docs/RELEASE-*.md` (backup, update, verify, rollback).
 
+## 0.2.110 (unreleased)
+
+**SRTLA: bonded SRT ingest from BELABOX and Moblin.** API revision **1.19** (additive). Database: no change (schema **v4**; 0.2.80, 0.2.90 and 0.2.100 still open it). Passthrough stays the default; nothing transcodes. Runbook: [docs/RELEASE-v0.2.110.md](docs/RELEASE-v0.2.110.md).
+
+### Added
+- **SRTLA ingest** ([docs/SRTLA.md](docs/SRTLA.md)): Relay supervises upstream `srtla_rec` ([BELABOX/srtla](https://github.com/BELABOX/srtla), AGPL-3.0, pinned to `37862da3d0c13b46956efd3f88877053293d97d6`, unmodified) on its own UDP port (`SRTLA_PORT`, default **5000/udp**, `0` = off; `EXPOSE 5000/udp`, compose and the TrueNAS YAML map it). It forwards to the local SRT listener (`127.0.0.1:SRT_PORT`), so a bonded sender publishes a profile's Landscape/Vertical or an extra feed with the same `streamid` and key as SRT. Off, with a plain reason in the status, when `SRTLA_PORT=0`, SRT is off, the port is taken or the binary is missing; Relay works as before. Restarts with backoff, stops with Relay, output redacted.
+- **Group cap** `SRTLA_MAX_GROUPS` (default 4), enforced in Relay's auth hook (`srtla_rec` has no option for it).
+- **API 1.19:** `srtla` (`{ host, port, streamId, url }`) next to every `srtUrl` (ingest details, `/api/v1/profiles/{id}/ingest`, guest ingest details) and `srtlaStatus` (`SrtlaStatus`), with OpenAPI.
+- **Web UI:** Settings → OBS setup gains **Bonded cellular: SRTLA** next to *Low delay: SRT* (Moblin URL and BELABOX streamid per feed, BELABOX/Moblin steps, the UDP port to map and forward); an extra feed's *Copy ingest details* carries the SRTLA lines.
+- Docker: a build stage compiles `srtla_rec` from source at the pinned commit for each target architecture; its license is in `/usr/share/doc/srtla/`. `npm run setup-tools` builds `srtla_rec` + `srtla_send` into `./tools` when `cc`, `make` and `git` are there (Linux), else skips with a message (`--skip-srtla` to skip).
+- `npm run e2e:srtla`: FFmpeg → `srtla_send` (two links) → `srtla_rec` → MediaMTX through Relay's media server, with the real binaries.
+
+### Security
+- Over SRT, a loopback source address no longer grants anything: `srtla_rec` forwards remote senders from 127.0.0.1. The internal reader password reads only over RTMP/HLS, and a guest route's one-time publish key works only over RTMP (Relay itself never used SRT for either).
+
+### Not included
+- Bonded link counts per sender: `srtla_rec` doesn't expose them (`srtlaStatus.linkCounts` is `false`).
+
 ## 0.2.100 (2026-11-26)
 
 **SRT, the Pull link delay, stream issues in the dashboard, scope upgrades, a Show Profiles audit, and feed timing for CTD OBS.** API revision **1.18** (additive). Database: one new table on its own track (`issue_history`, `issue_history_meta` h1); schema stays **v4**, reports **r1**, guest feeds **g2**, so 0.2.90 and 0.2.80 still open `app.db` after a rollback. Runbook: [docs/RELEASE-v0.2.100.md](docs/RELEASE-v0.2.100.md).

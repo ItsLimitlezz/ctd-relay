@@ -1,7 +1,9 @@
 #!/usr/bin/env node
-// Downloads pinned MediaMTX + FFmpeg static builds into ./tools (or --dest).
+// Downloads pinned MediaMTX + FFmpeg static builds into ./tools (or --dest), and on Linux builds the
+// pinned SRTLA receiver + sender (BELABOX/srtla, plain C; docs/SRTLA.md) when a C compiler, make and git
+// are there. Without them SRTLA is skipped with a message (Relay runs without it: SRTLA shows as off).
 //
-//   node scripts/setup-tools.mjs [--os linux|win32|darwin] [--arch x64|arm64] [--dest <dir>] [--force]
+//   node scripts/setup-tools.mjs [--os linux|win32|darwin] [--arch x64|arm64] [--dest <dir>] [--force] [--skip-srtla]
 //
 // Plain Node ESM, no dependencies. Archives are verified against the SHA-256 pinned below AND the
 // release's own checksums.sha256 asset, then extracted with the system `tar`
@@ -38,11 +40,18 @@ const FFMPEG = {
   },
 };
 
+// SRTLA: https://github.com/BELABOX/srtla (AGPL-3.0), built from this exact commit (a git commit id pins
+// the content; it is checked after the fetch). Same pin as the Dockerfile's srtla stage and shared/srtla.ts.
+const SRTLA = {
+  version: '37862da3d0c13b46956efd3f88877053293d97d6',
+  repo: 'https://github.com/BELABOX/srtla.git',
+};
+
 const DOWNLOAD_TIMEOUT_MS = 30 * 60_000;
 const IDLE_TIMEOUT_MS = 60_000;
 
 function parseArgs(argv) {
-  const opts = { os: process.platform, arch: process.arch, dest: path.resolve('tools'), force: false };
+  const opts = { os: process.platform, arch: process.arch, dest: path.resolve('tools'), force: false, skipSrtla: false };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     const next = () => {
@@ -54,8 +63,9 @@ function parseArgs(argv) {
     else if (a === '--arch') opts.arch = next();
     else if (a === '--dest') opts.dest = path.resolve(next());
     else if (a === '--force') opts.force = true;
+    else if (a === '--skip-srtla') opts.skipSrtla = true;
     else if (a === '-h' || a === '--help') {
-      console.log('Usage: node scripts/setup-tools.mjs [--os linux|win32|darwin] [--arch x64|arm64] [--dest <dir>] [--force]');
+      console.log('Usage: node scripts/setup-tools.mjs [--os linux|win32|darwin] [--arch x64|arm64] [--dest <dir>] [--force] [--skip-srtla]');
       process.exit(0);
     } else throw new Error(`Unknown argument: ${a}`);
   }
@@ -147,6 +157,63 @@ function run(cmd, args, opts = {}) {
   });
 }
 
+/** stdout of a command (for `git rev-parse`). */
+function output(cmd, args, opts = {}) {
+  return new Promise((resolve, reject) => {
+    const child = spawn(cmd, args, { stdio: ['ignore', 'pipe', 'ignore'], ...opts });
+    let out = '';
+    child.stdout.on('data', (d) => (out += d.toString()));
+    child.on('error', reject);
+    child.on('close', (code) => (code === 0 ? resolve(out.trim()) : reject(new Error(`${cmd} exited with ${code}`))));
+  });
+}
+
+/** Is a command on PATH (and runnable)? */
+async function hasCommand(cmd, args = ['--version']) {
+  try {
+    await output(cmd, args);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Build srtla_rec + srtla_send at the pinned commit (Linux only: it uses epoll; native arch only: no
+ * cross compiler). Never fails setup: returns a reason when it skips.
+ */
+async function buildSrtla(opts) {
+  if (opts.os !== 'linux' || process.platform !== 'linux') return 'SRTLA builds on Linux only (the Docker image has it)';
+  if (opts.arch !== process.arch) return `cannot cross-compile SRTLA for ${opts.arch} on ${process.arch} (the Docker image builds it per architecture)`;
+  const missing = [];
+  if (!(await hasCommand('cc'))) missing.push('a C compiler (cc)');
+  if (!(await hasCommand('make'))) missing.push('make');
+  if (!(await hasCommand('git'))) missing.push('git');
+  if (missing.length) return `${missing.join(', ')} not found (Debian/Ubuntu: apt install build-essential git)`;
+  const work = path.join(opts.dest, `.tmp-srtla-${randomBytes(4).toString('hex')}`);
+  await fs.mkdir(work, { recursive: true });
+  try {
+    console.log(`srtla ${SRTLA.version.slice(0, 7)}: fetching ${SRTLA.repo}`);
+    await run('git', ['init', '-q'], { cwd: work });
+    await run('git', ['fetch', '-q', '--depth', '1', SRTLA.repo, SRTLA.version], { cwd: work });
+    await run('git', ['-c', 'advice.detachedHead=false', 'checkout', '-q', 'FETCH_HEAD'], { cwd: work });
+    const head = await output('git', ['rev-parse', 'HEAD'], { cwd: work });
+    if (head !== SRTLA.version) throw new Error(`srtla: fetched ${head}, expected ${SRTLA.version}`);
+    console.log('srtla: commit OK, building (make)');
+    // VERSION on the command line: the Makefile would otherwise ask git for it.
+    await run('make', ['srtla_rec', 'srtla_send', `VERSION=${SRTLA.version.slice(0, 7)}`], { cwd: work });
+    for (const file of ['srtla_rec', 'srtla_send']) {
+      const dst = path.join(opts.dest, file);
+      await fs.rm(dst, { force: true });
+      await fs.copyFile(path.join(work, file), dst);
+      await fs.chmod(dst, 0o755);
+    }
+    return null;
+  } finally {
+    await fs.rm(work, { recursive: true, force: true });
+  }
+}
+
 async function extract(archive, outDir) {
   await fs.mkdir(outDir, { recursive: true });
   const flags = archive.endsWith('.tar.xz') && process.platform !== 'win32' ? '-xJf' : archive.endsWith('.tar.gz') && process.platform !== 'win32' ? '-xzf' : '-xf';
@@ -230,7 +297,7 @@ async function main() {
   const needFfmpeg = opts.force || !sameTarget || have.ffmpeg !== want.ffmpeg || !(await present(ffmpegFiles));
 
   // Record progress after each tool so a failed second download doesn't redo the first.
-  const record = { os: want.os, arch: want.arch, mediamtx: sameTarget ? (have.mediamtx ?? null) : null, ffmpeg: sameTarget ? (have.ffmpeg ?? null) : null };
+  const record = { os: want.os, arch: want.arch, mediamtx: sameTarget ? (have.mediamtx ?? null) : null, ffmpeg: sameTarget ? (have.ffmpeg ?? null) : null, srtla: sameTarget ? (have.srtla ?? null) : null };
   const save = () => fs.writeFile(versionsFile, `${JSON.stringify(record, null, 2)}\n`);
 
   if (needMediamtx) {
@@ -243,6 +310,24 @@ async function main() {
     record.ffmpeg = FFMPEG.version;
     await save();
   } else console.log(`ffmpeg ${FFMPEG.version}: up to date`);
+
+  if (!opts.skipSrtla) {
+    const srtlaFiles = ['srtla_rec', 'srtla_send'];
+    if (!opts.force && sameTarget && have.srtla === SRTLA.version && (await present(srtlaFiles))) {
+      console.log(`srtla ${SRTLA.version.slice(0, 7)}: up to date`);
+    } else {
+      try {
+        const skipped = await buildSrtla(opts);
+        if (skipped) console.log(`srtla: skipped, ${skipped}. SRTLA (bonded SRT, docs/SRTLA.md) stays off; everything else works.`);
+        else {
+          record.srtla = SRTLA.version;
+          await save();
+        }
+      } catch (err) {
+        console.log(`srtla: build failed (${err instanceof Error ? err.message : String(err)}). SRTLA stays off; everything else works.`);
+      }
+    }
+  }
 
   await save();
   console.log(`Tools ready in ${opts.dest}`);

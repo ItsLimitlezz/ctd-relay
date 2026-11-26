@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1
 #
-# CTD Relay: one image with the web UI + API (Node), MediaMTX (RTMP ingest), FFmpeg (relay)
-# and Playwright Chromium (browser-driven platforms). Requires BuildKit (default since Docker 23).
+# CTD Relay: one image with the web UI + API (Node), MediaMTX (RTMP ingest), FFmpeg (relay),
+# srtla_rec (bonded SRT ingest) and Playwright Chromium (browser-driven platforms). Requires BuildKit (default since Docker 23).
 #
 #   docker build -t ctd-relay .
 #   docker buildx build --platform linux/amd64,linux/arm64 -t ghcr.io/itslimitlezz/ctd-relay .
@@ -59,10 +59,33 @@ RUN set -eu; \
       arm64) arch=arm64 ;; \
       *) echo "Unsupported architecture: $arch (supported: amd64, arm64)" >&2; exit 1 ;; \
     esac; \
-    node scripts/setup-tools.mjs --os linux --arch "$arch" --dest /opt/ctd/tools
+    node scripts/setup-tools.mjs --os linux --arch "$arch" --dest /opt/ctd/tools --skip-srtla
 
 # ---------------------------------------------------------------------------------------------------
-# 5. runtime
+# 5. srtla: the SRTLA receiver (bonded SRT from BELABOX/Moblin, docs/SRTLA.md), built from source for
+#    the TARGET architecture (plain C + make, no dependencies; under QEMU for a cross build, like
+#    prod-deps). Upstream https://github.com/BELABOX/srtla (AGPL-3.0) at a pinned commit: the commit id
+#    pins the content and is checked after the fetch. Same pin as scripts/setup-tools.mjs.
+# ---------------------------------------------------------------------------------------------------
+FROM ${NODE_IMAGE} AS srtla
+ARG SRTLA_COMMIT=37862da3d0c13b46956efd3f88877053293d97d6
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends ca-certificates git gcc libc6-dev make \
+ && rm -rf /var/lib/apt/lists/*
+WORKDIR /src/srtla
+RUN set -eu; \
+    git init -q; \
+    git fetch -q --depth 1 https://github.com/BELABOX/srtla.git "$SRTLA_COMMIT"; \
+    git -c advice.detachedHead=false checkout -q FETCH_HEAD; \
+    test "$(git rev-parse HEAD)" = "$SRTLA_COMMIT"; \
+    make srtla_rec VERSION="$(printf %.7s "$SRTLA_COMMIT")"; \
+    mkdir -p /opt/srtla; \
+    install -m 0755 srtla_rec /opt/srtla/srtla_rec; \
+    cp LICENSE /opt/srtla/LICENSE; \
+    printf 'srtla_rec from https://github.com/BELABOX/srtla at commit %s (AGPL-3.0, see LICENSE). Unmodified.\n' "$SRTLA_COMMIT" > /opt/srtla/SOURCE
+
+# ---------------------------------------------------------------------------------------------------
+# 6. runtime
 # ---------------------------------------------------------------------------------------------------
 FROM ${NODE_IMAGE} AS runtime
 
@@ -75,11 +98,12 @@ ENV NODE_ENV=production \
     WEB_DIR=/app/dist/web \
     MEDIAMTX_BIN=/opt/ctd/tools/mediamtx \
     FFMPEG_BIN=/opt/ctd/tools/ffmpeg \
+    SRTLA_BIN=/opt/ctd/tools/srtla_rec \
     PLAYWRIGHT_BROWSERS_PATH=/ms-playwright \
     CTD_IN_CONTAINER=1 \
     NPM_CONFIG_UPDATE_NOTIFIER=false
 
-# tini: PID 1 that forwards signals and reaps FFmpeg/MediaMTX/Chromium children.
+# tini: PID 1 that forwards signals and reaps FFmpeg/MediaMTX/srtla_rec/Chromium children.
 # Fonts: so pages in the browser login view render text and emoji.
 RUN apt-get update \
  && apt-get install -y --no-install-recommends tini ca-certificates fonts-liberation fonts-noto-color-emoji \
@@ -106,6 +130,8 @@ RUN npx --no playwright install --with-deps chromium \
  && rm -rf /var/lib/apt/lists/* /root/.npm /root/.cache /tmp/*
 
 COPY --from=tools /opt/ctd/tools /opt/ctd/tools
+COPY --from=srtla /opt/srtla/srtla_rec /opt/ctd/tools/srtla_rec
+COPY --from=srtla /opt/srtla/LICENSE /opt/srtla/SOURCE /usr/share/doc/srtla/
 COPY --from=build /app/dist ./dist
 COPY scripts/healthcheck.mjs ./scripts/healthcheck.mjs
 COPY LICENSE ./LICENSE
@@ -121,7 +147,8 @@ USER 568:568
 
 # 8443 web UI (HTTPS unless TLS_MODE=off) · 8080 Let's Encrypt HTTP-01 + redirect · 1935 RTMP (LAN only)
 # · 8890/udp SRT (low-delay ingest + pull links, docs/SRT.md; SRT_PORT, 0 = off)
-EXPOSE 8443 8080 1935 8890/udp
+# · 5000/udp SRTLA (bonded SRT from BELABOX/Moblin, docs/SRTLA.md; SRTLA_PORT, 0 = off; needs SRT on)
+EXPOSE 8443 8080 1935 8890/udp 5000/udp
 VOLUME ["/data"]
 
 HEALTHCHECK --interval=30s --timeout=10s --start-period=90s --retries=3 \

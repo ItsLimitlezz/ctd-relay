@@ -8,6 +8,7 @@ import type { Logger } from 'pino';
 import type { BrowserContext, Page } from 'playwright';
 import type { AppSettings } from '../../shared/api.js';
 import type { SrtStatus } from '../../shared/srt.js';
+import type { SrtlaStatus } from '../../shared/srtla.js';
 import type {
   Account,
   AccountStatus,
@@ -424,6 +425,8 @@ export interface MediaServer {
   guestReadUrl?(slot: string): string;
   /** SRT (docs/SRT.md): is the SRT listener on, on which UDP port, and why not. Undefined = no SRT. */
   srtStatus?(): SrtStatus;
+  /** SRTLA (docs/SRTLA.md, 0.2.110): is srtla_rec running, on which UDP port, and why not. Undefined = no SRTLA. */
+  srtlaStatus?(): SrtlaStatus;
 }
 
 /** Supervises one FFmpeg process per destination. Emits 'push' events on the EventBus. */

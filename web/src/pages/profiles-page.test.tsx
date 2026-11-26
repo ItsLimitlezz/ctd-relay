@@ -220,4 +220,35 @@ describe('OBS setup per profile (static render)', () => {
     expect(off).toContain('SRT_PORT=0');
     expect(off).not.toContain('SRT server (landscape)');
   });
+
+  it('shows the SRTLA address next to the SRT one (Moblin URL + BELABOX streamid per feed, masked), or why it is off', () => {
+    const base = info('default', '');
+    const srtlaOn: IngestInfo = {
+      ...base,
+      feeds: base.feeds.map((f) => ({
+        ...f,
+        srtla: { host: 'relay.example.com', port: 5000, streamId: `publish:live/${f.feed}:key=abc`, url: `srtla://relay.example.com:5000?streamid=publish:live/${f.feed}:key=abc` },
+      })),
+      srtlaStatus: { enabled: true, port: 5000, maxGroups: 4, linkCounts: false, reason: null },
+    };
+    const on = withProfiles({}, <IngestCard info={srtlaOn} profile={null} profileCount={1} rotating={null} onRotate={asyncNoop} />);
+    expect(on).toContain('Bonded cellular: SRTLA');
+    expect(on).toContain('SRTLA URL, Moblin (landscape)');
+    expect(on).toContain('SRT streamid, BELABOX (vertical)');
+    expect(on).toContain('BELABOX');
+    expect(on).toContain('5000');
+    expect(on).not.toContain('key=abc');
+    const off = withProfiles(
+      {},
+      <IngestCard
+        info={{ ...base, srtlaStatus: { enabled: false, port: null, maxGroups: 4, linkCounts: false, reason: 'SRTLA is turned off on this server (SRTLA_PORT=0).' } }}
+        profile={null}
+        profileCount={1}
+        rotating={null}
+        onRotate={asyncNoop}
+      />,
+    );
+    expect(off).toContain('SRTLA_PORT=0');
+    expect(off).not.toContain('SRTLA URL, Moblin');
+  });
 });

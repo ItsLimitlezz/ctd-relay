@@ -19,7 +19,7 @@ import { reportPaths, reportSchemas } from './openapi-reports.js';
 import { showPaths, showSchemas } from './openapi-show.js';
 
 /** Minor revision of the v1 contract (additive changes only; see the changelog in docs/API.md). */
-export const API_REVISION = '1.18';
+export const API_REVISION = '1.19';
 
 const ref = (name: string) => ({ $ref: `#/components/schemas/${name}` });
 const nullable = (schema: object) => ({ oneOf: [schema, { type: 'null' }] });
@@ -1225,10 +1225,38 @@ export function openApiDocument(version: string): Record<string, unknown> {
                     description:
                       'v1.18: the feed over SRT (docs/SRT.md), srt://<host>:<port>?streamid=publish:<path>:key=<k>&latency=<µs>: OBS Server field with the Stream Key empty (secret). Null when SRT is off.',
                   },
+                  srtla: {
+                    oneOf: [{ $ref: '#/components/schemas/SrtlaEndpoint' }, { type: 'null' }],
+                    description: 'v1.19: the feed for a bonded SRTLA sender (BELABOX, Moblin; docs/SRTLA.md), secret. Null when SRTLA is off.',
+                  },
                 },
               },
             },
             srt: { $ref: '#/components/schemas/SrtStatus' },
+            srtlaStatus: { $ref: '#/components/schemas/SrtlaStatus' },
+          },
+        },
+        SrtlaEndpoint: {
+          type: 'object',
+          required: ['host', 'port', 'streamId', 'url'],
+          description: 'v1.19: where a bonded SRTLA sender publishes (docs/SRTLA.md). streamId and url hold the publish key.',
+          properties: {
+            host: { type: 'string', description: 'BELABOX: SRTLA address' },
+            port: { type: 'integer', description: 'BELABOX: SRTLA port (SRTLA_PORT, UDP)' },
+            streamId: { type: 'string', description: 'BELABOX: SRT streamid, publish:<path>:key=<k> (secret)' },
+            url: { type: 'string', description: 'Moblin: srtla://<host>:<port>?streamid=publish:<path>:key=<k> (secret)' },
+          },
+        },
+        SrtlaStatus: {
+          type: 'object',
+          required: ['enabled', 'port', 'maxGroups', 'linkCounts', 'reason'],
+          description: 'v1.19: whether SRTLA (bonded SRT) works on this server (docs/SRTLA.md). Never contains a key.',
+          properties: {
+            enabled: { type: 'boolean' },
+            port: { oneOf: [{ type: 'integer' }, { type: 'null' }], description: 'SRTLA UDP port (SRTLA_PORT), null when off' },
+            maxGroups: { type: 'integer', description: 'Bonded senders that may publish at once (SRTLA_MAX_GROUPS)' },
+            linkCounts: { type: 'boolean', enum: [false], description: 'Always false: the receiver does not report how many links a sender bonds' },
+            reason: { oneOf: [{ type: 'string' }, { type: 'null' }], description: 'Why SRTLA is off, in plain words; null when on' },
           },
         },
         SrtStatus: {

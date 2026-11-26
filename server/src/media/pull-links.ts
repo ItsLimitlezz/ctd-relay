@@ -37,6 +37,8 @@ export interface RtmpConn {
   path?: string;
   query?: string;
   created?: string;
+  /** `ip:port` of the peer (SRTLA cap: loopback SRT publishers came through srtla_rec). */
+  remoteAddr?: string;
 }
 
 /** What the media server lends: its RTMP connections and a way to drop one. */

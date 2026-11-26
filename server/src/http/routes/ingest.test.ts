@@ -79,10 +79,11 @@ describe('ingest routes', () => {
       profileId: 'default',
       serverUrl: 'rtmp://192.168.1.20:1936/live',
       feeds: [
-        { feed: 'landscape', streamKey: 'landscape?key=LandKey000000000000000000', fullUrl: 'rtmp://192.168.1.20:1936/live/landscape?key=LandKey000000000000000000', srtUrl: null },
-        { feed: 'vertical', streamKey: 'vertical?key=VertKey000000000000000000', fullUrl: 'rtmp://192.168.1.20:1936/live/vertical?key=VertKey000000000000000000', srtUrl: null },
+        { feed: 'landscape', streamKey: 'landscape?key=LandKey000000000000000000', fullUrl: 'rtmp://192.168.1.20:1936/live/landscape?key=LandKey000000000000000000', srtUrl: null, srtla: null },
+        { feed: 'vertical', streamKey: 'vertical?key=VertKey000000000000000000', fullUrl: 'rtmp://192.168.1.20:1936/live/vertical?key=VertKey000000000000000000', srtUrl: null, srtla: null },
       ],
       srt: expect.objectContaining({ enabled: false, port: null }),
+      srtlaStatus: expect.objectContaining({ enabled: false, port: null, linkCounts: false }),
     });
   });
 
@@ -94,10 +95,11 @@ describe('ingest routes', () => {
       profileId: 'club',
       serverUrl: 'rtmp://nas.lan:1936/live',
       feeds: [
-        { feed: 'landscape', streamKey: 'dprtmnt/landscape?key=ClubLand00000000000000000', fullUrl: 'rtmp://nas.lan:1936/live/dprtmnt/landscape?key=ClubLand00000000000000000', srtUrl: null },
-        { feed: 'vertical', streamKey: 'dprtmnt/vertical?key=ClubVert00000000000000000', fullUrl: 'rtmp://nas.lan:1936/live/dprtmnt/vertical?key=ClubVert00000000000000000', srtUrl: null },
+        { feed: 'landscape', streamKey: 'dprtmnt/landscape?key=ClubLand00000000000000000', fullUrl: 'rtmp://nas.lan:1936/live/dprtmnt/landscape?key=ClubLand00000000000000000', srtUrl: null, srtla: null },
+        { feed: 'vertical', streamKey: 'dprtmnt/vertical?key=ClubVert00000000000000000', fullUrl: 'rtmp://nas.lan:1936/live/dprtmnt/vertical?key=ClubVert00000000000000000', srtUrl: null, srtla: null },
       ],
       srt: expect.objectContaining({ enabled: false, port: null }),
+      srtlaStatus: expect.objectContaining({ enabled: false, port: null, linkCounts: false }),
     });
     expect((await app.inject({ method: 'GET', url: '/api/ingest?profile=default' })).json<IngestInfo>().profileId).toBe('default');
   });

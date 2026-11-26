@@ -139,10 +139,11 @@ describe('profiles', () => {
       profileId: DEFAULT_PROFILE_ID,
       serverUrl: 'rtmp://10.20.30.40:1936/live',
       feeds: [
-        { feed: 'landscape', streamKey: 'landscape?key=Lkeydefault', fullUrl: 'rtmp://10.20.30.40:1936/live/landscape?key=Lkeydefault', srtUrl: null },
-        { feed: 'vertical', streamKey: 'vertical?key=Vkeydefault', fullUrl: 'rtmp://10.20.30.40:1936/live/vertical?key=Vkeydefault', srtUrl: null },
+        { feed: 'landscape', streamKey: 'landscape?key=Lkeydefault', fullUrl: 'rtmp://10.20.30.40:1936/live/landscape?key=Lkeydefault', srtUrl: null, srtla: null },
+        { feed: 'vertical', streamKey: 'vertical?key=Vkeydefault', fullUrl: 'rtmp://10.20.30.40:1936/live/vertical?key=Vkeydefault', srtUrl: null, srtla: null },
       ],
       srt: expect.objectContaining({ enabled: false, port: null }),
+      srtlaStatus: expect.objectContaining({ enabled: false, port: null, linkCounts: false }),
     });
     const club = (await get(`/api/v1/profiles/${dprtmnt.id}/ingest`, all, { host: '10.20.30.40:30080' })).json();
     expect(club.feeds[0].streamKey).toBe(`${dprtmnt.slug}/landscape?key=Lkey${dprtmnt.id.replace(/-/g, '')}`);

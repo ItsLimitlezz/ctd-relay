@@ -62,6 +62,12 @@ export function ingestText(name: string, info: GuestIngestInfo): string | null {
       `(latency= is in microseconds: ${srtLatencyParam(info.srt?.latencyMs ?? SRT_LATENCY_DEFAULT_MS)} suits the internet and can go lower on a good link; on the same LAN as Relay ${srtLatencyParam(info.srt?.lanLatencyMs ?? SRT_LATENCY_LAN_MS)} is enough.)`,
     );
   }
+  if (info.srtla) {
+    lines.push(
+      `Bonded cellular, SRTLA (Moblin: Settings → Streams → URL): ${info.srtla.url}`,
+      `(BELABOX, manual relay server: SRTLA receiver address ${info.srtla.host}, port ${info.srtla.port} UDP, SRT streamid ${info.srtla.streamId})`,
+    );
+  }
   lines.push('Video: H.264, Audio: AAC, keyframe every 2 s, CBR.');
   return lines.join('\n');
 }

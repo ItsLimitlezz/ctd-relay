@@ -14,6 +14,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import type { Logger } from 'pino';
 import { srtStatusOff, srtStatusOn, type SrtStatus } from '../../../shared/srt.js';
+import { DEFAULT_SRTLA_MAX_GROUPS } from '../../../shared/srtla.js';
 import { DEFAULT_PROFILE_ID, FEEDS, type Feed, type FeedState } from '../../../shared/types.js';
 import type { AppConfig } from '../config.js';
 import type { EventBus } from '../events.js';
@@ -25,13 +26,14 @@ import {
   FEED_KEY_NAMES,
   generateKey,
   INTERNAL_READER_KEY,
+  isLoopbackIp,
   isValidKey,
   type IngestAuthState,
   type ProfileIngestKeys,
 } from './authorize.js';
 import { ffprobePath, probeFeed } from './feed-probe.js';
 import { FeedTracker, offlineFeedState, shouldEmitFeed, type FeedMeasurements, type MtxPath } from './feed-state.js';
-import { createMediaMtxApi, type FetchFn } from './mediamtx-api.js';
+import { createMediaMtxApi, hostOfRemoteAddr, type FetchFn } from './mediamtx-api.js';
 import { buildMediaMtxConfig } from './mediamtx-config.js';
 import type { GuestFeeds } from './guest-feeds.js';
 
@@ -46,6 +48,7 @@ import { DEFAULT_LIVE_MAX_VIEWERS } from './live-preview.js';
 import { APP_NAME, feedPath, guestPath, INTERNAL_READER_USER, streamKeyPath, type IngestRoute } from './paths.js';
 import { defaultSpawn, onLines, terminate, type SpawnFn } from './process-utils.js';
 import { redactSecretsInText } from './redact.js';
+import { createSrtlaReceiver, type SrtlaReceiver } from './srtla.js';
 
 export interface MediaServerDeps {
   spawn?: SpawnFn;
@@ -62,6 +65,8 @@ export interface MediaServerDeps {
   probeDelayMs?: number;
   /** Can the SRT UDP port be bound (docs/SRT.md)? Default: a real bind test. */
   udpPortFree?: (port: number) => Promise<boolean>;
+  /** SRTLA receiver (docs/SRTLA.md). Default: srtla_rec supervised with this spawn/udpPortFree. */
+  srtla?: SrtlaReceiver;
 }
 
 /** SRT connection ids carry this prefix in the merged RTMP + SRT list pull links count from. */
@@ -97,6 +102,11 @@ const RESTART_MIN_MS = 1_000;
 const RESTART_MAX_MS = 30_000;
 const HEALTHY_AFTER_MS = 60_000;
 const POLL_FAILURES_BEFORE_OFFLINE = 3;
+/**
+ * SRTLA group cap: a bonded publish (SRT from loopback, i.e. through srtla_rec) holds its slot this
+ * long after it was last seen in MediaMTX's SRT connections (or admitted), so a reconnect keeps it.
+ */
+const SRTLA_SLOT_HOLD_MS = 15_000;
 
 /** Unknown profile id (404 `unknown_profile`, like OrchestratorRegistry.get). */
 export class UnknownProfileError extends Error {
@@ -159,6 +169,16 @@ export function createMediaServer({ config, bus, log, repos, guests, routeAuth, 
   const srtWanted = (config.srtPort ?? 0) > 0 ? config.srtPort! : null;
   const isUdpPortFree = deps.udpPortFree ?? udpPortFree;
   let srt: SrtStatus = srtWanted ? srtStatusOff('The media server is not running yet.') : srtStatusOff('SRT is turned off on this server (SRT_PORT=0).');
+  // SRTLA (docs/SRTLA.md): srtla_rec on its own UDP port, forwarding to the SRT listener above.
+  const srtlaMaxGroups = config.srtlaMaxGroups ?? DEFAULT_SRTLA_MAX_GROUPS;
+  const srtla: SrtlaReceiver =
+    deps.srtla ??
+    createSrtlaReceiver(
+      { log, bin: config.srtlaBin ?? path.resolve('tools', 'srtla_rec'), port: config.srtlaPort, maxGroups: srtlaMaxGroups },
+      { spawn, now, udpPortFree: isUdpPortFree },
+    );
+  /** Feed/guest paths published through srtla_rec right now (or just admitted) → last seen. */
+  const srtlaSlots = new Map<string, number>();
   const notFound = `MediaMTX not found at ${bin}; run \`npm run setup-tools\` (or set MEDIAMTX_BIN). Feeds stay offline.`;
   /** The internal reader password lives in the legacy 'ingest' scope (shared by every profile). */
   const readerScope = repos.secrets.scoped(profileSecretScope(DEFAULT_PROFILE_ID, 'ingest'));
@@ -320,7 +340,35 @@ export function createMediaServer({ config, bus, log, repos, guests, routeAuth, 
     },
     pullKey: (p) => pull?.readKey(p) ?? null,
     pullAdmit: (p) => pull?.admit(p) ?? false,
+    srtlaAdmit: (p) => srtlaAdmit(p),
   };
+
+  /**
+   * An SRT publish from loopback with the right key: it came through srtla_rec (a bonded sender).
+   * Let it in while fewer than SRTLA_MAX_GROUPS other paths are held; the auth hook is synchronous,
+   * so the slot is taken right here and two senders can't both get the last one.
+   */
+  function srtlaAdmit(pathName: string): boolean {
+    if (!srtla.status().enabled) return true; // no SRTLA: a local SRT sender, nothing to cap
+    const cutoff = now() - SRTLA_SLOT_HOLD_MS;
+    for (const [p, at] of srtlaSlots) if (at < cutoff) srtlaSlots.delete(p);
+    if (!srtlaSlots.has(pathName) && srtlaSlots.size >= srtlaMaxGroups) {
+      log.warn({ maxGroups: srtlaMaxGroups }, 'Refused a bonded (SRTLA) publish: SRTLA_MAX_GROUPS senders are already publishing');
+      return false;
+    }
+    srtlaSlots.set(pathName, now());
+    return true;
+  }
+
+  /** Keep the slots of bonded publishers that are still connected (MediaMTX's SRT connections). */
+  async function refreshSrtlaSlots(signal: AbortSignal): Promise<void> {
+    if (!srtla.status().enabled || !api.listSrtConns) return;
+    const conns = await api.listSrtConns(signal);
+    const at = now();
+    for (const c of conns) {
+      if (c.state === 'publish' && c.path && isLoopbackIp(hostOfRemoteAddr(c.remoteAddr) ?? '')) srtlaSlots.set(c.path, at);
+    }
+  }
 
   /** The profile id of a feed path (null = unknown profile). */
   function profileIdOf(route: IngestRoute): string | null {
@@ -419,6 +467,11 @@ export function createMediaServer({ config, bus, log, repos, guests, routeAuth, 
         const items = await api.listPaths(pollAbort.signal);
         pollFailures = 0;
         if (running && proc) applyPaths(items);
+        if (running && proc && srtlaSlots.size > 0) {
+          await refreshSrtlaSlots(pollAbort.signal).catch((err: unknown) =>
+            log.debug({ err: err instanceof Error ? err.message : String(err) }, 'Could not list SRT connections for the SRTLA cap'),
+          );
+        }
         if (running && proc && pull?.active() && api.listRtmpConns) {
           // Pull link readers: their own try, so a failure here never marks the feeds offline.
           try {
@@ -587,6 +640,10 @@ export function createMediaServer({ config, bus, log, repos, guests, routeAuth, 
       return srt;
     },
 
+    srtlaStatus() {
+      return srtla.status();
+    },
+
     async publisherAddress(profileId) {
       const entry = findProfile(profileId);
       if (!entry || !proc) return null;
@@ -638,6 +695,7 @@ export function createMediaServer({ config, bus, log, repos, guests, routeAuth, 
 
       if (!(await binaryAvailable())) {
         log.error(notFound);
+        await srtla.start(srtStatusOff('MediaMTX is not installed.'));
         return;
       }
       process.once('exit', killOnExit);
@@ -646,10 +704,14 @@ export function createMediaServer({ config, bus, log, repos, guests, routeAuth, 
       if (readyTimeoutMs > 0 && proc && !(await waitForApi(readyTimeoutMs))) {
         log.warn('MediaMTX control API did not answer yet; feeds will appear once it does');
       }
+      // After MediaMTX: srtla_rec checks at start that SRT answers on 127.0.0.1:SRT_PORT.
+      if (running) await srtla.start(srt);
     },
 
     async stop() {
       running = false;
+      await srtla.stop();
+      srtlaSlots.clear();
       pollAbort.abort();
       if (pollTimer) clearTimeout(pollTimer);
       if (restartTimer) clearTimeout(restartTimer);

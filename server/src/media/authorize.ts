@@ -48,6 +48,11 @@ export interface IngestAuthState {
   pullKey?(path: string): string | null;
   /** A read with the right pull key: is there room under the per-feed reader cap (reserves it)? */
   pullAdmit?(path: string): boolean;
+  /**
+   * SRTLA (docs/SRTLA.md): an SRT publish from loopback with the right key came through srtla_rec
+   * (a bonded sender). Is there room under SRTLA_MAX_GROUPS (reserves it)? Undefined = no cap.
+   */
+  srtlaAdmit?(path: string): boolean;
 }
 
 /** 24-char URL-safe random key (144 bits). */
@@ -78,6 +83,21 @@ export function isLoopbackIp(ip: string): boolean {
   if (isIP(addr) === 4) return addr.startsWith('127.');
   if (isIP(addr) === 6) return lower === '::1' || lower === '0:0:0:0:0:0:0:1';
   return false;
+}
+
+/**
+ * srtla_rec forwards a bonded sender's SRT from 127.0.0.1, so for SRT a loopback source address proves
+ * nothing about who is sending. Loopback-only grants (the internal reader, a guest route's one-time
+ * publish key) therefore never apply to SRT: Relay itself only ever uses RTMP and HLS for those.
+ */
+function isRelayLoopback(req: MediaMtxAuthRequest): boolean {
+  return req.protocol !== 'srt' && isLoopbackIp(req.ip ?? '');
+}
+
+/** An SRT publish with a valid key from loopback: it came through srtla_rec; apply the group cap. */
+function srtlaCapOk(req: MediaMtxAuthRequest, auth: IngestAuthState, path: string): boolean {
+  if (req.protocol !== 'srt' || !isLoopbackIp(req.ip ?? '')) return true;
+  return auth.srtlaAdmit?.(path) ?? true;
 }
 
 /** Value of one query parameter from MediaMTX's raw `query` (may start with '?'). */
@@ -122,12 +142,15 @@ export function authorizeMediaRequest(req: MediaMtxAuthRequest, auth: IngestAuth
       const key = queryParam(req.query ?? '', 'key');
       if (key === null || key.length === 0) return false;
       if (safeEqual(key, expected)) {
+        if (!srtlaCapOk(req, auth, req.path)) return false;
         auth.obsPublished?.(route);
         return true;
       }
-      // A guest feed routed into this input: Relay's own FFmpeg, from loopback, with the route's key.
+      // A guest feed routed into this input: Relay's own FFmpeg (RTMP), from loopback, with the route's key.
+      // Never over SRT: an SRTLA sender arrives from loopback too (isRelayLoopback).
+      if (req.protocol !== 'rtmp') return false;
       const routeKey = auth.routeKey?.(route) ?? null;
-      return routeKey !== null && routeKey.length > 0 && isLoopbackIp(req.ip ?? '') && safeEqual(key, routeKey);
+      return routeKey !== null && routeKey.length > 0 && isRelayLoopback(req) && safeEqual(key, routeKey);
     }
     case 'read':
       if (auth.publishKey(route) === null) return false; // a known profile
@@ -137,13 +160,16 @@ export function authorizeMediaRequest(req: MediaMtxAuthRequest, auth: IngestAuth
   }
 }
 
-/** Relay itself reading (FFmpeg, the LL-HLS proxy): loopback, user 'internal', the reader password. */
+/**
+ * Relay itself reading (FFmpeg over RTMP, the LL-HLS proxy): loopback, user 'internal', the reader
+ * password. Never over SRT (srtla_rec makes remote SRT look like loopback).
+ */
 function isInternalReader(req: MediaMtxAuthRequest, auth: IngestAuthState): boolean {
   const reader = auth.readerPassword;
   return (
     reader !== null &&
     reader.length > 0 &&
-    isLoopbackIp(req.ip ?? '') &&
+    isRelayLoopback(req) &&
     req.user === INTERNAL_READER_USER &&
     typeof req.password === 'string' &&
     req.password.length > 0 &&
@@ -165,7 +191,7 @@ function authorizeGuest(req: MediaMtxAuthRequest, auth: IngestAuthState, slot: s
       const expected = auth.guestKey?.(slot) ?? null;
       if (!expected) return false;
       const key = queryParam(req.query ?? '', 'key');
-      return key !== null && key.length > 0 && safeEqual(key, expected);
+      return key !== null && key.length > 0 && safeEqual(key, expected) && srtlaCapOk(req, auth, req.path);
     }
     case 'read':
       if (!(auth.guestExists?.(slot) ?? false)) return false;

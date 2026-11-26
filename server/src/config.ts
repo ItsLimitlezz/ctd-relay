@@ -9,6 +9,7 @@ import {
 } from '../../shared/guest-feeds.js';
 import { DEFAULT_PULL_LINK_MAX_READERS } from '../../shared/pull-links.js';
 import { DEFAULT_SRT_PORT } from '../../shared/srt.js';
+import { DEFAULT_SRTLA_MAX_GROUPS, DEFAULT_SRTLA_PORT } from '../../shared/srtla.js';
 import type { TlsMode } from '../../shared/types.js';
 
 const bool = z
@@ -31,6 +32,10 @@ const EnvSchema = z.object({
   RTMP_PORT: z.coerce.number().int().default(1935),
   /** SRT ingest + pull port (UDP; docs/SRT.md). 0 turns SRT off. */
   SRT_PORT: z.coerce.number().int().min(0).max(65535).default(DEFAULT_SRT_PORT),
+  /** SRTLA (bonded SRT, BELABOX/Moblin; docs/SRTLA.md) UDP port of srtla_rec. 0 turns SRTLA off. Needs SRT on. */
+  SRTLA_PORT: z.coerce.number().int().min(0).max(65535).default(DEFAULT_SRTLA_PORT),
+  /** SRTLA: bonded senders publishing at once (Relay refuses the next one). */
+  SRTLA_MAX_GROUPS: z.coerce.number().int().min(1).max(64).default(DEFAULT_SRTLA_MAX_GROUPS),
   /** MediaMTX control API port (bound to 127.0.0.1). */
   MEDIAMTX_API_PORT: z.coerce.number().int().default(9997),
   /** MediaMTX Low-Latency HLS port for the live preview (bound to 127.0.0.1; Relay proxies it). */
@@ -65,6 +70,8 @@ const EnvSchema = z.object({
   MASTER_KEY: optionalString,
   MEDIAMTX_BIN: optionalString,
   FFMPEG_BIN: optionalString,
+  /** srtla_rec (docs/SRTLA.md); default ./tools/srtla_rec (Docker: /opt/ctd/tools/srtla_rec). */
+  SRTLA_BIN: optionalString,
   BROWSER_HEADLESS: bool.default(true),
   /** Trust X-Forwarded-* headers (only when running behind your own reverse proxy). */
   TRUST_PROXY: bool.default(false),
@@ -100,6 +107,12 @@ export interface AppConfig {
   rtmpPort: number;
   /** SRT UDP port (docs/SRT.md); 0 = off. Missing in hand-built test configs (= off). */
   srtPort?: number;
+  /** SRTLA UDP port (docs/SRTLA.md); 0 = off. Missing in hand-built test configs (= off). */
+  srtlaPort?: number;
+  /** SRTLA: bonded senders publishing at once. Missing in test configs (= the default, 4). */
+  srtlaMaxGroups?: number;
+  /** srtla_rec binary. Missing in test configs (= ./tools/srtla_rec). */
+  srtlaBin?: string;
   mediamtxApiPort: number;
   /** MediaMTX LL-HLS port (127.0.0.1), for the live preview. Missing in hand-built test configs (= off). */
   mediamtxHlsPort?: number;
@@ -156,6 +169,9 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env, version = '0.0.
     httpPort: e.HTTP_PORT,
     rtmpPort: e.RTMP_PORT,
     srtPort: e.SRT_PORT,
+    srtlaPort: e.SRTLA_PORT,
+    srtlaMaxGroups: e.SRTLA_MAX_GROUPS,
+    srtlaBin: toolPath(e.SRTLA_BIN, 'srtla_rec'),
     mediamtxApiPort: e.MEDIAMTX_API_PORT,
     mediamtxHlsPort: e.MEDIAMTX_HLS_PORT,
     livePreviewMaxViewers: e.LIVE_PREVIEW_MAX_VIEWERS,

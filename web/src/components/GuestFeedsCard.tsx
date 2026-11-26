@@ -296,6 +296,11 @@ export function GuestHelp() {
           forwarded.
         </li>
         <li>
+          <strong>BELABOX or Moblin, bonded (SRTLA):</strong> when the ingest details have an <em>SRTLA</em> line, Moblin takes the{' '}
+          <code>srtla://&lt;relay host&gt;:&lt;SRTLA port&gt;?streamid=publish:guest/&lt;slot&gt;:key=&lt;key&gt;</code> URL; BELABOX takes the address, the
+          SRTLA port and the streamid. The server's SRTLA UDP port (default 5000) must be forwarded. See docs/SRTLA.md.
+        </li>
+        <li>
           <strong>Larix Broadcaster (phone):</strong> Settings → Connections → New: paste the <em>Full URL</em>{' '}
           <code>rtmp://&lt;relay host&gt;:&lt;RTMP port&gt;/guest/&lt;slot&gt;?key=&lt;key&gt;</code>. Video codec H.264, audio AAC.
         </li>

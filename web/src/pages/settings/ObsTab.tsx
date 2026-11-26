@@ -11,6 +11,7 @@ import { EmptyState } from '../../components/EmptyState';
 import { ProfileTag } from '../../components/ProfileBadge';
 import { Spinner } from '../../components/Spinner';
 import { SrtLatencyNote, SrtUnavailable } from '../../components/SrtInfo';
+import { SrtlaFields, SrtlaSteps, SrtlaUnavailable } from '../../components/SrtlaInfo';
 import { toast } from '../../components/Toast';
 import { errorMessage } from '../../state/errors';
 import { useApi } from '../../state/hooks';
@@ -185,6 +186,17 @@ export function IngestCard({ info, profile, profileCount, rotating, onRotate }: 
             </>
           ) : (
             <SrtUnavailable srt={info.srt} />
+          )}
+        </div>
+        <div className="stack-sm srtla-ingest" role="group" aria-label="Bonded: SRTLA">
+          <strong>Bonded cellular: SRTLA (BELABOX, Moblin; optional)</strong>
+          {info.srtlaStatus?.enabled ? (
+            <>
+              {info.feeds.map((f) => (f.srtla ? <SrtlaFields key={f.feed} label={FEED_LABEL[f.feed].toLowerCase()} endpoint={f.srtla} /> : null))}
+              <SrtlaSteps status={info.srtlaStatus} />
+            </>
+          ) : (
+            <SrtlaUnavailable status={info.srtlaStatus} />
           )}
         </div>
         <p className="muted small">

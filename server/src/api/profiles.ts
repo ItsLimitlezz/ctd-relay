@@ -5,8 +5,9 @@ import type { AppServices } from '../services.js';
 import { LAN_HTTP_HOST_ENV, isLocalHostName } from './access.js';
 import { classifyIp, normalizeIp } from '../tls/public-ip.js';
 import type { ApiIngest, ApiProfile } from './types.js';
-import { srtStatusOf } from '../media/srt-status.js';
+import { srtlaStatusOf, srtStatusOf } from '../media/srt-status.js';
 import { srtPublishUrlFromStreamKey } from '../../../shared/srt.js';
+import { srtlaEndpointFromStreamKey } from '../../../shared/srtla.js';
 
 /** A ProfileSummary as the API documents it (explicit fields, in documentation order). */
 export function apiProfile(s: ProfileSummary): ApiProfile {
@@ -78,11 +79,13 @@ export async function buildApiIngest(services: AppServices, profileId: string, r
   const host = obsHost({ ingestHostSetting: setting, lanHttpHost: process.env[LAN_HTTP_HOST_ENV], requestHostname });
   const serverUrl = `rtmp://${host}:${config.rtmpPort}/${media.appName}`;
   const srt = srtStatusOf(media);
+  const srtlaStatus = srtlaStatusOf(media);
   const feeds: ApiIngest['feeds'] = [];
   for (const feed of FEEDS) {
     const streamKey = await media.streamKeyField(profileId, feed);
     const srtUrl = srt.enabled && srt.port ? srtPublishUrlFromStreamKey(host, srt.port, media.appName, streamKey) : null;
-    feeds.push({ feed, streamKey, fullUrl: `${serverUrl}/${streamKey}`, srtUrl });
+    const srtla = srtlaStatus.enabled && srtlaStatus.port ? srtlaEndpointFromStreamKey(host, srtlaStatus.port, media.appName, streamKey) : null;
+    feeds.push({ feed, streamKey, fullUrl: `${serverUrl}/${streamKey}`, srtUrl, srtla });
   }
-  return { profileId, serverUrl, feeds, srt };
+  return { profileId, serverUrl, feeds, srt, srtlaStatus };
 }

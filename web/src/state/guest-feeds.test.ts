@@ -64,6 +64,21 @@ describe('guest feeds (web)', () => {
     expect(text).toContain('can go lower');
   });
 
+  it('copy text adds the SRTLA lines (Moblin URL, BELABOX address/port/streamid) when SRTLA is on', () => {
+    const base = {
+      profileId: 'default',
+      slot: 'q7m2x9k4tb',
+      serverUrl: 'rtmp://relay.example.com:1935/guest',
+      streamKey: 'q7m2x9k4tb?key=abc',
+      fullUrl: 'rtmp://relay.example.com:1935/guest/q7m2x9k4tb?key=abc',
+    };
+    const srtla = { host: 'relay.example.com', port: 5000, streamId: 'publish:guest/q7m2x9k4tb:key=abc', url: 'srtla://relay.example.com:5000?streamid=publish:guest/q7m2x9k4tb:key=abc' };
+    const text = ingestText('Cam', { ...base, srtla })!;
+    expect(text).toContain('srtla://relay.example.com:5000?streamid=publish:guest/q7m2x9k4tb:key=abc');
+    expect(text).toContain('SRTLA receiver address relay.example.com, port 5000 UDP, SRT streamid publish:guest/q7m2x9k4tb:key=abc');
+    expect(ingestText('Cam', { ...base, srtla: null })).not.toContain('SRTLA');
+  });
+
   it('applies a guest-feed socket message to the list (unknown slots wait for a refetch)', () => {
     const l = list([g()]);
     expect(applyGuestFeed(l, g({ online: false }))?.guestFeeds[0]?.online).toBe(false);
