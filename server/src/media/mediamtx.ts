@@ -560,7 +560,12 @@ export function createMediaServer({ config, bus, log, repos, guests, routeAuth, 
   async function listReaderConns(signal?: AbortSignal): Promise<RtmpConn[]> {
     const rtmp = api.listRtmpConns ? await api.listRtmpConns(signal) : [];
     if (!srt.enabled || !api.listSrtConns) return rtmp;
-    const srtConns = await api.listSrtConns(signal);
+    // An SRT listing that fails must not stop the RTMP readers' cap and kicks: keep those.
+    const srtConns = await api.listSrtConns(signal).catch((err: unknown) => {
+      if (signal?.aborted) throw err;
+      log.warn({ err: err instanceof Error ? err.message : String(err) }, 'Could not list SRT connections');
+      return [] as RtmpConn[];
+    });
     return [...rtmp, ...srtConns.map((c) => ({ ...c, id: `${SRT_CONN_PREFIX}${c.id}` }))];
   }
 
