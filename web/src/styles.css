@@ -2777,3 +2777,32 @@ img {
 .pull-link { display: flex; flex-direction: column; gap: 6px; margin-top: 6px; }
 .pull-link-url { overflow-wrap: anywhere; word-break: break-all; }
 .pull-link-steps { margin: 0; padding-left: 1.25em; }
+
+/* Issues (alerts, docs/API.md §17): the open-issues strip, and the 7-day history. */
+.issues-strip ul,
+.issue-history { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+.issues-strip { margin-bottom: 16px; }
+.issues-strip.is-compact { margin: 8px 0 0; }
+.issue-row {
+  --tone: var(--info);
+  --tone-soft: var(--info-soft);
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 8px 12px;
+  border: 1px solid color-mix(in srgb, var(--tone) 35%, transparent);
+  border-left-width: 3px;
+  border-radius: var(--radius-sm);
+  background: var(--tone-soft);
+}
+.issue-row.is-warning { --tone: var(--warn); --tone-soft: var(--warn-soft); }
+.issue-row.is-critical { --tone: var(--danger); --tone-soft: var(--danger-soft); }
+.issue-history .issue-row { background: transparent; }
+.issue-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; flex: 1; }
+.issue-title,
+.issue-message { overflow-wrap: anywhere; }
+.issue-age { white-space: nowrap; margin-left: auto; }
+@media (max-width: 560px) {
+  .issue-row { flex-wrap: wrap; }
+  .issue-age { margin-left: 0; white-space: normal; }
+}

@@ -12,6 +12,9 @@ import { DEFAULT_PROFILE_ID, type ApiScope, type ApiTokenInfo } from '../../../s
 import type { RouteOptions } from '../http/guards.js';
 import type { AppServices } from '../services.js';
 import { buildClock, parseT0 } from './clock.js';
+import { ISSUE_HISTORY_DAYS, type IssueHistoryResponse } from '../../../shared/issues.js';
+import { ISSUE_HISTORY_LIST_MAX } from '../db/issue-history-repo.js';
+import { historyLimit, issueHistoryFor } from './issue-history.js';
 import { eventHubFor, type EventHub, type EventReader } from './event-hub.js';
 import { resolveTypes } from './filters.js';
 import { ConcurrencyLimiter, SlidingWindowLimiter, isProblemCode, presentedToken, query, sendProblem, type ProblemCode } from './http.js';
@@ -283,6 +286,19 @@ const v1Plugin: FastifyPluginAsync<V1Options> = async (app, opts) => {
     const p = resolveProfile(token, query(req).profile, DEFAULT_PROFILE_ID);
     if (!p.ok) return sendProblem(reply, p.status, p.code, p.detail);
     return reply.header('cache-control', 'no-store').send(hub().status(p.profile ?? DEFAULT_PROFILE_ID));
+  });
+
+  // The last 7 days of issues (v1.18, §17.7): newest first; `?profile=*` for every profile the token can see.
+  app.get('/issues/history', { preHandler: requireToken('status:read') }, async (req, reply) => {
+    const { token } = authOf(req);
+    const q = query(req);
+    const p = resolveProfileView(token, q.profile, DEFAULT_PROFILE_ID);
+    if (!p.ok) return sendProblem(reply, p.status, p.code, p.detail);
+    const limit = historyLimit(q.limit);
+    if (limit === null) return sendProblem(reply, 400, 'invalid', `limit must be 1–${ISSUE_HISTORY_LIST_MAX}`);
+    const history = issueHistoryFor(services);
+    const body: IssueHistoryResponse = { items: history ? history.list({ profileId: p.profile, limit }) : [], retentionDays: ISSUE_HISTORY_DAYS };
+    return reply.header('cache-control', 'no-store').send(body);
   });
 
   // What the profile's Spotify plays (v1.8): null = Spotify not connected (or not read yet).

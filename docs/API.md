@@ -1917,6 +1917,46 @@ and the plugin's next state resend raises its issues again.
 | `mode` | `target` (a set scene), `list` (the next healthy scene of a fallback list) or `return` (back to the original scene once the source recovered) |
 | `title` | Text for people |
 
+### 17.7 History: the last 7 days (v1.18, additive)
+
+Relay keeps a record of every issue it raised: from its `issue.raised` to its `issue.cleared`, or
+still open. The web dashboard shows it (Reports → Issues), each stream's report lists the issues
+open during that stream (§16, `issues` in the stream's detail and an **Issues** sheet in its
+exports), and apps can read it:
+
+#### `GET /api/v1/issues/history?profile=<id>&limit=<n>` — `status:read`
+
+Newest first (by `firstSeen`). `profile`: one profile (default: the default profile, or the token's
+own) or `*` for every profile the token can see. `limit`: 1–1000, default 200.
+
+```json
+{
+  "retentionDays": 7,
+  "items": [
+    { "id": "destination.down|01J…", "profileId": "default", "kind": "destination.down", "rule": null,
+      "severity": "warning", "peakSeverity": "critical", "title": "Twitch main is down",
+      "message": "Twitch refused the stream",
+      "subject": { "type": "destination", "destinationId": "01J…", "platform": "twitch", "name": "Twitch main" },
+      "firstSeen": 1791830000123, "updatedAt": 1791830060000,
+      "clearedAt": 1791830120000, "durationMs": 119877, "resolution": "recovered" }
+  ]
+}
+```
+
+| Field | Meaning |
+|---|---|
+| `id`, `kind`, `rule`, `title`, `message`, `subject`, `firstSeen` | As in the issue object (§17.1), as last raised. The same `id` can come back later as a new entry. |
+| `profileId` | The profile |
+| `severity` / `peakSeverity` | The latest severity / the highest one while it was open |
+| `updatedAt` | Epoch ms of the latest change while open |
+| `clearedAt`, `durationMs` | When it cleared and how long it was open; `null` while it is still open |
+| `resolution` | As `issue.cleared` (§17.3), plus **`restarted`**: Relay restarted while it was open (open issues live in memory, so a restart ends them without an `issue.cleared`). `null` while open. |
+
+Kept **7 days after an issue cleared**, at most **5,000** entries (the oldest go first); pruned at
+start-up and every hour. Open issues stay until they clear. It is a record for people: the live
+state is still `/status` → `issues` plus the `issue.*` events (§17.4). Stored in `app.db` in its own
+table (`issue_history`, own schema track), so rolling back to 0.2.80 or 0.2.90 still starts.
+
 
 ## 18. Guest feeds: remote video into CTD OBS (v1.17)
 
@@ -2224,6 +2264,10 @@ the revision in `info.version`.
 
 ### v1.18
 
+- **Issue history (§17.7, additive):** `GET /issues/history` (`status:read`): every issue of the last 7
+  days, newest first (raised → cleared, or still open; `resolution` adds `restarted`). A stream's
+  report (§16) gains `issues` (the issues open during it) and its exports an **Issues** sheet. Nothing
+  existing changes: same issue object, same `issue.*` events.
 - **SRT (docs/SRT.md, additive):** MediaMTX's SRT listener on one UDP port (`SRT_PORT`, default 8890;
   0 = off) for ingest and pull links, with the same keys and rules as RTMP.
   - `GET /profiles/{id}/ingest` feeds gain `srtUrl`, and the object gains `srt` (SrtStatus).

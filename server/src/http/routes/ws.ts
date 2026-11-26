@@ -2,6 +2,8 @@ import type { FastifyPluginAsync, FastifyReply, FastifyRequest } from 'fastify';
 import type { Logger } from 'pino';
 import type { WsServerMessage } from '../../../../shared/api.js';
 import { DEFAULT_PROFILE_ID, type ConnectedApp, type DestinationPhase, type PairingRequest, type ProfileSummary } from '../../../../shared/types.js';
+import { eventHubFor } from '../../api/event-hub.js';
+import type { ApiIssueCleared, ApiIssueRaised, Envelope } from '../../api/types.js';
 import type { EventBus } from '../../events.js';
 import { profileOf } from '../../orchestrator/orchestrator.js';
 import { isUnknownProfileError, profileParam } from '../../orchestrator/registry.js';
@@ -115,6 +117,21 @@ export class WsHub {
 
   get size(): number {
     return this.clients.size;
+  }
+
+  /**
+   * Forward the API event hub's issue.raised / issue.cleared (docs/API.md §17) to the sockets of the
+   * issue's profile as 'issue-raised' / 'issue-cleared' (v1.18).
+   */
+  attachIssues(events: { subscribe(listener: (env: Envelope) => void): () => void }): void {
+    this.unsubscribers.push(
+      events.subscribe((env) => {
+        const profileId = env.src.profile;
+        if (!profileId) return;
+        if (env.type === 'issue.raised') this.toProfile(profileId, { type: 'issue-raised', profileId, issue: env.data as ApiIssueRaised });
+        else if (env.type === 'issue.cleared') this.toProfile(profileId, { type: 'issue-cleared', profileId, issue: env.data as ApiIssueCleared });
+      }),
+    );
   }
 
   /**
@@ -298,6 +315,14 @@ const wsRoutes: FastifyPluginAsync<RouteOptions> = async (app, { services }) => 
     pairings: () => services.pairings.list(),
     apps: () => services.apps.list(),
   });
+  // Issues (v1.18): the API event hub decides what is open; the dashboard shows it live.
+  let issues: ReturnType<typeof eventHubFor> | null = null;
+  try {
+    issues = eventHubFor(services);
+    hub.attachIssues(issues);
+  } catch (err) {
+    log.warn({ error: (err as Error).message }, 'ws: no live issues (the API event hub is not available)');
+  }
   const timer = setInterval(() => hub.heartbeat(), WS_PING_INTERVAL_MS);
   timer.unref();
   app.addHook('onClose', async () => {
@@ -330,6 +355,7 @@ const wsRoutes: FastifyPluginAsync<RouteOptions> = async (app, { services }) => 
         session: services.orchestrators.get(profileId).state(),
         chat: services.chat.recent(200, profileId),
         profiles: services.orchestrators.summaries(),
+        ...(issues ? { issues: issues.openIssues(profileId) } : {}),
       };
     } catch (err) {
       log.error({ error: (err as Error).message }, 'building ws hello failed');

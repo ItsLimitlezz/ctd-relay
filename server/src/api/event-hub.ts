@@ -51,6 +51,7 @@ import {
   type ApiDestinationUp,
   type ApiEventType,
   type ApiFeed,
+  type ApiIssue,
   type ApiIssueCleared,
   type ApiIssueRaised,
   type ApiNotice,
@@ -393,6 +394,11 @@ export class EventHub {
       platformInfo: (platform) => this.deps.platformInfo(platform),
     });
     return { ...status, issues: this.issues.list(profileId) };
+  }
+
+  /** A profile's open issues, oldest first (what GET /status → issues carries); the web UI's live socket sends them too. */
+  openIssues(profileId: string = DEFAULT_PROFILE_ID): ApiIssue[] {
+    return this.issues.list(profileId);
   }
 
   /**
@@ -920,6 +926,11 @@ export function eventHubDeps(services: AppServices): EventHubDeps {
 }
 
 const hubs = new WeakMap<AppServices, EventHub>();
+
+/** Tests: use this hub for these services (what eventHubFor returns from now on). */
+export function setEventHubFor(services: AppServices, hub: EventHub): void {
+  hubs.set(services, hub);
+}
 
 /** The API event hub of these services (created on first use; main.ts calls it at startup). */
 export function eventHubFor(services: AppServices): EventHub {

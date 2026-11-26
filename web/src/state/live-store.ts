@@ -2,6 +2,7 @@
 // WebSocket client. React bindings live in live.tsx.
 
 import type { WsServerMessage } from '@shared/api';
+import type { ApiIssue } from '@shared/issues';
 import type { Account, ChatMessage, ChatModeration, ConnectedApp, PairingRequest, SessionState } from '@shared/types';
 
 export const CHAT_LIMIT = 500;
@@ -53,6 +54,11 @@ export interface LiveState {
   apps: ConnectedApp[] | null;
   /** Bumped on every pushed 'apps' list. */
   appsSeq: number;
+  /**
+   * The profile's open issues (docs/API.md §17), oldest first: from 'hello', then 'issue-raised' /
+   * 'issue-cleared'. Empty from servers before v1.18.
+   */
+  issues: ApiIssue[];
 }
 
 export const initialLiveState: LiveState = {
@@ -69,6 +75,7 @@ export const initialLiveState: LiveState = {
   pairingsSeq: 0,
   apps: null,
   appsSeq: 0,
+  issues: [],
 };
 
 // ---------------------------------------------------------------------------
@@ -101,6 +108,9 @@ export function parseServerMessage(raw: unknown): WsServerMessage | null {
       return typeof d.profileId === 'string' && isObject(d.guestFeed) && typeof d.guestFeed.slot === 'string' ? (d as WsServerMessage) : null;
     case 'guest-feeds-changed':
       return typeof d.profileId === 'string' ? (d as WsServerMessage) : null;
+    case 'issue-raised':
+    case 'issue-cleared':
+      return typeof d.profileId === 'string' && isObject(d.issue) && typeof d.issue.id === 'string' ? (d as WsServerMessage) : null;
     case 'pairings':
       return Array.isArray(d.pairings) ? (d as WsServerMessage) : null;
     case 'apps':
@@ -306,6 +316,17 @@ export function sameProfile(state: Pick<LiveState, 'profileId'>, profileId: stri
   return !profileId || !state.profileId || profileId === state.profileId;
 }
 
+/** An issue.raised: add it, or replace the open one with its id (keeping the order: oldest first). */
+export function upsertIssue(issues: readonly ApiIssue[], issue: ApiIssue): ApiIssue[] {
+  const { update: _u, ...clean } = issue as ApiIssue & { update?: boolean };
+  return upsert(issues, clean, (i) => i.id === clean.id);
+}
+
+/** An issue.cleared: drop the id (an id we don't have is fine). */
+export function removeIssue(issues: ApiIssue[], id: string): ApiIssue[] {
+  return issues.some((i) => i.id === id) ? issues.filter((i) => i.id !== id) : issues;
+}
+
 export function reduceLive(state: LiveState, msg: WsServerMessage): LiveState {
   switch (msg.type) {
     case 'profiles':
@@ -324,6 +345,8 @@ export function reduceLive(state: LiveState, msg: WsServerMessage): LiveState {
         session: msg.session,
         // Reconciled, not just merged: messages moderated while we were away are missing from it.
         chat: reconcileChat(state.chat, msg.chat, CHAT_LIMIT, state.removedChat),
+        // The open set now (anything raised or cleared while we were away is in it).
+        issues: Array.isArray(msg.issues) ? msg.issues.filter((i) => typeof i?.id === 'string') : [],
         accountsVersion: state.accountsVersion + bump,
         destinationsVersion: state.destinationsVersion + bump,
       };
@@ -377,6 +400,14 @@ export function reduceLive(state: LiveState, msg: WsServerMessage): LiveState {
       };
     case 'destinations-changed':
       return { ...state, destinationsVersion: state.destinationsVersion + 1 };
+    case 'issue-raised':
+      if (!sameProfile(state, msg.profileId)) return state;
+      return { ...state, issues: upsertIssue(state.issues, msg.issue) };
+    case 'issue-cleared': {
+      if (!sameProfile(state, msg.profileId)) return state;
+      const issues = removeIssue(state.issues, msg.issue.id);
+      return issues === state.issues ? state : { ...state, issues };
+    }
     case 'notice':
       return state;
     default:

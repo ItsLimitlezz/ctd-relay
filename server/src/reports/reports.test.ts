@@ -434,7 +434,7 @@ describe('report math over a recorded stream', () => {
     }
     const workbook = files.get('xl/workbook.xml')!.toString();
     const names = [...workbook.matchAll(/<sheet name="([^"]+)"/g)].map((m) => m[1]);
-    expect(names).toEqual(['Summary', 'Per platform', 'Viewers', 'Chat per minute', 'Events', 'Top chatters', 'Audience', 'Anonymous joins', 'Feeds']);
+    expect(names).toEqual(['Summary', 'Per platform', 'Viewers', 'Chat per minute', 'Events', 'Top chatters', 'Audience', 'Anonymous joins', 'Feeds', 'Issues']);
     const sheet = (n: number) => files.get(`xl/worksheets/sheet${n}.xml`)!.toString();
     // Frozen header on every sheet; the chart sits on Viewers.
     for (let i = 1; i <= names.length; i++) expect(sheet(i)).toContain('state="frozen"');

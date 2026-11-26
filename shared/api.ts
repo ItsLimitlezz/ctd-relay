@@ -7,6 +7,7 @@
 // - Role legend in comments: [public] no auth, [user] any logged-in user, [admin] admin only.
 
 import type { GuestFeed } from './guest-feeds.js';
+import type { ApiIssue, ApiIssueCleared, ApiIssueRaised } from './issues.js';
 import type { SrtStatus } from './srt.js';
 import type {
   Account,
@@ -785,6 +786,14 @@ export interface InstagramChatPackStatus {
 }
 
 // ---------------------------------------------------------------------------
+// Issues (alerts; docs/API.md §17, types in shared/issues.ts). v1.18. [user]
+// GET /api/profiles/:id/issues                      -> OpenIssuesResponse (open now, oldest first)
+// GET /api/issues/history?profile=<id>|*&limit=<n>  -> IssueHistoryResponse (last 7 days, newest first;
+//   default the default profile, `*` every profile, limit 1..1000, default 200)
+// Live: 'hello' → issues, then 'issue-raised' / 'issue-cleared' on the WebSocket below.
+// ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
 // Live events WebSocket
 // ---------------------------------------------------------------------------
 
@@ -795,7 +804,14 @@ export interface InstagramChatPackStatus {
  * any profile's session change) so the UI can show which profiles are live.
  */
 export type WsServerMessage =
-  | { type: 'hello'; session: SessionState; chat: ChatMessage[]; profiles: ProfileSummary[] }
+  | {
+      type: 'hello';
+      session: SessionState;
+      chat: ChatMessage[];
+      profiles: ProfileSummary[];
+      /** The socket's profile's open issues, oldest first (v1.18; absent from older servers). */
+      issues?: ApiIssue[];
+    }
   | { type: 'profiles'; profiles: ProfileSummary[] }
   /** [admin sockets only] pending pairings changed (show "an app wants to connect"). */
   | { type: 'pairings'; pairings: PairingRequest[] }
@@ -812,6 +828,10 @@ export type WsServerMessage =
   /** A guest feed's state changed (docs/API.md §18; sent to sockets on that profile). */
   | { type: 'guest-feed'; profileId: string; guestFeed: GuestFeed }
   /** Guest feed slots added, renamed, removed, keys rotated or revoked: refetch the list. */
-  | { type: 'guest-feeds-changed'; profileId: string };
+  | { type: 'guest-feeds-changed'; profileId: string }
+  /** An issue of the socket's profile was raised or changed (the /api/v1 issue.raised data; docs/API.md §17). v1.18. */
+  | { type: 'issue-raised'; profileId: string; issue: ApiIssueRaised }
+  /** An issue of the socket's profile cleared (the issue.cleared data). v1.18. */
+  | { type: 'issue-cleared'; profileId: string; issue: ApiIssueCleared };
 
 export type { ConnectMethod };

@@ -4,6 +4,7 @@
 // default profile when omitted); creates carry it in the body (`profileId`).
 
 import type { CreateGuestFeedResponse, GuestFeed, GuestFeedList, GuestIngestInfo } from '@shared/guest-feeds';
+import type { IssueHistoryResponse, OpenIssuesResponse } from '@shared/issues';
 import type { PullLinkInfo, ProfilePullLinks } from '@shared/pull-links';
 import type { CreateGuestRouteRequest, GuestRoute, GuestRouteList, GuestRouteSettings, ProfileGuestRoutes, UpdateGuestRouteRequest } from '@shared/guest-routes';
 import type {
@@ -267,6 +268,11 @@ export const api = {
   revokeGuestKey: (profileId: string, slot: string) => post<GuestFeed>(`${guestBase(profileId)}/${slot}/revoke`),
   // Guest feed routing (docs/GUEST-FEEDS.md → Routing): reading [user]; everything else [admin].
   profileGuestRoutes: (profileId: string) => get<ProfileGuestRoutes>(`/api/profiles/${encodeURIComponent(profileId)}/guest-routes`),
+
+  // Issues (docs/API.md §17): a profile's open issues, and the last 7 days (`profile`: an id or '*').
+  profileIssues: (profileId: string) => get<OpenIssuesResponse>(`/api/profiles/${encodeURIComponent(profileId)}/issues`),
+  issueHistory: (profile: string, limit?: number) =>
+    get<IssueHistoryResponse>(`/api/issues/history?profile=${encodeURIComponent(profile)}${limit ? `&limit=${limit}` : ''}`),
   guestRoutes: (profileId: string, slot: string) => get<GuestRouteList>(`${guestBase(profileId)}/${slot}/routes`),
   addGuestRoute: (profileId: string, slot: string, body: CreateGuestRouteRequest) => post<GuestRoute>(`${guestBase(profileId)}/${slot}/routes`, body),
   updateGuestRoute: (profileId: string, slot: string, route: string, body: UpdateGuestRouteRequest) =>

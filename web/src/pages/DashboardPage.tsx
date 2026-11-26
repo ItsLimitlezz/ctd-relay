@@ -23,6 +23,8 @@ import { EmptyState } from '../components/EmptyState';
 import { FeedThumbnail } from '../components/FeedThumbnail';
 import { GuestFeedsCard } from '../components/GuestFeedsCard';
 import { ROUTE_POLL_MS, usePoll } from '../components/GuestRoutes';
+import { IssueBadge, IssuesStrip } from '../components/Issues';
+import type { ApiIssue } from '@shared/issues';
 import type { ProfileGuestRoutes } from '@shared/guest-routes';
 import { Field } from '../components/Field';
 import {
@@ -54,7 +56,8 @@ import { useAuth } from '../state/auth';
 import { PullLinkPanel } from '../components/PullLink';
 import { errorMessage } from '../state/errors';
 import { useApi, useDestinations, useNow } from '../state/hooks';
-import { useAccountsVersion, useChat, useLiveActions, useSession, type LiveActions } from '../state/live';
+import { destinationIssues, feedIssues } from '../state/issues';
+import { useAccountsVersion, useChat, useLiveActions, useOpenIssues, useSession, type LiveActions } from '../state/live';
 import { useProfileId } from '../state/profile';
 import {
   destinationViewers,
@@ -71,6 +74,7 @@ import {
 import { transcodeStatusLine } from './destinations/transcode-form';
 
 export const TITLE_MAX = 140;
+const NO_ISSUES: readonly ApiIssue[] = [];
 const FEED_LABEL: Record<Feed, string> = { landscape: 'Landscape', vertical: 'Vertical' };
 
 /** What a destination sends: its feed, or both for Twitch Dual Format. */
@@ -97,6 +101,8 @@ export default function DashboardPage() {
   const { isAdmin } = useAuth();
   const profileId = useProfileId();
   const dests = useDestinations();
+  // Open issues of this profile (docs/API.md §17), live over the WebSocket.
+  const issues = useOpenIssues();
 
   // REST fallback while the WebSocket hasn't delivered the first snapshot (on mount and after a
   // profile switch, when seedSession changes; useSession hides the previous profile's session, and
@@ -123,8 +129,9 @@ export default function DashboardPage() {
           <ProfileTag />
         </div>
         {testMode && <TestModeBanner plan={plan} running={running} loadError={dests.data ? null : dests.error} />}
+        <IssuesStrip issues={issues} />
         <StatusCard session={session} />
-        <FeedsRow feeds={session?.feeds ?? null} />
+        <FeedsRow feeds={session?.feeds ?? null} issues={issues} />
         <GuestFeedsCard profileId={profileId} isAdmin={isAdmin} />
         <TitleCard session={session} destinations={dests.data ?? []} />
         <DestinationsSection
@@ -135,6 +142,7 @@ export default function DashboardPage() {
           states={session?.destinations ?? []}
           testPlan={plan}
           isAdmin={isAdmin}
+          issues={issues}
           onUpdated={(d) => dests.setData((list) => list?.map((x) => (x.id === d.id ? d : x)))}
         />
       </div>
@@ -389,7 +397,7 @@ const FEED_HINT: Record<Feed, string> = {
   vertical: 'Start the vertical stream in CTD OBS.',
 };
 
-function FeedsRow({ feeds }: { feeds: FeedState[] | null }) {
+function FeedsRow({ feeds, issues }: { feeds: FeedState[] | null; issues: readonly ApiIssue[] }) {
   const profileId = useProfileId();
   const { isAdmin } = useAuth();
   const [watching, setWatching] = useState<Feed | null>(null);
@@ -410,6 +418,7 @@ function FeedsRow({ feeds }: { feeds: FeedState[] | null }) {
           onWatch={() => setWatching(feed)}
           routedFrom={routedFrom(routes.data ?? null, feed)}
           pullLink={{ isAdmin }}
+          issues={feedIssues(issues, feed)}
         />
       ))}
       {watching && (
@@ -445,6 +454,7 @@ export function FeedCard({
   onWatch,
   routedFrom: source = null,
   pullLink,
+  issues = NO_ISSUES,
 }: {
   feed: Feed;
   state: FeedState | null;
@@ -456,6 +466,8 @@ export function FeedCard({
   routedFrom?: string | null;
   /** Show the feed's "Pull link (OBS, VLC)" panel (docs/GUEST-FEEDS.md → Pull link). */
   pullLink?: { isAdmin: boolean };
+  /** This feed's open issues (a badge in the header). */
+  issues?: readonly ApiIssue[];
 }) {
   const online = !!state?.online;
   const Icon = feed === 'landscape' ? LandscapeIcon : VerticalIcon;
@@ -474,6 +486,7 @@ export function FeedCard({
           <Spinner size="sm" />
         ) : (
           <>
+            <IssueBadge issues={issues} testId={`feed-issues-${feed}`} />
             {problem && (
               <Badge tone={problem.blocking ? 'danger' : 'warn'} title={problem.message}>
                 {problem.label} ⚠
@@ -675,10 +688,12 @@ interface DestinationsSectionProps {
   /** Test mode on: what happens to each enabled destination. */
   testPlan: readonly TestModeEntry[] | null;
   isAdmin: boolean;
+  /** The profile's open issues (each destination card shows its own as a badge). */
+  issues: readonly ApiIssue[];
   onUpdated: (d: Destination) => void;
 }
 
-function DestinationsSection({ destinations, loading, error, reload, states, testPlan, isAdmin, onUpdated }: DestinationsSectionProps) {
+function DestinationsSection({ destinations, loading, error, reload, states, testPlan, isAdmin, issues, onUpdated }: DestinationsSectionProps) {
   const stateById = useMemo(() => new Map(states.map((s) => [s.destinationId, s])), [states]);
   const testById = useMemo(() => new Map((testPlan ?? []).map((e) => [e.destinationId, e])), [testPlan]);
 
@@ -728,7 +743,14 @@ function DestinationsSection({ destinations, loading, error, reload, states, tes
     body = (
       <div className="dest-grid">
         {destinations.map((d) => (
-          <DestinationCard key={d.id} dest={d} state={stateById.get(d.id) ?? null} testMode={testById.get(d.id) ?? null} onUpdated={onUpdated} />
+          <DestinationCard
+            key={d.id}
+            dest={d}
+            state={stateById.get(d.id) ?? null}
+            testMode={testById.get(d.id) ?? null}
+            issues={destinationIssues(issues, d.id)}
+            onUpdated={onUpdated}
+          />
         ))}
       </div>
     );
@@ -770,12 +792,15 @@ export function DestinationCard({
   dest,
   state,
   testMode = null,
+  issues = NO_ISSUES,
   onUpdated,
 }: {
   dest: Destination;
   state: DestinationState | null;
   /** Set while session test mode is on (enabled destinations only). */
   testMode?: TestModeEntry | null;
+  /** This destination's open issues (a badge beside its phase). */
+  issues?: readonly ApiIssue[];
   onUpdated: (d: Destination) => void;
 }) {
   const [toggling, setToggling] = useState(false);
@@ -870,6 +895,7 @@ export function DestinationCard({
               Bandwidth test: not public
             </Badge>
           )}
+          <IssueBadge issues={issues} testId={`dest-issues-${dest.id}`} />
           <Badge tone="neutral" title={feedBadge(dest).title}>
             {feedBadge(dest).text}
           </Badge>

@@ -147,6 +147,7 @@ describe('GET /openapi.json', () => {
       '/',
       '/openapi.json',
       '/status',
+      '/issues/history',
       '/music',
       '/clock',
       '/system/transcode-capabilities',

@@ -4,6 +4,7 @@
 // Every number that Relay could not know is `null`, never 0: a platform that does not report
 // viewers has null viewers, not zero viewers.
 
+import type { ApiIssueSubject, IssueHistoryResolution, IssueKind, IssueSeverity } from './issues.js';
 import type { Feed, PlatformId } from './types.js';
 
 // ---------------------------------------------------------------------------
@@ -142,6 +143,30 @@ export interface FeedMinute {
   keyframeSec: number | null;
 }
 
+/**
+ * An issue (alert, docs/API.md §17) that was open during the stream: raised during it, or raised
+ * before and still open when it started. From the 7-day issue history, so a stream older than that
+ * has none.
+ */
+export interface ReportIssue {
+  /** The issue's id (`<kind>|<subject key>`). */
+  id: string;
+  kind: IssueKind;
+  rule: string | null;
+  /** The highest severity while it was open. */
+  severity: IssueSeverity;
+  title: string;
+  message: string | null;
+  subject: ApiIssueSubject;
+  /** What it affects, in plain words ("Landscape feed", "Destination Twitch"). */
+  affects: string;
+  startedAt: string;
+  /** When it cleared (can be after the stream ended); null = still open. */
+  clearedAt: string | null;
+  durationSec: number | null;
+  resolution: IssueHistoryResolution | null;
+}
+
 export interface ReportSessionDetail extends ReportSessionSummary {
   titles: { ts: string; title: string }[];
   destinations: ReportDestination[];
@@ -156,6 +181,8 @@ export interface ReportSessionDetail extends ReportSessionSummary {
   presence: { platform: PlatformId; samples: number }[];
   /** False when audience tracking was off during this session. */
   audienceTracked: boolean;
+  /** Issues open during the stream, oldest first (v1.18; from the 7-day issue history). */
+  issues: ReportIssue[];
 }
 
 // ---------------------------------------------------------------------------
