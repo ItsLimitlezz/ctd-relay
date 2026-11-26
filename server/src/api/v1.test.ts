@@ -167,6 +167,7 @@ describe('GET /openapi.json', () => {
       '/profiles/{id}/guest-feeds/{slot}/preview',
       '/profiles/{id}/guest-feeds/{slot}/live.m3u8',
       '/profiles/{id}/guest-feeds/{slot}/live/{file}',
+      '/profiles/{id}/timing',
       '/profiles/{id}/guest-routes',
       '/profiles/{id}/guest-feeds/{slot}/routes',
       '/profiles/{id}/guest-feeds/{slot}/routes/{route}',

@@ -457,6 +457,24 @@ export class EventHub {
     return { id, type, ts, src, data };
   }
 
+  /**
+   * Send an envelope to the open streams without buffering it (feed.timing, docs/API.md §19: about
+   * one a second per measured feed would push everything else out of the replay buffer). It is
+   * never replayed and never causes system.reset; its id still moves the cursor, so resuming from it
+   * works like from any other id.
+   */
+  transient<T>(type: ApiEventType, profile: string | null, data: T): Envelope<T> {
+    const env = this.envelope(type, coreSource(profile), data, this.now());
+    for (const listener of this.listeners) {
+      try {
+        listener(env);
+      } catch (err) {
+        this.deps.log.warn({ error: (err as Error).message }, 'api event listener failed');
+      }
+    }
+    return env;
+  }
+
   private publish<T>(type: ApiEventType, src: EnvelopeSource, data: T, audience: string | null = null): Envelope<T> {
     const env = this.envelope(type, src, data, this.now());
     if (audience !== null) this.audiences.set(env, audience);

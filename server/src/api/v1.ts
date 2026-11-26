@@ -25,6 +25,7 @@ import type { ApiEventType, Envelope } from './types.js';
 import { parseUlid } from './ulid.js';
 import { registerHubRoutes } from './v1-hub.js';
 import { registerGuestFeedApiRoutes } from './guest-feeds.js';
+import { feedTimingOf, registerFeedTimingApiRoutes } from './feed-timing.js';
 import { registerGuestRouteApiRoutes } from './v1-guest-routes.js';
 import { registerPullLinkApiRoutes } from './pull-links.js';
 import { musicFor } from '../music/music-service.js';
@@ -403,6 +404,8 @@ const v1Plugin: FastifyPluginAsync<V1Options> = async (app, opts) => {
 
     let closed = false;
     let unsubscribe: (() => void) | null = null;
+    /** feed.timing (§19): this stream keeps its profile's feeds measured while open. */
+    let releaseTiming: (() => void) | null = null;
     let heartbeat: ReturnType<typeof setInterval> | null = null;
     /**
      * Release everything this stream holds (slot, hub subscription, heartbeat). `abort` destroys the
@@ -419,6 +422,8 @@ const v1Plugin: FastifyPluginAsync<V1Options> = async (app, opts) => {
       openStreams.delete(end);
       unsubscribe?.();
       unsubscribe = null;
+      releaseTiming?.();
+      releaseTiming = null;
       if (heartbeat) clearInterval(heartbeat);
       heartbeat = null;
       streamSlots.release(token.id);
@@ -496,6 +501,7 @@ const v1Plugin: FastifyPluginAsync<V1Options> = async (app, opts) => {
         });
       }
       unsubscribe = h.subscribe(send);
+      if (types.has('feed.timing')) releaseTiming = feedTimingOf(services).hold(reader.profile);
 
       const timer = setInterval(() => {
         if (closed) {
@@ -529,6 +535,7 @@ const v1Plugin: FastifyPluginAsync<V1Options> = async (app, opts) => {
   registerObsSocketRoute(app, ctx);
   registerShowRoutes(app, ctx);
   registerGuestFeedApiRoutes(app, ctx);
+  registerFeedTimingApiRoutes(app, ctx);
   registerGuestRouteApiRoutes(app, ctx);
   registerPullLinkApiRoutes(app, ctx);
   registerPlatformRoutes(app, ctx);

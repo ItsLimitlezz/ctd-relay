@@ -37,6 +37,8 @@ const EnvSchema = z.object({
   MEDIAMTX_HLS_PORT: z.coerce.number().int().default(9996),
   /** Live preview ("Watch"): viewers per feed at once. 0 turns the live preview off (thumbnails stay). */
   LIVE_PREVIEW_MAX_VIEWERS: z.coerce.number().int().min(0).max(50).default(4),
+  /** Feed timing (docs/API.md §19): feeds measured at once, server-wide. 0 turns feed timing off. */
+  FEED_TIMING_MAX: z.coerce.number().int().min(0).max(32).default(8),
   /** Guest feeds (docs/GUEST-FEEDS.md): slots per profile. 0 turns guest feeds off. */
   GUEST_FEEDS_MAX: z.coerce.number().int().min(0).max(16).default(DEFAULT_GUEST_FEEDS_MAX),
   /** Guest feeds: players per guest feed at once (CTD OBS + someone watching). 0 = they can't be watched. */
@@ -103,6 +105,8 @@ export interface AppConfig {
   mediamtxHlsPort?: number;
   /** Live preview viewers per feed at once; 0 = live preview off. Missing in test configs (= default). */
   livePreviewMaxViewers?: number;
+  /** Feed timing readers at once, server-wide; 0 = off. Missing in test configs (= the default, 8). */
+  feedTimingMax?: number;
   /** Guest feed limits (docs/GUEST-FEEDS.md). Missing in test configs (= the defaults). */
   guestFeeds?: { maxSlots: number; maxViewers: number; warnAboveKbps: number; maxKbps: number };
   /** Pull links: concurrent OBS/VLC readers per feed; 0 = off. Missing in test configs (= the default). */
@@ -155,6 +159,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env, version = '0.0.
     mediamtxApiPort: e.MEDIAMTX_API_PORT,
     mediamtxHlsPort: e.MEDIAMTX_HLS_PORT,
     livePreviewMaxViewers: e.LIVE_PREVIEW_MAX_VIEWERS,
+    feedTimingMax: e.FEED_TIMING_MAX,
     guestFeeds: {
       maxSlots: e.GUEST_FEEDS_MAX,
       maxViewers: e.GUEST_FEED_MAX_VIEWERS,
