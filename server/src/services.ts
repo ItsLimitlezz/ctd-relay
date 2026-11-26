@@ -7,6 +7,7 @@ import type { Duplex } from 'node:stream';
 import type { Logger } from 'pino';
 import type { BrowserContext, Page } from 'playwright';
 import type { AppSettings } from '../../shared/api.js';
+import type { SrtStatus } from '../../shared/srt.js';
 import type {
   Account,
   AccountStatus,
@@ -415,6 +416,8 @@ export interface MediaServer {
   guestHlsSource?(slot: string): { baseUrl: string; authorization: string } | null;
   /** Local URL Relay reads a guest slot with (thumbnails only; never a push). */
   guestReadUrl?(slot: string): string;
+  /** SRT (docs/SRT.md): is the SRT listener on, on which UDP port, and why not. Undefined = no SRT. */
+  srtStatus?(): SrtStatus;
 }
 
 /** Supervises one FFmpeg process per destination. Emits 'push' events on the EventBus. */

@@ -1,5 +1,6 @@
 // Wire types of the external API v1 (docs/API.md). Server-side only: the web UI never reads /api/v1.
 
+import type { SrtStatus } from '../../../shared/srt.js';
 import type {
   ApiScope,
   AppResource,
@@ -453,7 +454,10 @@ export interface ApiShowChanged {
 export interface ApiIngest {
   profileId: string;
   serverUrl: string;
-  feeds: { feed: Feed; streamKey: string; fullUrl: string }[];
+  /** srtUrl (API 1.18): the feed over SRT (docs/SRT.md); null when SRT is off. */
+  feeds: { feed: Feed; streamKey: string; fullUrl: string; srtUrl: string | null }[];
+  /** API 1.18: whether SRT works on this server. */
+  srt: SrtStatus;
 }
 
 /** A connected app as other apps see it (the registering token's id stays internal). */

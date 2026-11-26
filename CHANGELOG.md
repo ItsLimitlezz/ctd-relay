@@ -2,6 +2,18 @@
 
 Versions follow the hub's CONVENTIONS.md → Versioning. Each release that ships to a TrueNAS install has a runbook in `docs/RELEASE-*.md` (backup, update, verify, rollback).
 
+## 0.2.100 (unreleased)
+
+**SRT and the Pull link delay.** API revision **1.18** (additive). No database change: schema **v4**, reports **r1**, guest feed track **g2**, so 0.2.80 still opens `app.db` after a rollback. Runbook: [docs/RELEASE-v0.2.100.md](docs/RELEASE-v0.2.100.md).
+
+### Added
+- **SRT** ingest and SRT pull links (ctd-relay#37, docs/SRT.md) on one UDP port of the bundled MediaMTX (`SRT_PORT`, default **8890/udp**; `0` = off; `EXPOSE 8890/udp`, compose and the TrueNAS YAML map it). The same keys and rules as RTMP: ingest keys publish (profile feeds and extra feeds), only a feed's Pull link read key reads, and the Pull link reader cap counts RTMP and SRT readers together; rotating or turning a link off disconnects SRT readers too. If the UDP port is taken at start, SRT turns off with a plain reason and RTMP works as before; an unmapped port breaks nothing. Addresses carry the internet latency (`latency=500000`, 500 ms); the LAN value (150 ms) is shown as the alternative. Passthrough only (MPEG-TS, H.264 + AAC).
+- **API 1.18:** `srtUrl` and `srt` (SrtStatus) on the ingest details, guest ingest details and Pull link admin objects.
+- `npm run e2e:srt`: SRT end to end with the real MediaMTX/FFmpeg, and the delay measurement (steady state and how old a joining reader's first frame is, with low-delay and default reader settings).
+
+### Docs
+- [docs/PULL-LINK.md](docs/PULL-LINK.md): where the ~4 s Pull link delay comes from. Relay adds about nothing (136 ms through Relay against 137 ms direct, loopback), a player with FFmpeg's default settings starts 1.35 s (RTMP) or 5.5 s (SRT) behind and keeps it; the best OBS Media Source settings, a VLC Video Source alternative, and a five-minute test to find the rest.
+
 ## 0.2.90 (2026-11-25)
 
 **Guest feeds (Relay F1 / CTD OBS F1)**, shown in the web UI as **Extra feeds**, with routing and Pull links. A remote camera operator or guest sends video to Relay over RTMP; CTD OBS pulls it in as a source (CTD Relay Feed) over LL-HLS behind Relay's auth. Guest feeds are **never restreamed** to destinations. API revision **1.17** (additive; the read uses the existing `feeds:watch` scope). Database: two new tables on their own track (`guest_feeds`, `guest_routes`, `guest_feeds_meta`); schema stays **v4**, reports **r1**, so 0.2.80 still opens `app.db` after a rollback. Runbook: [docs/RELEASE-v0.2.90.md](docs/RELEASE-v0.2.90.md). Guide: [docs/GUEST-FEEDS.md](docs/GUEST-FEEDS.md).

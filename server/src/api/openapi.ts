@@ -18,7 +18,7 @@ import { reportPaths, reportSchemas } from './openapi-reports.js';
 import { showPaths, showSchemas } from './openapi-show.js';
 
 /** Minor revision of the v1 contract (additive changes only; see the changelog in docs/API.md). */
-export const API_REVISION = '1.17';
+export const API_REVISION = '1.18';
 
 const ref = (name: string) => ({ $ref: `#/components/schemas/${name}` });
 const nullable = (schema: object) => ({ oneOf: [schema, { type: 'null' }] });
@@ -1118,9 +1118,27 @@ export function openApiDocument(version: string): Record<string, unknown> {
                   feed: { enum: ['landscape', 'vertical'] },
                   streamKey: { type: 'string', description: 'OBS Stream Key field (secret)' },
                   fullUrl: { type: 'string', description: 'serverUrl + "/" + streamKey (secret)' },
+                  srtUrl: {
+                    oneOf: [{ type: 'string' }, { type: 'null' }],
+                    description:
+                      'v1.18: the feed over SRT (docs/SRT.md), srt://<host>:<port>?streamid=publish:<path>:key=<k>&latency=<µs>: OBS Server field with the Stream Key empty (secret). Null when SRT is off.',
+                  },
                 },
               },
             },
+            srt: { $ref: '#/components/schemas/SrtStatus' },
+          },
+        },
+        SrtStatus: {
+          type: 'object',
+          required: ['enabled', 'port', 'latencyMs', 'lanLatencyMs', 'reason'],
+          description: 'v1.18: whether SRT works on this server (docs/SRT.md). Never contains a key.',
+          properties: {
+            enabled: { type: 'boolean' },
+            port: { oneOf: [{ type: 'integer' }, { type: 'null' }], description: 'SRT UDP port (SRT_PORT), null when off' },
+            latencyMs: { type: 'integer', description: 'Latency built into the links (the internet value; can go lower on a good link), in ms; the URL carries it in microseconds' },
+            lanLatencyMs: { type: 'integer', description: 'Latency enough on a LAN, in ms' },
+            reason: { oneOf: [{ type: 'string' }, { type: 'null' }], description: 'Why SRT is off, in plain words; null when on' },
           },
         },
         AppResource: {
@@ -1485,6 +1503,12 @@ const pullLinkSchemas = {
       ...pullState.properties,
       url: { oneOf: [{ type: 'string' }, { type: 'null' }], description: 'rtmp://<host>:<port>/<path>?key=<read key>: paste into an OBS Media Source (Input) or VLC. Null while off. A secret.' },
       serverUrl: { type: 'string', description: 'The same without the key' },
+      srtUrl: {
+        oneOf: [{ type: 'string' }, { type: 'null' }],
+        description:
+          'v1.18: the pull link over SRT, srt://<host>:<port>?streamid=read:<path>:key=<read key>&latency=<µs>. OBS Media Source: untick Local File, paste into Input, Input Format mpegts. Null while off or when SRT is off. A secret.',
+      },
+      srt: { $ref: '#/components/schemas/SrtStatus' },
     },
   },
   ProfilePullLinks: {

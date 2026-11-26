@@ -44,6 +44,24 @@ describe('guest feeds (web)', () => {
     const info = { profileId: 'default', slot: 'q7m2x9k4tb', serverUrl: 'rtmp://relay.example:1935/guest', streamKey: 'q7m2x9k4tb?key=abc', fullUrl: 'rtmp://relay.example:1935/guest/q7m2x9k4tb?key=abc' };
     expect(ingestText('Cam', info)).toContain('Stream key: q7m2x9k4tb?key=abc');
     expect(ingestText('Cam', { ...info, streamKey: null, fullUrl: null })).toBeNull();
+    expect(ingestText('Cam', info)).not.toContain('SRT');
+  });
+
+  it('copy text adds the SRT address (OBS Server, key empty) and the latency in microseconds when SRT is on', () => {
+    const info = {
+      profileId: 'default',
+      slot: 'q7m2x9k4tb',
+      serverUrl: 'rtmp://relay.example.com:1935/guest',
+      streamKey: 'q7m2x9k4tb?key=abc',
+      fullUrl: 'rtmp://relay.example.com:1935/guest/q7m2x9k4tb?key=abc',
+      srtUrl: 'srt://relay.example.com:8890?streamid=publish:guest/q7m2x9k4tb:key=abc&latency=500000',
+      srt: { enabled: true, port: 8890, latencyMs: 500, lanLatencyMs: 150, reason: null },
+    };
+    const text = ingestText('Cam', info)!;
+    expect(text).toContain('srt://relay.example.com:8890?streamid=publish:guest/q7m2x9k4tb:key=abc&latency=500000');
+    expect(text).toContain('Stream Key empty');
+    expect(text).toContain('latency=150000'); // LAN alternative
+    expect(text).toContain('can go lower');
   });
 
   it('applies a guest-feed socket message to the list (unknown slots wait for a refetch)', () => {

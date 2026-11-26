@@ -14,6 +14,7 @@ import { params, sendProblem } from './http.js';
 import { registerLiveRoutes } from './live.js';
 import { grabWithFfmpeg, PreviewService } from './previews.js';
 import type { V1Context } from './v1.js';
+import { srtPublishUrlFromStreamKey, srtStatusOff, type SrtStatus } from '../../../shared/srt.js';
 
 const bound = new WeakMap<object, GuestFeeds>();
 const lives = new WeakMap<object, LivePreviewService<string>>();
@@ -79,10 +80,18 @@ export function guestPreviewsOf(services: AppServices, guests: GuestFeeds): Prev
 }
 
 /** rtmp://<host>:<port>/guest + `<slot>?key=<key>`: what a guest types into OBS or Larix (admin only). */
-export function guestIngestInfo(serverHost: string, rtmpPort: number, profileId: string, slot: string, key: string | null): GuestIngestInfo {
+export function guestIngestInfo(
+  serverHost: string,
+  rtmpPort: number,
+  profileId: string,
+  slot: string,
+  key: string | null,
+  srt: SrtStatus = srtStatusOff('SRT is not available on this server.'),
+): GuestIngestInfo {
   const serverUrl = `rtmp://${serverHost}:${rtmpPort}/${GUEST_APP_NAME}`;
   const streamKey = key ? `${slot}?key=${key}` : null;
-  return { profileId, slot, serverUrl, streamKey, fullUrl: streamKey ? `${serverUrl}/${streamKey}` : null };
+  const srtUrl = key && srt.enabled && srt.port ? srtPublishUrlFromStreamKey(serverHost, srt.port, GUEST_APP_NAME, streamKey!) : null;
+  return { profileId, slot, serverUrl, streamKey, fullUrl: streamKey ? `${serverUrl}/${streamKey}` : null, srtUrl, srt };
 }
 
 /** GET /profiles/{id}/guest-feeds, …/{slot}/preview, …/{slot}/live.m3u8, …/{slot}/live/{file} (v1.17). */

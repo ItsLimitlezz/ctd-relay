@@ -5,6 +5,7 @@ import type { IngestInfo } from '../../../../shared/api.js';
 import type { Feed, User } from '../../../../shared/types.js';
 import type { AppServices } from '../../services.js';
 import ingestRoutes, { ingestHost } from './ingest.js';
+import { srtStatusOn } from '../../../../shared/srt.js';
 
 const admin: User = { id: 'u1', username: 'admin', role: 'admin', totpEnabled: false, createdAt: '', lastLoginAt: null };
 
@@ -14,7 +15,7 @@ afterEach(async () => {
   app = null;
 });
 
-async function build(opts: { user?: User | null; ingestHostSetting?: string } = {}) {
+async function build(opts: { user?: User | null; ingestHostSetting?: string; srtPort?: number } = {}) {
   const keys: Record<string, Record<Feed, string>> = {
     default: { landscape: 'LandKey000000000000000000', vertical: 'VertKey000000000000000000' },
     club: { landscape: 'ClubLand00000000000000000', vertical: 'ClubVert00000000000000000' },
@@ -31,6 +32,7 @@ async function build(opts: { user?: User | null; ingestHostSetting?: string } = 
       keys[profileId]![feed] = 'RotatedKey00000000000000';
       return keys[profileId]![feed];
     }),
+    srtStatus: opts.srtPort ? () => srtStatusOn(opts.srtPort!) : undefined,
   };
   const auditLog = vi.fn();
   const services = {
@@ -77,9 +79,10 @@ describe('ingest routes', () => {
       profileId: 'default',
       serverUrl: 'rtmp://192.168.1.20:1936/live',
       feeds: [
-        { feed: 'landscape', streamKey: 'landscape?key=LandKey000000000000000000', fullUrl: 'rtmp://192.168.1.20:1936/live/landscape?key=LandKey000000000000000000' },
-        { feed: 'vertical', streamKey: 'vertical?key=VertKey000000000000000000', fullUrl: 'rtmp://192.168.1.20:1936/live/vertical?key=VertKey000000000000000000' },
+        { feed: 'landscape', streamKey: 'landscape?key=LandKey000000000000000000', fullUrl: 'rtmp://192.168.1.20:1936/live/landscape?key=LandKey000000000000000000', srtUrl: null },
+        { feed: 'vertical', streamKey: 'vertical?key=VertKey000000000000000000', fullUrl: 'rtmp://192.168.1.20:1936/live/vertical?key=VertKey000000000000000000', srtUrl: null },
       ],
+      srt: expect.objectContaining({ enabled: false, port: null }),
     });
   });
 
@@ -91,11 +94,29 @@ describe('ingest routes', () => {
       profileId: 'club',
       serverUrl: 'rtmp://nas.lan:1936/live',
       feeds: [
-        { feed: 'landscape', streamKey: 'dprtmnt/landscape?key=ClubLand00000000000000000', fullUrl: 'rtmp://nas.lan:1936/live/dprtmnt/landscape?key=ClubLand00000000000000000' },
-        { feed: 'vertical', streamKey: 'dprtmnt/vertical?key=ClubVert00000000000000000', fullUrl: 'rtmp://nas.lan:1936/live/dprtmnt/vertical?key=ClubVert00000000000000000' },
+        { feed: 'landscape', streamKey: 'dprtmnt/landscape?key=ClubLand00000000000000000', fullUrl: 'rtmp://nas.lan:1936/live/dprtmnt/landscape?key=ClubLand00000000000000000', srtUrl: null },
+        { feed: 'vertical', streamKey: 'dprtmnt/vertical?key=ClubVert00000000000000000', fullUrl: 'rtmp://nas.lan:1936/live/dprtmnt/vertical?key=ClubVert00000000000000000', srtUrl: null },
       ],
+      srt: expect.objectContaining({ enabled: false, port: null }),
     });
     expect((await app.inject({ method: 'GET', url: '/api/ingest?profile=default' })).json<IngestInfo>().profileId).toBe('default');
+  });
+
+  it('with SRT on, each feed also has its SRT server address (OBS Server field, key in the streamid)', async () => {
+    const { app } = await build({ srtPort: 8890 });
+    const info = (await app.inject({ method: 'GET', url: '/api/ingest?profile=club', headers: { host: 'nas.lan' } })).json<IngestInfo>();
+    expect(info.srt).toMatchObject({ enabled: true, port: 8890, latencyMs: 500, lanLatencyMs: 150, reason: null });
+    expect(info.feeds.map((f) => f.srtUrl)).toEqual([
+      'srt://nas.lan:8890?streamid=publish:live/dprtmnt/landscape:key=ClubLand00000000000000000&latency=500000',
+      'srt://nas.lan:8890?streamid=publish:live/dprtmnt/vertical:key=ClubVert00000000000000000&latency=500000',
+    ]);
+  });
+
+  it('SRT addresses use the same host as the RTMP server (Ingest host setting, else the host the browser used)', async () => {
+    const { app } = await build({ srtPort: 8890, ingestHostSetting: 'relay.example.com' });
+    const info = (await app.inject({ method: 'GET', url: '/api/ingest', headers: { host: '192.168.1.20' } })).json<IngestInfo>();
+    expect(info.serverUrl).toBe('rtmp://relay.example.com:1936/live');
+    expect(info.feeds[0]!.srtUrl).toMatch(/^srt:\/\/relay\.example\.com:8890\?/);
   });
 
   it('answers 404 unknown_profile for an unknown profile', async () => {

@@ -2,6 +2,7 @@
 // CTD OBS pulls back as a source over LL-HLS. Shared by the server (web UI routes, external API,
 // event hub) and the web UI. Pure: no runtime dependencies.
 
+import type { SrtStatus } from './srt.js';
 import type { FeedProblem } from './feed-codec.js';
 import type { FeedState } from './types.js';
 
@@ -60,6 +61,10 @@ export interface GuestIngestInfo {
   streamKey: string | null;
   /** serverUrl + '/' + streamKey; null when the key is revoked. */
   fullUrl: string | null;
+  /** 0.2.100: the same over SRT (docs/SRT.md, OBS Server field, stream key empty); null when revoked or SRT is off. */
+  srtUrl?: string | null;
+  /** 0.2.100: whether SRT works here. */
+  srt?: SrtStatus;
 }
 
 /** POST /api/profiles/:id/guest-feeds [admin] → 201 { guestFeed, ingest } */
