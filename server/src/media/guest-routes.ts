@@ -72,6 +72,12 @@ interface Run {
   publishKey: string | null;
   /** Strings scrubbed from every message (stream key, full URL). */
   secrets: string[];
+  /**
+   * profile routes: this route was the last thing sending to its target input (it ran, and neither
+   * OBS published there nor an admin stopped it since). Only then may an automatic route start again
+   * while that profile is live, like OBS reconnecting.
+   */
+  lastSource: boolean;
 }
 
 export interface GuestRoutesOptions {
@@ -154,6 +160,8 @@ export class GuestRoutes {
 
   /** OBS came back on an input a route holds: the route stands down (OBS's own feed always wins). */
   obsPublished(profileId: string, feed: Feed): void {
+    // OBS is now this input's source: no route may take it back by itself during a live.
+    for (const r of this.runs.values()) if (r.row.targetProfileId === profileId && r.row.targetFeed === feed) r.lastSource = false;
     const id = this.inputs.get(inputKey(profileId, feed));
     const run = id ? this.runs.get(id) : undefined;
     if (!run || !run.active) return;
@@ -315,6 +323,7 @@ export class GuestRoutes {
     const run = this.require(profileId, slot, routeId);
     if (!run.active) return this.view(run, profileId, true);
     this.refuseWhileLive(run, 'stop');
+    run.lastSource = false;
     await this.halt(run, 'idle', null);
     return this.view(run, profileId, true);
   }
@@ -331,7 +340,7 @@ export class GuestRoutes {
   // ---- internals --------------------------------------------------------------
 
   private newRun(row: GuestRouteRow): Run {
-    return { row, active: false, state: 'idle', message: null, since: null, bitrateKbps: null, publishKey: null, secrets: [] };
+    return { row, active: false, state: 'idle', message: null, since: null, bitrateKbps: null, publishKey: null, secrets: [], lastSource: false };
   }
 
   private ownerOf(slot: string): string | null {
@@ -391,15 +400,20 @@ export class GuestRoutes {
   }
 
   private refuseWhileLive(run: Run, what: 'start' | 'stop' | 'remove'): void {
-    if (run.row.kind !== 'profile' || !run.row.targetProfileId) return;
-    if (!this.opts.isLive?.(run.row.targetProfileId)) return;
+    const why = this.liveConflict(run, what);
+    if (why) throw new GuestRouteError(409, why.code, why.message);
+  }
+
+  /** The route's target profile is live: why the route can't be started, stopped or removed now. */
+  private liveConflict(run: Run, what: 'start' | 'stop' | 'remove'): { code: string; message: string } | null {
+    if (run.row.kind !== 'profile' || !run.row.targetProfileId) return null;
+    if (!this.opts.isLive?.(run.row.targetProfileId)) return null;
     const profile = this.opts.profiles.get(run.row.targetProfileId)?.name ?? run.row.targetProfileId;
     const verb = what === 'start' ? 'start' : what === 'stop' ? 'stop' : 'remove';
-    throw new GuestRouteError(
-      409,
-      'session_live',
-      `"${profile}" is live: Relay can't ${verb} a route into its ${feedLabel(run.row.targetFeed ?? 'landscape')} input without a cut on every destination. End the live first, or ${what === 'start' ? 'send the guest from OBS' : 'stop the guest sending'}.`,
-    );
+    return {
+      code: 'session_live',
+      message: `"${profile}" is live: Relay can't ${verb} a route into its ${feedLabel(run.row.targetFeed ?? 'landscape')} input without a cut on every destination. End the live first, or ${what === 'start' ? 'send the guest from OBS' : 'stop the guest sending'}.`,
+    };
   }
 
   /** A profile input's own OBS feed is on, or another route holds it: why it can't be taken. */
@@ -450,7 +464,10 @@ export class GuestRoutes {
       run.secrets = [full, ...(key ? [key] : [])];
       plan = { url: full, mode: 'copy', feeds: ['landscape'] };
     } else {
-      const conflict = this.inputConflict(run);
+      // Checked here, not only in start(): an auto route starts when its guest comes online, and a
+      // live profile whose OBS feed dropped for a moment must not get the guest on its destinations.
+      // A route that was itself that input's source resumes, like OBS reconnecting.
+      const conflict = (run.lastSource ? null : this.liveConflict(run, 'start')) ?? this.inputConflict(run);
       if (conflict) return conflict;
       const pid = run.row.targetProfileId!;
       const feed = run.row.targetFeed!;
@@ -511,6 +528,7 @@ export class GuestRoutes {
         this.setState(run, 'starting', null);
         break;
       case 'running':
+        if (run.row.kind === 'profile') run.lastSource = true;
         if (run.state !== 'running') {
           run.state = 'running';
           run.message = ev.message === null ? null : this.scrub(run, ev.message);

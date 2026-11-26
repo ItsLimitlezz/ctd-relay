@@ -16,10 +16,10 @@ export function guestSource(profileId: string, g: GuestFeed): StreamSource {
   return {
     previewUrl: guestPreviewUrl(profileId, g.slot),
     liveUrl: guestLiveUrl(profileId, g.slot),
-    label: `Guest feed "${g.name}"`,
+    label: `Extra feed "${g.name}"`,
     problem: g.problem,
-    offlineText: "The guest isn't sending. The player starts when they do.",
-    note: 'What the guest sends to Relay, unchanged (not re-encoded). Muted until you turn the sound on. Closing this stops it.',
+    offlineText: "Nothing is being sent to this feed. The player starts when it is.",
+    note: 'What is sent to this feed, unchanged (not re-encoded). Muted until you turn the sound on. Closing this stops it.',
   };
 }
 

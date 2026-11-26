@@ -196,7 +196,7 @@ describe.skipIf(!!process.env.CI_NO_BROWSER)('guest feed routing UI (Chromium)',
     await route.getByRole('button', { name: 'Start' }).click();
     await route.getByRole('button', { name: 'Stop' }).waitFor();
     await page.getByTestId('feed-source-landscape').waitFor();
-    expect(await page.getByTestId('feed-source-landscape').textContent()).toContain('Source: guest feed MacBook');
+    expect(await page.getByTestId('feed-source-landscape').textContent()).toContain('Source: extra feed MacBook');
     expect(spawn.calls.length).toBeGreaterThan(0);
     expect(spawn.last()!.args).toContain('copy');
 

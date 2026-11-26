@@ -1939,7 +1939,7 @@ What Relay does with a guest feed, and doesn't:
 - H.264 video and AAC audio only, like the main feeds (the codec guard, `problem` below).
 
 Slots are made, renamed and removed, and keys rotated and revoked, by an admin in the web UI
-(profile page → **Guest feeds**). The external API only **reads** them: there is no route that
+(dashboard → **Extra feeds**, the web UI's name for guest feeds). The external API only **reads** them: there is no route that
 returns a guest's ingest key.
 
 ### 18.1 The guest feed object
@@ -2160,7 +2160,7 @@ the scheme and host only, never the path or the stream key (both are write-only)
 
 | | |
 |---|---|
-| `GET /profiles/{id}/guest-routes` | `{ profileId, outbound: [route…], inbound: [route… + "guestName"] }`: routes of this profile's guest feeds, and routes into this profile's inputs (a feed card's "Source: guest feed …") |
+| `GET /profiles/{id}/guest-routes` | `{ profileId, outbound: [route…], inbound: [route… + "guestName"] }`: routes of this profile's guest feeds, and routes into this profile's inputs (a feed card's "Source: extra feed …") |
 | `GET /profiles/{id}/guest-feeds/{slot}/routes` | `{ profileId, slot, routes: [route…] }` |
 | `POST /profiles/{id}/guest-feeds/{slot}/routes` | `{ "kind": "rtmp", "url": "rtmps://live.example.com/app", "streamKey": "…", "auto": false, "name"?: "…" }` or `{ "kind": "profile", "profileId": "club", "feed": "landscape", "auto": true }` → `201` route |
 | `PATCH …/routes/{route}` | `{ name?, auto?, url?, streamKey? }` (`streamKey`: omitted = keep, `""`/`null` = clear); the server and key only while stopped (`409 route_active`) |
