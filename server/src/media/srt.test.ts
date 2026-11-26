@@ -158,7 +158,9 @@ describe('SRT auth matrix (same rules as RTMP)', () => {
     ['pull link off (no read key for vertical)', srtReq('read', 'live/vertical', 'key=anything_at_all_123'), false],
     ['no key', srtReq('read', 'live/landscape', ''), false],
     ['the internal password from the LAN', { ...srtReq('read', 'live/landscape', ''), user: 'internal', password: READER }, false],
-    ['the internal password from loopback (Relay itself)', { ...srtReq('read', 'live/landscape', '', '127.0.0.1'), user: 'internal', password: READER }, true],
+    // 0.2.110: never over SRT, even from loopback: srtla_rec forwards remote SRT from 127.0.0.1 (docs/SRTLA.md).
+    // Relay itself reads over RTMP and HLS only.
+    ['the internal password from loopback (could be srtla_rec forwarding)', { ...srtReq('read', 'live/landscape', '', '127.0.0.1'), user: 'internal', password: READER }, false],
   ])('read: %s', (_name, r, expected) => {
     expect(ok(r)).toBe(expected);
   });

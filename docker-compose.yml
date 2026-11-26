@@ -36,6 +36,7 @@ services:
       #             LAN clients also get /api/v1, /dock and /overlay over plain HTTP here (see LAN_HTTP below)
       - "1935:1935" # RTMP from OBS. LAN only: NEVER port-forward 1935 on your router.
       - "8890:8890/udp" # SRT (docs/SRT.md): low-delay ingest + pull links. Forward on the router only for senders/readers outside the LAN.
+      - "5000:5000/udp" # SRTLA (docs/SRTLA.md): bonded SRT from BELABOX/Moblin. Forward on the router for senders on cellular (needs SRT on).
     env_file:
       - path: .env
         required: false

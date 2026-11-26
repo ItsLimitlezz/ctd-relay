@@ -3,6 +3,7 @@
 // event hub) and the web UI. Pure: no runtime dependencies.
 
 import type { SrtStatus } from './srt.js';
+import type { SrtlaEndpoint, SrtlaStatus } from './srtla.js';
 import type { FeedProblem } from './feed-codec.js';
 import type { FeedState } from './types.js';
 
@@ -65,6 +66,10 @@ export interface GuestIngestInfo {
   srtUrl?: string | null;
   /** 0.2.100: whether SRT works here. */
   srt?: SrtStatus;
+  /** 0.2.110: the same for a bonded SRTLA sender (docs/SRTLA.md); null when revoked or SRTLA is off. */
+  srtla?: SrtlaEndpoint | null;
+  /** 0.2.110: whether SRTLA works here. */
+  srtlaStatus?: SrtlaStatus;
 }
 
 /** POST /api/profiles/:id/guest-feeds [admin] → 201 { guestFeed, ingest } */

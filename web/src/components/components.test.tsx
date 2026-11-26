@@ -21,6 +21,7 @@ import { Toggle } from './Toggle';
 import { safeHexColor, safeHttpUrl } from './utils';
 import { readersText, srtPullStepsText } from './PullLink';
 import { SrtLatencyNote, SrtUnavailable } from './SrtInfo';
+import { SrtlaFields, SrtlaSteps, SrtlaUnavailable } from './SrtlaInfo';
 
 const html = (el: ReactElement) => renderToStaticMarkup(el);
 
@@ -336,5 +337,27 @@ describe('SRT pull link (docs/SRT.md)', () => {
     expect(off).toContain('available on this server');
     expect(off).toContain('UDP port 8890 is already in use');
     expect(off).toContain('RTMP works as usual');
+  });
+
+  it('SRTLA: per-feed Moblin URL and BELABOX streamid (hidden until revealed), steps with placeholders and the UDP port, plain reason when off', () => {
+    const endpoint = { host: 'relay.example.com', port: 5000, streamId: 'publish:live/landscape:key=SecretKey_0123456789ab', url: 'srtla://relay.example.com:5000?streamid=publish:live/landscape:key=SecretKey_0123456789ab' };
+    const fields = renderToStaticMarkup(<SrtlaFields label="landscape" endpoint={endpoint} />);
+    expect(fields).toContain('SRTLA URL, Moblin (landscape)');
+    expect(fields).toContain('SRT streamid, BELABOX (landscape)');
+    expect(fields).not.toContain('SecretKey_0123456789ab');
+    const status = { enabled: true, port: 5000, maxGroups: 4, linkCounts: false as const, reason: null };
+    const steps = renderToStaticMarkup(<SrtlaSteps status={status} />);
+    expect(steps).toContain('relay.example.com');
+    expect(steps).toContain('BELABOX');
+    expect(steps).toContain('Moblin');
+    expect(steps).toContain('UDP port <code>5000</code>');
+    expect(steps).toContain('forward UDP');
+    expect(steps).toContain('srtla://');
+    expect(steps).toContain('At most 4 bonded senders');
+    expect(steps).toContain('doesn&#x27;t report it');
+    const off = renderToStaticMarkup(<SrtlaUnavailable status={{ ...status, enabled: false, port: null, reason: 'SRTLA needs SRT, and SRT is off: SRT_PORT=0.' }} />);
+    expect(off).toContain('SRTLA) isn&#x27;t available');
+    expect(off).toContain('SRTLA needs SRT');
+    expect(off).toContain('SRT and RTMP work');
   });
 });

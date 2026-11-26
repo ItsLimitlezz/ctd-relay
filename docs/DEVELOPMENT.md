@@ -13,6 +13,7 @@ How to run, test and extend CTD Relay from source on Windows or Linux. The desig
 ```bash
 npm ci
 npm run setup-tools                 # pinned, checksum-verified MediaMTX + FFmpeg/ffprobe into ./tools
+                                    # (+ srtla_rec/srtla_send built from a pinned commit when cc, make, git are there; docs/SRTLA.md)
 npx playwright install chromium     # Linux: npx playwright install --with-deps chromium
 ```
 
@@ -82,6 +83,7 @@ npm run build                           # dist/server + dist/web
 npm run smoke                           # end-to-end media relay test with the real binaries in ./tools
 npm run e2e:preview                     # feed previews in the real web UI (Chromium), real Relay + binaries
 npm run e2e:guests                      # guest feeds with the real MediaMTX/FFmpeg + the load measurement (--quick skips it)
+npm run e2e:srtla                       # SRTLA: FFmpeg → srtla_send (2 links) → srtla_rec → MediaMTX with the real binaries (docs/SRTLA.md)
 npx tsx scripts/preview-stress.ts       # live preview resource safety (~15 min): restream with 4 players, cap, killed tab, frozen network, 100 cycles
 npx tsx scripts/transcode-cpu.ts        # transcoding CPU cost (~4 min): copy vs libx264 720p30/720p60/1080p30/1080p60 through MediaMTX, next to the CPU guard's estimate
 ```
@@ -112,7 +114,7 @@ docker compose up -d --build                  # build from this checkout and run
 docker buildx build --platform linux/amd64,linux/arm64 -t ghcr.io/itslimitlezz/ctd-relay .
 ```
 
-The `Dockerfile` is multi-stage: build on the host's architecture, install production dependencies and Playwright Chromium for the target architecture, and download the pinned MediaMTX/FFmpeg builds with `scripts/setup-tools.mjs`. The runtime image runs as uid/gid 568 with `tini` as PID 1, and its health check is `scripts/healthcheck.mjs`.
+The `Dockerfile` is multi-stage: build on the host's architecture, install production dependencies and Playwright Chromium for the target architecture, download the pinned MediaMTX/FFmpeg builds with `scripts/setup-tools.mjs`, and compile `srtla_rec` from its pinned commit for the target architecture (`srtla` stage). The runtime image runs as uid/gid 568 with `tini` as PID 1, and its health check is `scripts/healthcheck.mjs`.
 
 ## Releasing
 

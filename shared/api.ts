@@ -9,6 +9,7 @@
 import type { GuestFeed } from './guest-feeds.js';
 import type { ApiIssue, ApiIssueCleared, ApiIssueRaised } from './issues.js';
 import type { SrtStatus } from './srt.js';
+import type { SrtlaEndpoint, SrtlaStatus } from './srtla.js';
 import type {
   Account,
   ApiScope,
@@ -322,9 +323,17 @@ export interface IngestInfo {
      * Null when SRT is off (see `srt`).
      */
     srtUrl?: string | null;
+    /**
+     * 0.2.110 / API 1.19: the same feed for a bonded SRTLA sender (BELABOX, Moblin; docs/SRTLA.md):
+     * `{ host, port, streamId: 'publish:<path>:key=<k>', url: 'srtla://<host>:<port>?streamid=…' }`.
+     * Null when SRTLA is off (see `srtlaStatus`).
+     */
+    srtla?: SrtlaEndpoint | null;
   }[];
   /** 0.2.100 / API 1.18: whether SRT works here (docs/SRT.md). */
   srt?: SrtStatus;
+  /** 0.2.110 / API 1.19: whether SRTLA works here (docs/SRTLA.md). */
+  srtlaStatus?: SrtlaStatus;
 }
 /** POST /api/ingest/rotate [admin] body { feed } -> IngestInfo */
 export interface RotateIngestKeyRequest {

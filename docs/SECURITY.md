@@ -13,6 +13,8 @@ Please **don't open a public issue**. Report it privately through GitHub: the re
 | 8443 → 443 / 30443 | **Internet** (port-forwarded) | Web UI, REST API and WebSockets, over HTTPS |
 | 8080 → 80 / 30080 | Internet (port-forwarded) | Let's Encrypt HTTP-01 challenge responses and a redirect to HTTPS. For LAN clients only, also `/api/v1`, `/dock` and `/overlay/*` over plain HTTP (see [LAN plain HTTP](#lan-plain-http)) |
 | 1935 → 1935 | **LAN only** (never forward it) | RTMP ingest from OBS |
+| 8890/udp → 8890 | LAN; forward only for a sender or player outside it | SRT ingest and SRT Pull links, the key in the `streamid` ([SRT.md](SRT.md)) |
+| 5000/udp → 5000 | Internet (forwarded) for bonded senders on cellular | SRTLA (`srtla_rec`): bonded SRT from BELABOX/Moblin, forwarded to the SRT listener on loopback; the same keys ([SRTLA.md](SRTLA.md)) |
 | MediaMTX API, auth hook, live preview HLS (9996) | Loopback inside the container | Internal only. The live preview reaches browsers and apps only through Relay's own HTTPS server (see [Live preview](#live-preview)) |
 
 Public paths that work without logging in:
@@ -87,6 +89,13 @@ The feed previews (thumbnails and **Watch**, [PREVIEW.md](PREVIEW.md)) are behin
 - No credential is in any preview URL: the browser sends the `SameSite=Strict` session cookie with each request, apps send `Authorization: Bearer` (the live routes refuse `?access_token=`). Neither viewer ids nor HLS session ids are logged.
 - Players per feed are capped (`LIVE_PREVIEW_MAX_VIEWERS`, default 4), so a stolen login can't pull the feed many times over; a player holds its place from the moment it asks, so players opening at the same moment can't pass the cap together. The `live/{file}` requests of `/api/v1` have their own budget (1000 per 10 s per token) instead of the 600 a minute: they only reach files of a player the same token opened, so the larger budget buys nothing else. Each player costs upload bandwidth (the feed's bitrate), not CPU: nothing is transcoded.
 - The CSP adds `media-src 'self' blob:` (the player hands the `<video>` a Media Source `blob:` URL). Scripts stay same-origin; the player library is bundled, not loaded from a CDN.
+
+## SRT and SRTLA
+
+- The publish key rides in the SRT `streamid` (`publish:<path>:key=<k>`), exactly like RTMP's `?key=`, and every publish and read goes through Relay's auth hook ([SRT.md](SRT.md) → Security). There is no SRT passphrase: treat an SRT or SRTLA link like a password and rotate the key if it leaks.
+- `srtla_rec` ([SRTLA.md](SRTLA.md)) forwards bonded senders to MediaMTX from **127.0.0.1**, so for SRT a loopback address proves nothing. Loopback-only grants never apply to SRT: Relay's internal reads need the internal reader password over RTMP or HLS, and a guest route's one-time publish key works only over RTMP. Both are refused over SRT even from loopback (unit tests in `server/src/media/srtla.test.ts`).
+- Bonded senders publishing at once are capped (`SRTLA_MAX_GROUPS`, default 4). `srtla_rec`'s output goes through the same redactor as MediaMTX's; it never prints the streamid. `npm run e2e:srtla` checks with the real binaries that no key reaches Relay's logs.
+- Never forward 1935. Forward 5000/udp for bonded senders, 8890/udp only when someone outside needs plain SRT.
 
 ## Protections
 

@@ -132,7 +132,7 @@ TrueNAS: see [Account recovery](docs/INSTALL-TRUENAS.md#account-recovery).
 
 ## Third-party software
 
-The Docker image bundles [MediaMTX](https://github.com/bluenviron/mediamtx) (MIT), static [FFmpeg](https://ffmpeg.org/) builds from [BtbN/FFmpeg-Builds](https://github.com/BtbN/FFmpeg-Builds) (GPL), and [Chromium](https://www.chromium.org/) via [Playwright](https://playwright.dev/) (Apache-2.0 and BSD-style licenses). Their licenses apply to those components.
+The Docker image bundles [MediaMTX](https://github.com/bluenviron/mediamtx) (MIT), static [FFmpeg](https://ffmpeg.org/) builds from [BtbN/FFmpeg-Builds](https://github.com/BtbN/FFmpeg-Builds) (GPL), `srtla_rec` from [BELABOX/srtla](https://github.com/BELABOX/srtla) (AGPL-3.0, built unmodified from commit `37862da`; its license and source note are in `/usr/share/doc/srtla/` in the image), and [Chromium](https://www.chromium.org/) via [Playwright](https://playwright.dev/) (Apache-2.0 and BSD-style licenses). Their licenses apply to those components.
 
 ## License
 

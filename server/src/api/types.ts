@@ -2,6 +2,7 @@
 
 import type { ApiIssue } from '../../../shared/issues.js';
 import type { SrtStatus } from '../../../shared/srt.js';
+import type { SrtlaEndpoint, SrtlaStatus } from '../../../shared/srtla.js';
 import type {
   ApiScope,
   AppResource,
@@ -423,9 +424,12 @@ export interface ApiIngest {
   profileId: string;
   serverUrl: string;
   /** srtUrl (API 1.18): the feed over SRT (docs/SRT.md); null when SRT is off. */
-  feeds: { feed: Feed; streamKey: string; fullUrl: string; srtUrl: string | null }[];
+  /** srtla (API 1.19): the feed for a bonded SRTLA sender (docs/SRTLA.md); null when SRTLA is off. */
+  feeds: { feed: Feed; streamKey: string; fullUrl: string; srtUrl: string | null; srtla: SrtlaEndpoint | null }[];
   /** API 1.18: whether SRT works on this server. */
   srt: SrtStatus;
+  /** API 1.19: whether SRTLA works on this server. */
+  srtlaStatus: SrtlaStatus;
 }
 
 /** A connected app as other apps see it (the registering token's id stays internal). */

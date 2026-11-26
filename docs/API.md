@@ -758,6 +758,13 @@ says in plain words why SRT is off. `latency=` is in microseconds. The links car
 internet value (500 ms); it can go lower on a good link, and `lanLatencyMs` (150 ms) is enough on a LAN.
 The SRT address uses the same host as `serverUrl`. See docs/SRT.md.
 
+v1.19 (additive): each feed also has `srtla`, the same feed for a bonded SRTLA sender (BELABOX,
+Moblin), or `null` when SRTLA is off:
+`{ "host": "relay.example.com", "port": 5000, "streamId": "publish:live/landscape:key=…", "url": "srtla://relay.example.com:5000?streamid=publish:live/landscape:key=…" }`.
+BELABOX takes `host`, `port` and `streamId`; Moblin takes `url`. Both carry the key (secrets). The
+top level gains `srtlaStatus: { enabled, port, maxGroups, linkCounts, reason }` (never a key;
+`linkCounts` is always `false`). See docs/SRTLA.md.
+
 ### 9.2 Connected apps (the hub)
 
 Apps register themselves and what they offer so other apps can find them through CTD Relay
@@ -2484,6 +2491,20 @@ or hardware encoder may embed one; then it is the most precise way to line feeds
 `apiVersion` stays `1`: every change below is additive, so clients written for an earlier v1
 keep working (ignore event types and fields you don't know). `GET /api/v1/openapi.json` reports
 the revision in `info.version`.
+
+### v1.19
+
+- **SRTLA (bonded SRT, additive; [SRTLA.md](SRTLA.md)):** next to every `srtUrl`, `srtla` (an
+  `SrtlaEndpoint` or `null` when SRTLA is off): `{ host, port, streamId, url }` where `streamId` is
+  `publish:<path>:key=<k>` (BELABOX's *SRT streamid* field) and `url` is
+  `srtla://<host>:<port>?streamid=publish:<path>:key=<k>` (Moblin's URL field). Both hold the key: a
+  secret. On `GET /profiles/{id}/ingest` per feed, plus `srtlaStatus` (`SrtlaStatus`: `enabled`,
+  `port`, `maxGroups`, `linkCounts` (always `false`: the receiver doesn't report bonded links),
+  `reason`). The admin ingest details (`GET /api/ingest`) and guest ingest details carry the same
+  `srtla` and `srtlaStatus`. Nothing existing changes.
+- **SRT auth tightened (no field changes):** Relay's internal reader password and guest route
+  publish keys are refused over SRT even from loopback (SRTLA makes remote SRT arrive from
+  127.0.0.1). No app uses either over SRT; Pull link read keys over SRT work as before.
 
 ### v1.18
 

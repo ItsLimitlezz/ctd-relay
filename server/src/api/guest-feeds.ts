@@ -15,6 +15,7 @@ import { registerLiveRoutes } from './live.js';
 import { grabWithFfmpeg, PreviewService } from './previews.js';
 import type { V1Context } from './v1.js';
 import { srtPublishUrlFromStreamKey, srtStatusOff, type SrtStatus } from '../../../shared/srt.js';
+import { srtlaEndpointFromStreamKey, srtlaStatusOff, type SrtlaStatus } from '../../../shared/srtla.js';
 
 const bound = new WeakMap<object, GuestFeeds>();
 const lives = new WeakMap<object, LivePreviewService<string>>();
@@ -87,11 +88,13 @@ export function guestIngestInfo(
   slot: string,
   key: string | null,
   srt: SrtStatus = srtStatusOff('SRT is not available on this server.'),
+  srtlaStatus: SrtlaStatus = srtlaStatusOff('SRTLA is not available on this server.'),
 ): GuestIngestInfo {
   const serverUrl = `rtmp://${serverHost}:${rtmpPort}/${GUEST_APP_NAME}`;
   const streamKey = key ? `${slot}?key=${key}` : null;
   const srtUrl = key && srt.enabled && srt.port ? srtPublishUrlFromStreamKey(serverHost, srt.port, GUEST_APP_NAME, streamKey!) : null;
-  return { profileId, slot, serverUrl, streamKey, fullUrl: streamKey ? `${serverUrl}/${streamKey}` : null, srtUrl, srt };
+  const srtla = key && srtlaStatus.enabled && srtlaStatus.port ? srtlaEndpointFromStreamKey(serverHost, srtlaStatus.port, GUEST_APP_NAME, streamKey!) : null;
+  return { profileId, slot, serverUrl, streamKey, fullUrl: streamKey ? `${serverUrl}/${streamKey}` : null, srtUrl, srt, srtla, srtlaStatus };
 }
 
 /** GET /profiles/{id}/guest-feeds, …/{slot}/preview, …/{slot}/live.m3u8, …/{slot}/live/{file} (v1.17). */

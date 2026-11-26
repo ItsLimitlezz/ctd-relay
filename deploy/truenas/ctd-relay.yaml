@@ -35,6 +35,10 @@ services:
       # SRT (docs/SRT.md): low-delay ingest and pull links, UDP. Forward it on the router only if a
       # sender or reader is outside your LAN. Remove this line (or set SRT_PORT: "0") to go without SRT.
       - "8890:8890/udp"
+      # SRTLA (docs/SRTLA.md): bonded cellular SRT from BELABOX or Moblin, UDP. Forward it on the router for
+      # senders on cellular (that is the point of it). Needs SRT on. Remove this line (or set SRTLA_PORT: "0")
+      # to go without SRTLA.
+      - "5000:5000/udp"
     environment:
       # Port the router forwards to 30443 (used in links and redirects).
       PUBLIC_PORT: "443"
