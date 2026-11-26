@@ -348,7 +348,8 @@ data: {"id":"01JA7Q8M9X2V4C6B8N0P2R4T6W","type":"chat.message","ts":179183000012
 ```
 
 - `types`: comma-separated globs (`chat.*`, `destination.down`, …); default = everything the
-  token's scopes allow.
+  token's scopes allow, except **`feed.timing`** (v1.18, §19), which a stream only gets when `types`
+  names it exactly.
 - `profile`: a token limited to a profile always streams that profile. A token for every profile
   streams the profile named by `?profile=<id>`; without it, the **default profile** (as before
   profiles existed, like `/status`, `/chat` and `/events/poll`); with `?profile=*` (or `all`),
@@ -596,6 +597,10 @@ state: read `feeds[].problem` and `destinations[].blocked` from `/status` for wh
 Something is wrong with a feed, a destination, the whole stream, an OBS output or a source inside
 OBS / it is fixed. One stable `id` per problem, a `severity`, a `subject` and, on clear, a
 `resolution`. **The alert contract of the suite: §17.** Open issues are in `GET /status` → `issues`.
+
+### `feed.timing` — `status:read` (v1.18)
+When each measured feed's latest frame reached Relay, about once a second per feed. **Opt-in:** only
+a stream whose `types` names `feed.timing` gets it (and it starts the measuring); not buffered. §19.
 
 ### `profile.status`, `profiles.changed` — `status:read`
 A profile's summary changed / profiles were created, renamed or deleted (§9.1).
@@ -2312,6 +2317,168 @@ SRT is off), and `srt` (the SRT status, as in `/ingest`). For an OBS Media Sourc
 paste the link into Input, set Input Format to `mpegts`. The same read key, cap, rotate and revoke
 apply, and SRT readers count against the same `maxReaders`. See docs/SRT.md.
 
+## 19. Feed timing (v1.18)
+
+**Feed timing** says when the frames of a profile's feeds reach Relay: the Landscape and Vertical
+feeds and every guest feed slot (§18, MediaMTX path `guest/<slot>`). CTD OBS uses it to line up
+feeds that arrive with different delays (a guest over a phone link, OBS's own Vertical feed).
+
+What Relay does, and doesn't:
+
+- It reads **packet timestamps only**. A measured feed has one reader: the bundled FFmpeg copying the
+  feed's first video track from the loopback MediaMTX (`-c copy -copyts -f flv`, the internal reader
+  account the thumbnails use) into Relay, which reads the FLV tag timestamps and, for H.264, walks the
+  NAL units of each frame for an SEI timecode. **Nothing is decoded or encoded**; audio isn't read.
+- It measures **only while an app asks** (§19.1), and stops each reader **30 s** after the last
+  interest. At most **8 feeds** are measured at once on the whole server (`FEED_TIMING_MAX`, 0–32;
+  `0` turns feed timing off). Passthrough and everything else stay as they are.
+- **Cost** (measured on a 4-vCPU Xeon at 2.3 GHz, a 1920×1080 H.264 feed at 6 Mbps, ~50 fps, through
+  the real MediaMTX and FFmpeg in `./tools`, 20 s samples): one reader costs about **0.75 % of one
+  core** in FFmpeg, **~1.2 %** in Relay's Node process and **~0.8 %** in MediaMTX (one more reader of
+  the path): about **3 % of one core per measured feed, all in**. Eight readers of that feed: FFmpeg
+  5 %, Node +3.8 %, MediaMTX +4.9 %, about **14 % of one core** in all. Nothing runs while no app
+  asks.
+
+### 19.1 Interest: when Relay measures
+
+A feed is measured while its profile has **interest** and the feed is online:
+
+- a `GET /api/v1/profiles/{id}/timing` in the last 30 s, or
+- an open `/events` stream (§4) whose `types` names **`feed.timing`** exactly, for the profile(s) it
+  streams (`?profile=*`: every profile the token sees), and for 30 s after it closes.
+
+`feed.timing` is **opt-in**: a stream without `types`, or with a glob such as `feed.*` or `*`, does
+**not** get it and starts nothing. Ask for it by name: `?types=feed.timing,issue.*`.
+
+When more feeds are wanted than the cap allows, the first ones asked for are measured; the others
+show `measuring: false` until a reader frees up (checked every second). A feed that goes offline
+stops its reader; one that comes back online is measured again while there is interest. A reader that
+fails is started again after 2 s, then up to 15 s.
+
+### 19.2 `GET /api/v1/profiles/{id}/timing` — `status:read`
+
+Every feed of the profile, measured or not. Calling it registers interest (§19.1) and starts the
+readers, so the first call usually shows `measuring: true` with `null` numbers; the first frames
+arrive within a second or two. Then poll it (every 1–5 s) or, better, follow `feed.timing` events.
+
+```json
+{
+  "profileId": "default",
+  "enabled": true,
+  "maxFeeds": 8,
+  "measuredFeeds": 3,
+  "windowMs": 30000,
+  "idleStopMs": 30000,
+  "serverTime": 1795000000600,
+  "feeds": [
+    { "id": "landscape", "feed": "landscape", "slot": null, "name": null, "online": true, "measuring": true,
+      "streamTimeMs": 3605233, "receivedAt": 1795000000512,
+      "sourceTimecode": null, "sourceTimecodeStreamTimeMs": null,
+      "transitMs": 14, "arrivalOffsetMs": 1791394767265, "jitterMs": 2.3, "fps": 60 },
+    { "id": "vertical", "feed": "vertical", "slot": null, "name": null, "online": false, "measuring": false,
+      "streamTimeMs": null, "receivedAt": null, "sourceTimecode": null, "sourceTimecodeStreamTimeMs": null,
+      "transitMs": null, "arrivalOffsetMs": null, "jitterMs": null, "fps": null },
+    { "id": "guest/q7m2x9k4tb", "feed": "guest", "slot": "q7m2x9k4tb", "name": "Remote cam 1", "online": true, "measuring": true,
+      "streamTimeMs": 912400, "receivedAt": 1795000000498,
+      "sourceTimecode": "18:33:19:21", "sourceTimecodeStreamTimeMs": 911400,
+      "transitMs": 180, "arrivalOffsetMs": 1794999087918, "jitterMs": 11.6, "fps": 29.97 }
+  ]
+}
+```
+
+| Field | Meaning |
+|---|---|
+| `enabled` | `false` when the server has feed timing off (`FEED_TIMING_MAX=0`): every feed is listed, nothing is measured. |
+| `maxFeeds`, `measuredFeeds` | The cap (`FEED_TIMING_MAX`) and how many feeds are measured right now on the whole server (every profile). |
+| `windowMs`, `idleStopMs` | The transit window (30 s) and how long a reader runs after the last interest (30 s). |
+| `serverTime` | Relay's clock when the reply was built (epoch ms). |
+| `feeds[].id` | `landscape`, `vertical` or `guest/<slot>`: the key of the feed in this list and in `feed.timing`. Order: landscape, vertical, then the guest slots as in §18.2. |
+| `feed`, `slot`, `name` | `landscape` / `vertical` / `guest`; for a guest feed its slot id and name (§18.1), else `null`. |
+| `online` | The feed is being sent to Relay. |
+| `measuring` | A reader is running for this feed. `false` while offline, while nobody asks, while the cap is reached, or between a failed reader and its restart. |
+| `streamTimeMs` | The stream's own timestamp of the **latest video frame**, ms: the RTMP/FLV timestamp the sender put on it (the decode timestamp), or, for an SRT (MPEG-TS) publisher, its timestamp in ms as MediaMTX hands it on. Relay keeps the sender's timeline (FFmpeg `-copyts`): it does not restart at 0 when the reader starts. A sender that reconnects usually starts again at 0. |
+| `receivedAt` | Relay's wall clock (epoch ms) when that frame reached Relay's reader: a few ms after MediaMTX got it (loopback). |
+| `sourceTimecode` | An SMPTE timecode `HH:MM:SS:FF` (`HH:MM:SS;FF` for drop-frame) the stream carries in an H.264 SEI, best effort, seen in the last 5 s; else `null`. See §19.4. |
+| `sourceTimecodeStreamTimeMs` | `streamTimeMs` of the frame that carried `sourceTimecode` (senders may put it on keyframes only), else `null`. |
+| `transitMs` | The current `receivedAt − streamTimeMs` **minus its minimum over the last 30 s**: how much later than the best of the last 30 s the latest frame arrived, ms (≥ 0). |
+| `arrivalOffsetMs` | That minimum, ms: over the last 30 s, a frame with stream time `s` reached Relay at `s + arrivalOffsetMs` at the earliest. |
+| `jitterMs` | Interarrival jitter (RFC 3550 §6.4.1) in ms: for consecutive frames, `D = (receivedAt₂ − receivedAt₁) − (streamTimeMs₂ − streamTimeMs₁)`, `J += (|D| − J) / 16`. One decimal. It includes a few ms of Relay's own read scheduling. |
+| `fps` | Frames per second of stream time over the last 2 s (two decimals). |
+
+All the numbers are `null` until the reader has its first frame, and again when it stops.
+
+**What `transitMs` is, precisely.** `receivedAt − streamTimeMs` mixes two things: the sender's clock
+base (when it started counting its timestamps, on its own clock) and the network delay. Relay doesn't
+know the sender's clock, so it can't tell the absolute one-way delay. The base is constant for a
+stream, so the variation is real: `transitMs` = the delay **above the best seen in the last 30 s**. 0
+means "as fast as this feed has been lately"; 200 means this frame took 200 ms longer than that. When
+the path gets permanently slower, `transitMs` reads high for up to 30 s, then 0 again. A jump of more
+than 5 s between the stream's clock and Relay's (a sender that restarted, timestamps that went back)
+starts the window, the jitter and the fps over.
+
+Errors: `401`, `403 missing_scope`, `403 profile_forbidden` (a token limited to another profile),
+`404 unknown_profile`. No route returns a key or a URL: the reader URLs (with the internal reader
+password) stay inside Relay and are never logged.
+
+### 19.3 `feed.timing` events
+
+On `/events` (`status:read`), **only for a stream that names `feed.timing` in `types`** (§19.1).
+`src` = `core`, `src.profile` = the feed's profile, `data` = one feed object as in §19.2 (with
+`measuring: true`). About **once a second per measured feed**, only while it is measured; nothing
+while no feed is measured.
+
+```
+event: feed.timing
+data: {"id":"01J…","type":"feed.timing","ts":1795000001000,"src":{"connector":"ctd-multi-stream","connection":"core","platform":"core","profile":"default"},"data":{"id":"guest/q7m2x9k4tb","feed":"guest", … ,"transitMs":176,"jitterMs":11.2,"fps":29.97}}
+```
+
+These events are **not buffered**: they are never replayed on resume (`Last-Event-ID`) and never
+cause `system.reset` (resuming from a `feed.timing` id works like any other id). `/events/poll` never
+returns them; a polling client calls `GET /profiles/{id}/timing` instead. A profile-limited token
+gets only its profile's events, like every other event.
+
+### 19.4 Source timecode: which SEI is read
+
+Relay reads **H.264** only, from each frame's NAL units (no decoding; only SEI NAL units, type 6, are
+parsed, and of a payload only its first 256 bytes of text):
+
+- **user_data_unregistered** (SEI payloadType 5), any UUID, whose bytes after the 16-byte UUID hold
+  an ASCII timecode `HH:MM:SS:FF` (`;` before the frames = drop-frame; `.` is read as `:`). The first
+  one found in the frame is used. FFmpeg can add one:
+  `-bsf:v "h264_metadata=sei_user_data=<uuid>+<text>"` (escape the colons for FFmpeg's option parser).
+- **Not read: pic_timing** (payloadType 1). Its clock timestamps can only be found with the SPS's
+  VUI/HRD parameters (the delay field lengths), a full SPS parse Relay doesn't do.
+- HEVC and AV1 aren't read (the main feeds and guest feeds are H.264 anyway, §18).
+
+**OBS doesn't send a timecode by default** (x264 and OBS's hardware encoders write none), so expect
+`sourceTimecode: null` from OBS's Landscape and Vertical feeds and from most phone apps. A broadcast
+or hardware encoder may embed one; then it is the most precise way to line feeds up (§19.5).
+
+### 19.5 Lining feeds up (for CTD OBS)
+
+1. **Clock.** Sync to Relay's clock with `GET /api/v1/clock` (§4, v1.3): `offset` and `delay` from
+   4–8 samples, keep the one with the smallest delay, re-sync every few minutes. Then
+   `relayNow = yourNow + offset`, and every `receivedAt` and `serverTime` is a time on that clock.
+2. **Measure.** Open `/events?types=feed.timing&profile=<id>` (keep it open while lining up), or poll
+   `GET /profiles/{id}/timing` every few seconds. Key feeds by `id`.
+3. **Feeds with a source timecode** (from one clock, e.g. a timecode generator or NTP): show the
+   frames with the same timecode together.
+4. **Feeds without one.** Relay can't know when a frame was captured, only when it arrived:
+   - **Your own feeds.** For the Landscape and Vertical feeds OBS itself sends, you know when each
+     output started on your clock (`outputStart`, the time of its timestamp 0): the absolute one-way
+     delay to Relay is `receivedAt − (outputStart + offset) − streamTimeMs`.
+   - **Same-arrival alignment.** A frame with stream time `s` reached Relay at about
+     `s + arrivalOffsetMs + transitMs`. A player that reads the same feed from Relay with FFmpeg and
+     keeps the timestamps (the Pull link, §18.9) can map each frame it shows to its Relay arrival;
+     showing every feed `D` ms after its Relay arrival (one `D` for all, above the slowest feed's
+     delay) lines them up as they reached Relay. Over LL-HLS the timestamps aren't kept: use the
+     arrival times only to compare feeds' delays.
+   - **Buffer.** For a feed you hold back, keep at least `transitMs + 3 × jitterMs` (rounded up to a
+     frame, from `fps`) of extra buffer, or frames arrive late once the delay is applied.
+   - **Then fine-tune** by eye or a clap and keep the per-feed offset. Relay's numbers tell you when a
+     feed's delay changes (`transitMs` rising and staying up, a reconnect resetting `streamTimeMs`),
+     not the camera-to-camera difference of senders it can't see.
+
 ## Changelog
 
 `apiVersion` stays `1`: every change below is additive, so clients written for an earlier v1
@@ -2320,6 +2487,14 @@ the revision in `info.version`.
 
 ### v1.18
 
+- **Feed timing (§19, additive):** `GET /profiles/{id}/timing` (`status:read`): per feed of the profile
+  (Landscape, Vertical, every guest slot) `streamTimeMs`, `receivedAt`, `sourceTimecode` (+
+  `sourceTimecodeStreamTimeMs`), `transitMs`, `arrivalOffsetMs`, `jitterMs`, `fps`, `online`,
+  `measuring`. New event **`feed.timing`** (`status:read`), about once a second per measured feed,
+  **opt-in** (only a stream whose `types` names it), not buffered (never replayed, never in
+  `/events/poll`). Relay measures only while an app asks (a GET in the last 30 s or an interested
+  stream), at most `FEED_TIMING_MAX` feeds (default 8), with FFmpeg copy readers (nothing decoded).
+  Nothing existing changes: a stream without `types` gets the same events as before.
 - **Show profiles (§14), fixes, no new fields:** a malformed save or `POST /blobs/check` body is
   `400 invalid` (was `500`); a save body over about 3 MB is `413 limit` as documented (was `413 invalid`);
   a `value` in a manifest `secrets[]` entry is dropped on save and on read (the manifest is
