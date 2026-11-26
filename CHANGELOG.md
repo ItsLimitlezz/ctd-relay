@@ -4,11 +4,13 @@ Versions follow the hub's CONVENTIONS.md → Versioning. Each release that ships
 
 ## 0.2.100 (unreleased)
 
-**SRT and the Pull link delay.** API revision **1.18** (additive). No database change: schema **v4**, reports **r1**, guest feed track **g2**, so 0.2.80 still opens `app.db` after a rollback. Runbook: [docs/RELEASE-v0.2.100.md](docs/RELEASE-v0.2.100.md).
+**SRT, the Pull link delay, and stream issues in the dashboard.** API revision **1.18** (additive). Database: one new table on its own track (`issue_history`, `issue_history_meta` h1); schema stays **v4**, reports **r1**, guest feeds **g2**, so 0.2.90 and 0.2.80 still open `app.db` after a rollback. Runbook: [docs/RELEASE-v0.2.100.md](docs/RELEASE-v0.2.100.md).
 
 ### Added
 - **SRT** ingest and SRT pull links (ctd-relay#37, docs/SRT.md) on one UDP port of the bundled MediaMTX (`SRT_PORT`, default **8890/udp**; `0` = off; `EXPOSE 8890/udp`, compose and the TrueNAS YAML map it). The same keys and rules as RTMP: ingest keys publish (profile feeds and extra feeds), only a feed's Pull link read key reads, and the Pull link reader cap counts RTMP and SRT readers together; rotating or turning a link off disconnects SRT readers too. If the UDP port is taken at start, SRT turns off with a plain reason and RTMP works as before; an unmapped port breaks nothing. Addresses carry the internet latency (`latency=500000`, 500 ms); the LAN value (150 ms) is shown as the alternative. Passthrough only (MPEG-TS, H.264 + AAC).
 - **API 1.18:** `srtUrl` and `srt` (SrtStatus) on the ingest details, guest ingest details and Pull link admin objects.
+- **Stream issues in the web dashboard.** An **issues strip** at the top of the dashboard, and on each profile's row in Profiles: plain-language title, what it affects (feed, destination, OBS source, extra feed), how long it has been open; it appears and clears live (`issue.raised` / `issue.cleared`). **Badges** on the affected feed and destination cards. A **7-day history** (Reports → Issues), bounded: kept 7 days after an issue cleared, 5,000 rows at most, pruned at start and hourly; issues left open by a restart close as `restarted`. A Stream Report lists the issues open during that stream, and its .xlsx/CSV export has an **Issues** sheet (last, so existing CSV numbering is unchanged).
+- **API 1.18:** `GET /api/v1/issues/history?profile=<id>|*&limit=` (`status:read`; a profile-limited token sees only its profile), docs/API.md §17.7; a Stream Report session gains `issues`. No existing field or event changes.
 - `npm run e2e:srt`: SRT end to end with the real MediaMTX/FFmpeg, and the delay measurement (steady state and how old a joining reader's first frame is, with low-delay and default reader settings).
 
 ### Docs
