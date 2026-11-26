@@ -28,6 +28,7 @@ restart is a new report.
 | Destinations | once per destination | platform, name, canvas (landscape/vertical), Twitch Dual Format mode |
 | Live periods | each start and end | a recovery (the platform ended the live and Relay made a fresh one) starts a new period |
 | Events | as they happen | live, offline, retrying, recovery (with reason), error (with message), blocked feed, feed online/offline, title change |
+| Issues | as they happen | the alerts open during the stream (docs/API.md §17): what went wrong, what it affected, its worst severity, when it started and cleared, how it ended. Read from the **7-day issue history** (below), not stored in the report tables |
 | Viewers | every 30 s per destination, and whenever the count changes | **unknown is stored as unknown (null), never as 0** |
 | Chat | per platform per minute | messages, joins, other events (subs, gifts, raids…), distinct chatters |
 | Feeds | per minute per canvas | online or not, codec, resolution, fps, average bitrate, keyframe interval |
@@ -142,6 +143,7 @@ frozen header row and column widths; dates are real Excel dates, durations real 
 | Audience | person per stream |
 | Anonymous joins | stream and platform |
 | Feeds | minute and canvas |
+| Issues | issue open during the stream: started, severity, issue, affects, detail, cleared, duration, how it ended, kind |
 
 The CSV export is the same tables, one UTF-8 CSV file per sheet in a .zip. Names that start like a
 spreadsheet formula (`=`, `+`, `-`, `@`) are prefixed with `'` so a spreadsheet does not run them.
@@ -164,6 +166,16 @@ The report tables are created in a few milliseconds (new tables only; nothing ex
 rewritten). Lists and date ranges keep the worked-out numbers of streams that have ended in memory,
 so after the first look (or a few seconds after start-up, when Relay works them out in the
 background one stream at a time) the Reports page does not read every viewer sample again.
+
+## Issues in a report
+
+A stream's **Issues** (on its page and in the Issues sheet) are the issues (docs/API.md §17) that
+were open at any time during it: raised during the stream, or raised before and still open when it
+started (an OBS camera that was already offline). They come from the **issue history**, which keeps
+issues for **7 days** after they cleared (at most 5,000), in its own table (`issue_history`, own
+schema track, docs/CONTRACTS.md → Storage conventions); the report tables themselves are unchanged.
+So a stream older than 7 days shows "its issues are no longer kept", not "no issues". The `issues`
+field of the JSON export and of `GET /api/v1/reports/sessions/{id}` is the same list (UTC ISO times).
 
 ## Past streams
 

@@ -115,6 +115,31 @@ export function openApiDocument(version: string): Record<string, unknown> {
           },
         },
       },
+      '/issues/history': {
+        get: {
+          summary: 'Issues of the last 7 days, newest first (v1.18)',
+          operationId: 'getIssueHistory',
+          tags: ['status'],
+          description:
+            'Needs `status:read`. Every issue raised in the last 7 days (docs/API.md §17.7): from its `issue.raised` to its `issue.cleared`, or still open (`clearedAt` null). Kept 7 days after it cleared, 5,000 at most. `?profile=*` lists every profile the token can see.',
+          parameters: [
+            profileParam('default: the default profile; `*` = every profile the token can see'),
+            { name: 'limit', in: 'query', required: false, description: '1–1000, default 200', schema: { type: 'integer', minimum: 1, maximum: 1000 } },
+          ],
+          responses: {
+            '200': {
+              description: 'The history',
+              content: json({
+                type: 'object',
+                required: ['items', 'retentionDays'],
+                properties: { items: { type: 'array', items: ref('IssueHistoryEntry') }, retentionDays: { type: 'integer', description: 'Days the history keeps (7)' } },
+              }),
+            },
+            ...errors,
+            ...profileErrors,
+          },
+        },
+      },
       '/music': {
         get: {
           summary: 'What the profile’s Spotify plays (v1.8)',
@@ -1537,6 +1562,30 @@ const issueSchemas = {
     description: 'issue.raised',
     required: [...issueRequired, 'update'],
     properties: { ...issueProperties, update: { type: 'boolean', description: 'false = a new problem (notify); true = the open issue with this id changed' } },
+  },
+  IssueHistoryEntry: {
+    type: 'object',
+    description: 'One issue of the last 7 days (v1.18, GET /issues/history)',
+    required: ['id', 'profileId', 'kind', 'rule', 'severity', 'peakSeverity', 'title', 'message', 'subject', 'firstSeen', 'updatedAt', 'clearedAt', 'durationMs', 'resolution'],
+    properties: {
+      id: { ...str, description: "The issue's id (opaque); the same id can come back later as a new entry" },
+      profileId: str,
+      kind: issueKind,
+      rule: nullable(str),
+      severity: { enum: [...ISSUE_SEVERITIES], description: 'The latest severity' },
+      peakSeverity: { enum: [...ISSUE_SEVERITIES], description: 'The highest severity while open' },
+      title: str,
+      message: nullable(str),
+      subject: issueSubject,
+      firstSeen: { type: 'integer', description: 'Epoch ms the problem started' },
+      updatedAt: { type: 'integer', description: 'Epoch ms of the latest change while open' },
+      clearedAt: { ...nullable({ type: 'integer' }), description: 'Epoch ms it cleared; null = still open' },
+      durationMs: nullable({ type: 'integer' }),
+      resolution: {
+        ...nullable({ enum: ['recovered', 'ended', 'removed', 'stale', 'restarted'] }),
+        description: 'As issue.cleared, plus restarted = Relay restarted while it was open; null = still open',
+      },
+    },
   },
   IssueCleared: {
     type: 'object',

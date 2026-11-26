@@ -1,5 +1,6 @@
 // Wire types of the external API v1 (docs/API.md). Server-side only: the web UI never reads /api/v1.
 
+import type { ApiIssue } from '../../../shared/issues.js';
 import type { SrtStatus } from '../../../shared/srt.js';
 import type {
   ApiScope,
@@ -315,59 +316,18 @@ export interface ApiNotice {
 }
 
 // ---- issues: the suite's alert contract (v1.16, docs/API.md §17) ----
+// Defined in shared/issues.ts (the web UI shows them too since v1.18); re-exported here unchanged.
 
-export type IssueSeverity = 'info' | 'warning' | 'critical';
-export const ISSUE_SEVERITIES: readonly IssueSeverity[] = ['info', 'warning', 'critical'];
-
-export type IssueKind = 'feed.offline' | 'destination.down' | 'stream.down' | 'obs.output.down' | 'obs.issue' | 'guest.feed.offline' | 'guest.feed.codec';
-
-export type IssueResolution = 'recovered' | 'ended' | 'removed' | 'stale';
-
-export type ApiIssueSubject =
-  | { type: 'feed'; feed: Feed }
-  | { type: 'destination'; destinationId: string; platform: PlatformId; name: string }
-  | { type: 'stream' }
-  | { type: 'obs.output'; appId: string; output: string; canvas: string | null }
-  | { type: 'obs.source'; appId: string; source: string; path: string | null }
-  /** A guest feed slot (docs/API.md §18, v1.17). */
-  | { type: 'guest.feed'; slot: string; name: string };
-
-/** An open issue (GET /status → issues; issue.raised without `update`). */
-export interface ApiIssue {
-  /** `<kind>|<subject key>`: the one key for raise, update, clear and dedupe. Opaque to clients. */
-  id: string;
-  kind: IssueKind;
-  /** obs.issue only: the plugin's rule (camera-offline, …); null otherwise. */
-  rule: string | null;
-  severity: IssueSeverity;
-  title: string;
-  message: string | null;
-  subject: ApiIssueSubject;
-  /** OBS sources: visible on a program scene (true/false); null = unknown or not an OBS source. */
-  onProgram: boolean | null;
-  /** The program scene the source is on when onProgram, else null. */
-  scene: string | null;
-  /** Epoch ms the problem started (after its hold time); unchanged by updates. */
-  firstSeen: number;
-  updatedAt: number;
-}
-
-/** issue.raised data. `update`: false = a new problem (notify), true = the open one changed. */
-export interface ApiIssueRaised extends ApiIssue {
-  update: boolean;
-}
-
-/** issue.cleared data. */
-export interface ApiIssueCleared {
-  id: string;
-  kind: IssueKind;
-  rule: string | null;
-  subject: ApiIssueSubject;
-  title: string;
-  firstSeen: number;
-  durationMs: number;
-  resolution: IssueResolution;
-}
+export { ISSUE_SEVERITIES } from '../../../shared/issues.js';
+export type {
+  ApiIssue,
+  ApiIssueCleared,
+  ApiIssueRaised,
+  ApiIssueSubject,
+  IssueKind,
+  IssueResolution,
+  IssueSeverity,
+} from '../../../shared/issues.js';
 
 // ---- profiles + the hub (v1.2) ----
 

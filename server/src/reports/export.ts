@@ -301,7 +301,39 @@ export function tables(b: ExportBundle): Sheet[] {
     ),
   };
 
-  return [summary, perPlatform, viewers, chat, events, top, audience, anon, feeds];
+  // Issues (alerts, docs/API.md §17) open during each stream, from the 7-day issue history. Last, so
+  // the CSV files of the older sheets keep their numbers.
+  const issues: Sheet = {
+    name: 'Issues',
+    columns: [
+      C.date(`Started (${tzLabel})`),
+      ...(multi ? [C.text('Stream', 36)] : []),
+      C.text('Severity', 10),
+      C.text('Issue', 36),
+      C.text('Affects', 28),
+      C.text('Detail', 60),
+      C.date(`Cleared (${tzLabel})`),
+      C.dur('Duration'),
+      C.text('How it ended', 14),
+      C.text('Kind', 18),
+    ],
+    rows: b.sessions.flatMap((d) =>
+      (d.issues ?? []).map((i) => [
+        t(i.startedAt),
+        ...(multi ? [d.title] : []),
+        i.severity,
+        i.title,
+        i.affects,
+        i.message ?? '',
+        t(i.clearedAt),
+        i.durationSec,
+        i.resolution ?? (i.clearedAt ? '' : 'still open'),
+        i.kind,
+      ]),
+    ),
+  };
+
+  return [summary, perPlatform, viewers, chat, events, top, audience, anon, feeds, issues];
 }
 
 // ---------------------------------------------------------------- CSV

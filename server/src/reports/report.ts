@@ -1,5 +1,6 @@
 // Builds the report objects (shared/reports.ts) from the stored rows (store.ts) with math.ts.
 
+import { issueAffects, type IssueHistoryEntry } from '../../../shared/issues.js';
 import type { PlatformId } from '../../../shared/types.js';
 import type {
   AudienceUserDetail,
@@ -7,6 +8,7 @@ import type {
   LeaderboardKind,
   LeaderboardRow,
   ReportDestination,
+  ReportIssue,
   ReportRangeSummary,
   ReportSessionDetail,
   ReportSessionSummary,
@@ -25,6 +27,33 @@ export interface ReportContext {
   store: ReportStore;
   now?: () => number;
   profileName?: (id: string) => string | null;
+  /** A profile's issues open at any time in [from, to] epoch ms, oldest first (the issue history). Default: none. */
+  issues?: (profileId: string, from: number, to: number) => IssueHistoryEntry[];
+}
+
+/** The issues of a stream (its time range, to now while live), from the issue history. */
+export function sessionIssues(ctx: ReportContext, s: Pick<SessionRow, 'profileId' | 'startedAt' | 'endedAt'>): ReportIssue[] {
+  if (!ctx.issues) return [];
+  const from = ms(s.startedAt);
+  const to = s.endedAt ? ms(s.endedAt) : (ctx.now ?? Date.now)();
+  if (!Number.isFinite(from) || !Number.isFinite(to)) return [];
+  return ctx.issues(s.profileId, from, to).map((e) => {
+    const cleared = e.clearedAt;
+    return {
+      id: e.id,
+      kind: e.kind,
+      rule: e.rule,
+      severity: e.peakSeverity,
+      title: e.title,
+      message: e.message,
+      subject: e.subject,
+      affects: issueAffects(e.subject),
+      startedAt: new Date(e.firstSeen).toISOString(),
+      clearedAt: cleared === null ? null : new Date(cleared).toISOString(),
+      durationSec: cleared === null ? null : Math.max(0, Math.round((cleared - e.firstSeen) / 1000)),
+      resolution: cleared === null ? null : e.resolution,
+    };
+  });
 }
 
 const ms = (iso: string): number => Date.parse(iso);
@@ -339,6 +368,7 @@ export function sessionDetail(ctx: ReportContext, id: string): ReportSessionDeta
     events: l.events.map(({ sessionId: _s, ...e }) => e),
     presence: l.presence.map(({ sessionId: _s, ...p }) => p),
     audienceTracked: s.audience,
+    issues: sessionIssues(ctx, s),
   };
 }
 

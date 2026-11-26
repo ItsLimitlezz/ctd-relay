@@ -1,10 +1,11 @@
 // Live store React bindings: one WebSocket to /api/ws?profile=<current profile> while logged in
 // (switching profile reconnects it). Hooks: useSession, useChat, useLiveStatus, useLiveSocketReady, useLiveConnections,
-// useAccountUpdates, useAccountsVersion, useDestinationsVersion, usePairings, useConnectedApps,
+// useAccountUpdates, useAccountsVersion, useDestinationsVersion, usePairings, useOpenIssues, useConnectedApps,
 // useLiveEvent, useLiveActions.
 
 import { createContext, useContext, useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from 'react';
 import type { WsServerMessage } from '@shared/api';
+import type { ApiIssue } from '@shared/issues';
 import type { Account, ChatMessage, ConnectedApp, PairingRequest, ProfileSummary, SessionState } from '@shared/types';
 import { api, wsUrl } from '../api';
 import { alertForNotice, installAlerts } from './alerts';
@@ -172,6 +173,14 @@ export const useAccountsVersion = (): number => useLiveState((s) => s.accountsVe
 export const useDestinationsVersion = (): number => useLiveState((s) => s.destinationsVersion);
 /** Pending app pairings (admins), every profile; null until loaded. */
 export const usePairings = (): PairingRequest[] | null => useLiveState((s) => s.pairings);
+
+const NO_ISSUES: ApiIssue[] = [];
+
+/** The on-screen profile's open issues, oldest first (docs/API.md §17), live. */
+export function useOpenIssues(): ApiIssue[] {
+  const { profileId } = useProfileContext();
+  return useLiveState((s) => (storeShowsProfile(s, profileId) ? s.issues : NO_ISSUES));
+}
 /** Connected apps, every profile; null until loaded. */
 export const useConnectedApps = (): ConnectedApp[] | null => useLiveState((s) => s.apps);
 

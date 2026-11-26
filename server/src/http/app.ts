@@ -24,6 +24,7 @@ import chatRoutes from './routes/chat.js';
 import destinationRoutes from './routes/destinations.js';
 import feedPreviewRoutes from './routes/feed-preview.js';
 import guestFeedRoutes from './routes/guest-feeds.js';
+import issueRoutes from './routes/issues.js';
 import guestRouteRoutes from './routes/guest-routes.js';
 import pullLinkRoutes from './routes/pull-links.js';
 import healthRoutes from './routes/health.js';
@@ -119,6 +120,7 @@ export async function buildApp(services: AppServices, tlsMaterial: TlsMaterial |
   // Feed thumbnails + the live preview (LL-HLS proxied from the loopback MediaMTX, docs/PREVIEW.md).
   await app.register(feedPreviewRoutes, opts);
   await app.register(guestFeedRoutes, opts);
+  await app.register(issueRoutes, opts);
   await app.register(guestRouteRoutes, opts);
   await app.register(pullLinkRoutes, opts);
   await app.register(chatRoutes, opts);

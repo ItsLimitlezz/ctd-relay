@@ -2,6 +2,7 @@
 // transcodeCapabilitiesFor(). main.ts binds the database with bindReportsDatabase() and starts it.
 
 import type { ReportSettings } from '../../../shared/reports.js';
+import { issueHistoryFor } from '../api/issue-history.js';
 import type { Db } from '../db/database.js';
 import type { AppServices } from '../services.js';
 import { createPresenceProvider } from './presence.js';
@@ -37,7 +38,7 @@ export function bindReportsDatabase(services: AppServices, db: Db): void {
 export function createReportsService(
   services: Pick<AppServices, 'bus' | 'log' | 'repos' | 'orchestrators' | 'driverContext'>,
   db: Db,
-  opts: { presence?: PresenceProvider | null; now?: () => number; timers?: boolean } = {},
+  opts: { presence?: PresenceProvider | null; now?: () => number; timers?: boolean; issues?: ReportContext['issues'] } = {},
 ): ReportsService {
   const log = services.log.child({ mod: 'reports' });
   let available = true;
@@ -81,7 +82,7 @@ export function createReportsService(
     recorder,
     context: () => {
       if (available) recorder.sync();
-      return { store, now: opts.now, profileName };
+      return { store, now: opts.now, profileName, ...(opts.issues ? { issues: opts.issues } : {}) };
     },
     forgetUser: (userId) => recorder.forgetUser(userId),
     settings,
@@ -133,7 +134,8 @@ export function reportsFor(services: AppServices): ReportsService {
   if (!r) {
     const db = databases.get(services);
     if (!db) throw new Error('reports: no database bound (bindReportsDatabase)');
-    r = createReportsService(services, db);
+    // A stream's issues come from the 7-day issue history (api/issue-history.ts), by its time range.
+    r = createReportsService(services, db, { issues: (profileId, from, to) => issueHistoryFor(services)?.between(profileId, from, to) ?? [] });
     instances.set(services, r);
   }
   return r;

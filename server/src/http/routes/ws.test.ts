@@ -14,6 +14,7 @@ import type {
   SessionState,
   User,
 } from '../../../../shared/types.js';
+import type { Envelope } from '../../api/types.js';
 import { EventBus } from '../../events.js';
 import { unknownProfileError } from '../../orchestrator/registry.js';
 import type { AppServices } from '../../services.js';
@@ -308,6 +309,57 @@ describe('WsHub profiles', () => {
     hub.close();
   });
 
+  it('forwards issue.raised / issue.cleared from the API event hub to the issue’s profile only (v1.18)', () => {
+    const bus = new EventBus();
+    const hub = new WsHub(bus, silent);
+    let listener: ((env: Envelope) => void) | null = null;
+    hub.attachIssues({
+      subscribe: (l) => {
+        listener = l;
+        return () => {
+          listener = null;
+        };
+      },
+    });
+    const main = new FakeSocket();
+    const club = new FakeSocket();
+    hub.add(main, hello);
+    hub.add(club, hello, undefined, { profileId: 'club' });
+    const issue = {
+      id: 'feed.offline|landscape',
+      kind: 'feed.offline',
+      rule: null,
+      severity: 'critical',
+      title: 'Landscape feed lost',
+      message: null,
+      subject: { type: 'feed', feed: 'landscape' },
+      onProgram: null,
+      scene: null,
+      firstSeen: 1,
+      updatedAt: 1,
+      update: false,
+    } as const;
+    const env = (type: Envelope['type'], profile: string | null, data: unknown): Envelope => ({
+      id: 'x',
+      type,
+      ts: 2,
+      src: { connector: 'ctd-multi-stream', connection: 'core', platform: 'core', profile },
+      data,
+    });
+    listener!(env('issue.raised', 'club', issue));
+    listener!(env('feed.status', 'club', {}));
+    listener!(env('issue.raised', null, issue));
+    const cleared = { id: issue.id, kind: issue.kind, rule: null, subject: issue.subject, title: issue.title, firstSeen: 1, durationMs: 1, resolution: 'recovered' };
+    listener!(env('issue.cleared', 'club', cleared));
+    expect(club.sent.slice(1)).toEqual([
+      { type: 'issue-raised', profileId: 'club', issue },
+      { type: 'issue-cleared', profileId: 'club', issue: cleared },
+    ]);
+    expect(main.sent.map((m) => m.type)).toEqual(['hello']);
+    hub.close();
+    expect(listener).toBeNull();
+  });
+
   it('sends every profile’s summaries on any session change and on profile edits (coalesced)', async () => {
     const bus = new EventBus();
     let summaries = SUMMARIES;
@@ -454,7 +506,7 @@ describe('GET /api/ws', () => {
     const { ws, received, waitFor } = await connect(app, '/api/ws');
 
     await waitFor(1);
-    expect(received[0]).toEqual({ type: 'hello', session: SESSION, chat: [{ ...CHAT, profileId: 'default' }], profiles: SUMMARIES });
+    expect(received[0]).toEqual({ type: 'hello', session: SESSION, chat: [{ ...CHAT, profileId: 'default' }], profiles: SUMMARIES, issues: [] });
 
     ws.send('ignored by the server');
     bus.emit('notice', { level: 'info', message: 'Session stopped' });
@@ -473,6 +525,7 @@ describe('GET /api/ws', () => {
       session: { ...SESSION, profileId: 'club', title: 'Club night' },
       chat: [{ ...CHAT, profileId: 'club' }],
       profiles: SUMMARIES,
+      issues: [],
     });
 
     bus.emit('chat', { ...CHAT, id: 'other', profileId: 'default' });

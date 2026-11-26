@@ -2,7 +2,8 @@
 // ?session=<id> opens one stream, ?user=<id> one viewer. docs/REPORTS.md.
 
 import { useEffect, useState } from 'react';
-import type { ReportExportFormat, ReportQuery, ReportRetentionDays, ReportSettingsResponse } from '@shared/reports';
+import { ISSUE_HISTORY_DAYS } from '@shared/issues';
+import type { ReportExportFormat, ReportIssue, ReportQuery, ReportRetentionDays, ReportSettingsResponse } from '@shared/reports';
 import { REPORT_RETENTION_CHOICES } from '@shared/reports';
 import { PLATFORM_IDS, type PlatformId } from '@shared/types';
 import { api } from '../api';
@@ -11,6 +12,7 @@ import { Card } from '../components/Card';
 import { ConfirmButton } from '../components/ConfirmButton';
 import { EmptyState } from '../components/EmptyState';
 import { Field } from '../components/Field';
+import { IssueHistoryCard } from '../components/Issues';
 import { PlatformBadge, platformName } from '../components/PlatformBadge';
 import { LineChart, StackedBars } from '../components/ReportCharts';
 import { Select } from '../components/Select';
@@ -22,7 +24,8 @@ import { Link, navigate, setQuery, useQuery } from '../router';
 import { useAuth } from '../state/auth';
 import { errorMessage } from '../state/errors';
 import { useApi } from '../state/hooks';
-import { useProfileId } from '../state/profile';
+import { historyOutcome, SEVERITY_LABEL, SEVERITY_TONE } from '../state/issues';
+import { useProfileContext, useProfileId } from '../state/profile';
 import { ExportLinks, Leaderboards, PlatformTable, StatTiles } from './reports/ReportParts';
 import {
   EVENT_LABEL,
@@ -57,6 +60,8 @@ export default function ReportsPage() {
 function ListView({ profile, all }: { profile: string; all: boolean }) {
   const q = useQuery();
   const { isAdmin } = useAuth();
+  const { profiles } = useProfileContext();
+  const profileName = (id: string) => profiles?.find((p) => p.id === id)?.name ?? null;
   const defaults = defaultRange();
   const from = q.get('from') ?? defaults.from;
   const to = q.get('to') ?? defaults.to;
@@ -183,6 +188,8 @@ function ListView({ profile, all }: { profile: string; all: boolean }) {
           </Card>
         </>
       )}
+
+      <IssueHistoryCard profile={profile} profileName={profileName} />
 
       <ReportSettingsCard isAdmin={isAdmin} />
     </div>
@@ -311,7 +318,39 @@ function SessionView({ id, profile }: { id: string; profile: string }) {
           </ol>
         </Card>
       </div>
+
+      <ReportIssues issues={d.issues ?? []} startedAt={d.startedAt} />
     </div>
+  );
+}
+
+/** Issues open during the stream (docs/API.md §17), from the 7-day issue history. */
+function ReportIssues({ issues, startedAt }: { issues: readonly ReportIssue[]; startedAt: string }) {
+  // The history keeps 7 days: an older stream's issues are gone, which is not the same as none.
+  const tooOld = Date.now() - Date.parse(startedAt) > ISSUE_HISTORY_DAYS * 86_400_000;
+  return (
+    <Card title="Issues" subtitle={`Problems Relay saw during this stream. Issues are kept for ${ISSUE_HISTORY_DAYS} days.`}>
+      {issues.length === 0 ? (
+        <p className="muted small">{tooOld ? `This stream is older than ${ISSUE_HISTORY_DAYS} days: its issues are no longer kept.` : 'No issues during this stream.'}</p>
+      ) : (
+        <ul className="issue-history">
+          {issues.map((i) => (
+            <li key={`${i.id}|${i.startedAt}`} className={`issue-row is-${i.severity}`}>
+              <Badge tone={SEVERITY_TONE[i.severity]}>{SEVERITY_LABEL[i.severity]}</Badge>
+              <div className="issue-text">
+                <strong className="issue-title">{i.title}</strong>
+                <span className="issue-affects muted small">{i.affects}</span>
+                {i.message && <span className="issue-message small">{i.message}</span>}
+              </div>
+              <span className="issue-age small muted">
+                {formatWhen(i.startedAt)} ·{' '}
+                {historyOutcome({ resolution: i.resolution, clearedAt: i.clearedAt ? Date.parse(i.clearedAt) : null, durationMs: i.durationSec === null ? null : i.durationSec * 1000 })}
+              </span>
+            </li>
+          ))}
+        </ul>
+      )}
+    </Card>
   );
 }
 

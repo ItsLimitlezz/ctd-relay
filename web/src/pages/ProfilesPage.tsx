@@ -8,6 +8,8 @@ import { Card } from '../components/Card';
 import { ConfirmButton } from '../components/ConfirmButton';
 import { EmptyState } from '../components/EmptyState';
 import { FeedThumbnail } from '../components/FeedThumbnail';
+import { usePoll } from '../components/GuestRoutes';
+import { IssuesStrip } from '../components/Issues';
 import { Field } from '../components/Field';
 import { LayersIcon, PlusIcon } from '../components/icons';
 import { LivePlayerModal } from '../components/LivePlayer';
@@ -19,6 +21,9 @@ import { toast } from '../components/Toast';
 import { cx } from '../components/utils';
 import { Link } from '../router';
 import { errorMessage } from '../state/errors';
+import { useApi } from '../state/hooks';
+import { useOpenIssues } from '../state/live';
+import type { ApiIssue } from '@shared/issues';
 import { useProfileContext } from '../state/profile';
 import {
   deleteBlockedReason,
@@ -39,6 +44,8 @@ type ModalState = { kind: 'create' } | { kind: 'created'; profile: Profile } | {
 /** Streaming profiles: list with live status, create, rename, recolour, delete. [admin] */
 export default function ProfilesPage() {
   const { profiles, profileId: currentId, select, refresh } = useProfileContext();
+  // The profile on screen's open issues, live (the others' are read over REST, ProfileIssues).
+  const liveIssues = useOpenIssues();
   const [modal, setModal] = useState<ModalState>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
 
@@ -99,6 +106,7 @@ export default function ProfilesPage() {
         <ProfilesList
           profiles={profiles}
           currentId={currentId}
+          liveIssues={liveIssues}
           onSwitch={(p) => select(p.id, '/')}
           onEdit={(p) => setModal({ kind: 'edit', profile: p })}
           onDelete={remove}
@@ -177,9 +185,11 @@ export interface ProfilesListProps {
   onSwitch: (p: ProfileSummary) => void;
   onEdit: (p: ProfileSummary) => void;
   onDelete: (p: ProfileSummary) => Promise<void>;
+  /** The current profile's open issues from the live socket; without it every row reads its own over REST. */
+  liveIssues?: readonly ApiIssue[];
 }
 
-export function ProfilesList({ profiles, currentId, onSwitch, onEdit, onDelete }: ProfilesListProps) {
+export function ProfilesList({ profiles, currentId, onSwitch, onEdit, onDelete, liveIssues }: ProfilesListProps) {
   if (profiles.length === 0) {
     return (
       <Card>
@@ -191,7 +201,15 @@ export function ProfilesList({ profiles, currentId, onSwitch, onEdit, onDelete }
     <Card flush>
       <ul className="item-list" aria-label="Streaming profiles">
         {profiles.map((p) => (
-          <ProfileRow key={p.id} profile={p} current={p.id === currentId} onSwitch={onSwitch} onEdit={onEdit} onDelete={onDelete} />
+          <ProfileRow
+            key={p.id}
+            profile={p}
+            current={p.id === currentId}
+            liveIssues={p.id === currentId ? liveIssues : undefined}
+            onSwitch={onSwitch}
+            onEdit={onEdit}
+            onDelete={onDelete}
+          />
         ))}
       </ul>
     </Card>
@@ -201,12 +219,14 @@ export function ProfilesList({ profiles, currentId, onSwitch, onEdit, onDelete }
 function ProfileRow({
   profile: p,
   current,
+  liveIssues,
   onSwitch,
   onEdit,
   onDelete,
 }: {
   profile: ProfileSummary;
   current: boolean;
+  liveIssues: readonly ApiIssue[] | undefined;
   onSwitch: ProfilesListProps['onSwitch'];
   onEdit: ProfilesListProps['onEdit'];
   onDelete: ProfilesListProps['onDelete'];
@@ -231,6 +251,7 @@ function ProfileRow({
             </span>
             {blocked && <span className="faint">{blocked}</span>}
           </div>
+          <ProfileIssues profile={p} live={liveIssues} />
           <ProfileFeeds profile={p} />
           <nav className="profile-links" aria-label={`Set up ${p.name}`}>
             <Link to={`/accounts?${q}`}>Accounts</Link>
@@ -263,6 +284,26 @@ function ProfileRow({
       </div>
     </li>
   );
+}
+
+/** How often another profile's open issues are re-read (the live socket only follows the profile on screen). */
+const PROFILE_ISSUES_POLL_MS = 15_000;
+
+/**
+ * A profile's open issues (docs/API.md §17): `live` for the profile on screen; the others are read
+ * over REST, again whenever their summary changes (session, live/down counts: pushed live) and every 15 s.
+ */
+function ProfileIssues({ profile, live }: { profile: ProfileSummary; live: readonly ApiIssue[] | undefined }) {
+  const useLive = live !== undefined;
+  const other = useApi(
+    () => (useLive ? Promise.resolve(null) : api.profileIssues(profile.id).catch(() => null)),
+    [profile.id, useLive, profile.status, profile.live, profile.down],
+  );
+  usePoll(() => {
+    if (!useLive) other.reload();
+  }, PROFILE_ISSUES_POLL_MS);
+  const issues = live ?? other.data?.issues ?? [];
+  return <IssuesStrip issues={issues} compact label={`${profile.name}: open issues`} />;
 }
 
 /** Both feeds of a profile: thumbnails (probed: the list has no feed states) and Watch. */

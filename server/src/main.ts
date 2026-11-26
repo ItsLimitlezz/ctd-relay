@@ -6,6 +6,7 @@ import path from 'node:path';
 import pino, { type Logger } from 'pino';
 import type { AppSettings } from '../../shared/api.js';
 import { eventHubFor } from './api/event-hub.js';
+import { bindIssueHistoryDatabase, issueHistoryFor } from './api/issue-history.js';
 import { musicFor } from './music/music-service.js';
 import { createAppRegistry } from './api/hub.js';
 import { createLanHandler } from './api/lan.js';
@@ -288,6 +289,8 @@ export async function createServices(config: AppConfig): Promise<AppServices> {
   services.orchestrators = createOrchestratorRegistry(services);
   // Stream reports keep their tables in app.db, on their own schema track (reports/schema.ts).
   bindReportsDatabase(services, db);
+  // The 7-day issue history (docs/API.md §17.7): its own table track too (db/issue-history-repo.ts).
+  bindIssueHistoryDatabase(services, db);
   return services;
 }
 
@@ -304,6 +307,9 @@ export async function main(): Promise<void> {
 
   // External API event buffer: subscribe before anything starts emitting.
   const apiEvents = eventHubFor(services);
+  // Issue history: records the hub's issue.raised / issue.cleared (closes what the last run left open, prunes hourly).
+  const issueHistory = issueHistoryFor(services);
+  issueHistory?.start();
   // Spotify now playing + chat song requests (listens to chat, polls connected profiles).
   const music = musicFor(services);
   music.start();
@@ -370,6 +376,7 @@ export async function main(): Promise<void> {
       reports.close();
       stopBlobGc();
       transcodeCaps.close();
+      issueHistory?.close();
       apiEvents.close();
       closeHub(services);
     } catch (err) {
